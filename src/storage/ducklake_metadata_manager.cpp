@@ -1332,7 +1332,7 @@ WHERE snapshot_id = (
 	SELECT MAX_BY(snapshot_id, snapshot_time)
 	FROM {METADATA_CATALOG}.ducklake_snapshot
 	WHERE snapshot_time <= %s);)",
-		                                              val.DefaultCastAs(LogicalType::TIMESTAMP_TZ).ToSQLString()));
+		                                              val.DefaultCastAs(LogicalType::VARCHAR).ToSQLString()));
 	} else {
 		throw InvalidInputException("Unsupported AT clause unit - %s", unit);
 	}
@@ -1563,6 +1563,12 @@ WHERE table_id=tid AND column_id=cid
 	}
 }
 
+template <class T>
+timestamp_tz_t GetTimestampTZFromRow(ClientContext &context, const T &row, idx_t col_idx) {
+	auto val = row.iterator.chunk->GetValue(col_idx, row.row);
+	return val.CastAs(context, LogicalType::TIMESTAMP_TZ).template GetValue<timestamp_tz_t>();
+}
+
 vector<DuckLakeSnapshotInfo> DuckLakeMetadataManager::GetAllSnapshots(const string &filter) {
 	auto res = transaction.Query(StringUtil::Format(R"(
 SELECT snapshot_id, snapshot_time, schema_version, changes_made
@@ -1575,11 +1581,12 @@ ORDER BY snapshot_id
 	if (res->HasError()) {
 		res->GetErrorObject().Throw("Failed to get snapshot information from DuckLake: ");
 	}
+	auto context = transaction.context.lock();
 	vector<DuckLakeSnapshotInfo> snapshots;
 	for (auto &row : *res) {
 		DuckLakeSnapshotInfo snapshot_info;
 		snapshot_info.id = row.GetValue<idx_t>(0);
-		snapshot_info.time = row.GetValue<timestamp_tz_t>(1);
+		snapshot_info.time = GetTimestampTZFromRow(*context, row, 1);
 		snapshot_info.schema_version = row.GetValue<idx_t>(2);
 		snapshot_info.change_info.changes_made = row.IsNull(3) ? string() : row.GetValue<string>(3);
 
@@ -1596,6 +1603,7 @@ FROM {METADATA_CATALOG}.ducklake_files_scheduled_for_deletion
 	if (res->HasError()) {
 		res->GetErrorObject().Throw("Failed to get files scheduled for deletion from DuckLake: ");
 	}
+	auto context = transaction.context.lock();
 	vector<DuckLakeFileScheduledForCleanup> result;
 	for (auto &row : *res) {
 		DuckLakeFileScheduledForCleanup info;
@@ -1604,7 +1612,7 @@ FROM {METADATA_CATALOG}.ducklake_files_scheduled_for_deletion
 		path.path = row.GetValue<string>(1);
 		path.path_is_relative = row.GetValue<bool>(2);
 		info.path = FromRelativePath(path);
-		info.time = row.GetValue<timestamp_tz_t>(3);
+		info.time = GetTimestampTZFromRow(*context, row, 3);
 
 		result.push_back(std::move(info));
 	}

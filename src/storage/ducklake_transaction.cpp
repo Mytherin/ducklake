@@ -1210,7 +1210,10 @@ void DuckLakeTransaction::FlushChanges() {
 			break;
 		} catch (std::exception &ex) {
 			ErrorData error(ex);
-			connection->Rollback();
+			if (connection->context->transaction.HasActiveTransaction()) {
+				// rollback if there is still a transaction active
+				connection->Rollback();
+			}
 			if (error.Type() == ExceptionType::TRANSACTION) {
 				// immediately rethrow transaction conflicts - no need to retry
 				connection.reset();
