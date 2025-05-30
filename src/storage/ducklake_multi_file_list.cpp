@@ -325,7 +325,9 @@ OpenFileInfo DuckLakeMultiFileList::GetFile(idx_t i) {
 		extended_info->options["schema_version"] = Value::BIGINT(inlined_data_table.schema_version);
 	} else {
 		extended_info->options["file_size"] = Value::UBIGINT(file.file_size_bytes);
-		extended_info->options["footer_size"] = Value::UBIGINT(file.footer_size);
+		if (file.footer_size.IsValid()) {
+			extended_info->options["footer_size"] = Value::UBIGINT(file.footer_size.GetIndex());
+		}
 		extended_info->options["row_id_start"] = Value::UBIGINT(files[i].row_id_start);
 		Value snapshot_id;
 		if (files[i].snapshot_id.IsValid()) {

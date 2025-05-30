@@ -215,7 +215,7 @@ struct DuckLakeFileData {
 	string path;
 	string encryption_key;
 	idx_t file_size_bytes = 0;
-	idx_t footer_size = 0;
+	optional_idx footer_size;
 };
 
 enum class DuckLakeDataType {
@@ -227,7 +227,7 @@ enum class DuckLakeDataType {
 struct DuckLakeFileListEntry {
 	DuckLakeFileData file;
 	DuckLakeFileData delete_file;
-	idx_t row_id_start;
+	idx_t row_id_start = 0;
 	optional_idx snapshot_id;
 	optional_idx max_row_count;
 	DuckLakeDataType data_type = DuckLakeDataType::DATA_FILE;

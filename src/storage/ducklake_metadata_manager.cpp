@@ -376,7 +376,10 @@ DuckLakeFileData DuckLakeMetadataManager::ReadDataFile(T &row, idx_t &col_idx, b
 
 	data.path = FromRelativePath(path);
 	data.file_size_bytes = row.template GetValue<idx_t>(col_idx++);
-	data.footer_size = row.template GetValue<idx_t>(col_idx++);
+	if (!row.IsNull(col_idx)) {
+		data.footer_size = row.template GetValue<idx_t>(col_idx);
+	}
+	col_idx++;
 	if (is_encrypted) {
 		if (row.IsNull(col_idx)) {
 			throw InvalidInputException("Database is encrypted, but file %s does not have an encryption key",
@@ -454,7 +457,10 @@ WHERE data.table_id=%d AND {SNAPSHOT_ID} >= data.begin_snapshot AND ({SNAPSHOT_I
 		DuckLakeFileListEntry file_entry;
 		idx_t col_idx = 0;
 		file_entry.file = ReadDataFile(row, col_idx, IsEncrypted());
-		file_entry.row_id_start = row.GetValue<idx_t>(col_idx++);
+		if (!row.IsNull(col_idx)) {
+			file_entry.row_id_start = row.GetValue<idx_t>(col_idx);
+		}
+		col_idx++;
 		file_entry.snapshot_id = row.GetValue<idx_t>(col_idx++);
 		if (!row.IsNull(col_idx)) {
 			auto partial_file_info = row.GetValue<string>(col_idx);
