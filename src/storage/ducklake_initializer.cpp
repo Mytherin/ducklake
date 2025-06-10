@@ -51,6 +51,8 @@ string DuckLakeInitializer::GetAttachOptions() {
 
 void DuckLakeInitializer::Initialize() {
 	auto &transaction = DuckLakeTransaction::Get(context, catalog);
+	// explicitly load all secrets - work-around to secret initialization bug
+	transaction.Query("FROM duckdb_secrets()");
 	// attach the metadata database
 	auto result =
 	    transaction.Query("ATTACH {METADATA_PATH} AS {METADATA_CATALOG_NAME_IDENTIFIER}" + GetAttachOptions());
