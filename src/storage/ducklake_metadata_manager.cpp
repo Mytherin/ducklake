@@ -2288,7 +2288,7 @@ SELECT
     next_catalog_id,
     next_file_id,
     COALESCE((
-            SELECT STRING_AGG(changes_made, '')
+            SELECT STRING_AGG(changes_made, ',')
             FROM {METADATA_CATALOG}.ducklake_snapshot_changes c
             WHERE c.snapshot_id > {SNAPSHOT_ID}
             ),'') AS changes,
