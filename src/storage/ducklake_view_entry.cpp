@@ -79,7 +79,7 @@ unique_ptr<SelectStatement> DuckLakeViewEntry::ParseSelectStatement() const {
 }
 
 const SelectStatement &DuckLakeViewEntry::GetQuery() {
-	lock_guard<std::recursive_mutex> l(lock);
+	lock_guard<mutex> l(lock);
 	if (!query) {
 		// parse the query
 		query = ParseSelectStatement();
