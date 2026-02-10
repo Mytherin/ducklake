@@ -2419,17 +2419,11 @@ string DuckLakeMetadataManager::GetInlinedDeletionTableName(TableIndex table_id,
 	}
 
 	// Check if the table exists by querying duckdb_tables()
-	auto query = StringUtil::Format(
-	    "SELECT COUNT(*) FROM duckdb_tables() WHERE database_name={METADATA_CATALOG_NAME_LITERAL} AND "
-	    "schema_name={METADATA_SCHEMA_NAME_LITERAL} AND table_name = '%s'",
-	    table_name);
+	auto query = StringUtil::Format("SELECT NULL FROM {METADATA_CATALOG}.%s LIMIT 1", table_name);
 	auto result = transaction.Query(snapshot, query);
 	if (!result->HasError()) {
-		auto chunk = result->Fetch();
-		if (chunk && chunk->size() > 0 && chunk->GetValue(0, 0).GetValue<idx_t>() > 0) {
-			delete_inlined_table_cache.insert(table_id.index);
-			return table_name;
-		}
+		delete_inlined_table_cache.insert(table_id.index);
+		return table_name;
 	}
 	return string();
 }
