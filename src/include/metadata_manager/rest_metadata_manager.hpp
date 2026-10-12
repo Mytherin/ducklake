@@ -115,22 +115,23 @@ public:
 private:
 	//! Sends a request to the server, the request is not part of the commit of the transaction
 	unique_ptr<RESTJsonReader> Post(const string &endpoint, const RESTJsonWriter &request);
-	//! Adds a request to the requests that are sent when the transaction commits
+	//! Adds a catalog change to the requests that are sent when the transaction commits
 	RESTJsonOut AddCommitRequest(const string &path);
 	//! Reads inlined rows, the request has to have the table and the columns to read
 	unique_ptr<QueryResult> ReadInlinedRows(RESTJsonWriter &request);
 	unique_ptr<RESTJsonReader> GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot, bool include_catalog,
 	                                           bool include_stats);
-	void AddDataChanges(const TransactionChangeInformation &changes);
+	void AddDeletes(const TransactionChangeInformation &changes, RESTJsonOut requests);
+	void AddInserts(const TransactionChangeInformation &changes, RESTJsonOut requests);
 	void WriteDroppedFiles(RESTJsonOut parameters, TableIndex table_id);
 	optional_idx GetRowCount(DuckLakeSnapshot snapshot, const string &count, TableIndex table_id,
 	                         const string &table_name);
 
 private:
 	DuckLakeRESTClient &client;
-	//! The requests that make up the commit of the transaction
-	RESTJsonWriter commit_request;
-	RESTJsonOut commit_requests;
+	//! The catalog changes of the transaction, in the order in which they were made
+	RESTJsonWriter catalog_requests;
+	RESTJsonOut catalog_change_requests;
 	//! The data files dropped by the transaction, by table
 	map<TableIndex, vector<DuckLakeFileListEntry>> dropped_files;
 };

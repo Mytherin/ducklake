@@ -21,7 +21,7 @@ namespace duckdb {
 
 RESTMetadataManager::RESTMetadataManager(DuckLakeTransaction &transaction)
     : DuckLakeMetadataManager(transaction), client(transaction.GetCatalog().GetRESTClient()),
-      commit_requests(commit_request.Root().Arr("requests")) {
+      catalog_change_requests(catalog_requests.Root().Arr("requests")) {
 }
 
 RESTMetadataManager::~RESTMetadataManager() {
@@ -40,7 +40,7 @@ unique_ptr<RESTJsonReader> RESTMetadataManager::Post(const string &endpoint, con
 }
 
 RESTJsonOut RESTMetadataManager::AddCommitRequest(const string &path) {
-	auto request = commit_requests.AppendObj();
+	auto request = catalog_change_requests.AppendObj();
 	request.SetStr("path", path);
 	return request.Obj("parameters");
 }
@@ -672,43 +672,27 @@ static void WriteRowIds(RESTJsonOut out, const string &key, const set<idx_t> &ro
 	}
 }
 
-void RESTMetadataManager::AddDataChanges(const TransactionChangeInformation &transaction_changes) {
+static RESTJsonOut AddRequest(RESTJsonOut &requests, const string &path) {
+	auto request = requests.AppendObj();
+	request.SetStr("path", path);
+	return request.Obj("parameters");
+}
+
+void RESTMetadataManager::AddDeletes(const TransactionChangeInformation &transaction_changes, RESTJsonOut requests) {
 	auto &dropped_tables = transaction_changes.dropped_tables;
 	set<TableIndex> tables_with_deletes;
 	for (auto &entry : transaction.GetLocalChanges().Changes()) {
 		if (dropped_tables.find(entry.first) != dropped_tables.end()) {
 			continue;
 		}
-		auto table_id = ToRequestId(entry.first.index);
 		auto &changes = entry.second;
-		if (!changes.new_data_files.empty()) {
-			auto parameters = AddCommitRequest("insert_files");
-			parameters.SetInt("table_id", table_id);
-			auto files = parameters.Arr("files");
-			for (auto &file : changes.new_data_files) {
-				DuckLakeRESTSerializer::Write(files.AppendObj(), file);
-			}
-		}
-		if (changes.new_inlined_data && changes.new_inlined_data->data) {
-			auto parameters = AddCommitRequest("insert_rows");
-			parameters.SetInt("table_id", table_id);
-			WriteInlinedRows(parameters, *changes.new_inlined_data);
-		}
-		if (!changes.compactions.empty()) {
-			auto parameters = AddCommitRequest("compact");
-			parameters.SetInt("table_id", table_id);
-			auto compactions = parameters.Arr("compactions");
-			for (auto &compaction : changes.compactions) {
-				DuckLakeRESTSerializer::Write(compactions.AppendObj(), compaction);
-			}
-		}
 		if (changes.new_delete_files.empty() && changes.new_inlined_data_deletes.empty() &&
 		    !changes.new_inlined_file_deletes) {
 			continue;
 		}
 		tables_with_deletes.insert(entry.first);
-		auto parameters = AddCommitRequest("delete_data");
-		parameters.SetInt("table_id", table_id);
+		auto parameters = AddRequest(requests, "delete_data");
+		parameters.SetInt("table_id", ToRequestId(entry.first.index));
 		auto delete_files = parameters.Arr("delete_files");
 		for (auto &file_entry : changes.new_delete_files) {
 			for (auto &delete_file : file_entry.second) {
@@ -736,7 +720,7 @@ void RESTMetadataManager::AddDataChanges(const TransactionChangeInformation &tra
 		    dropped_tables.find(entry.first) != dropped_tables.end()) {
 			continue;
 		}
-		auto parameters = AddCommitRequest("delete_data");
+		auto parameters = AddRequest(requests, "delete_data");
 		parameters.SetInt("table_id", ToRequestId(entry.first.index));
 		WriteDroppedFiles(parameters, entry.first);
 	}
@@ -744,9 +728,41 @@ void RESTMetadataManager::AddDataChanges(const TransactionChangeInformation &tra
 		if (dropped_tables.find(table_id) != dropped_tables.end()) {
 			continue;
 		}
-		auto parameters = AddCommitRequest("delete_data");
+		auto parameters = AddRequest(requests, "delete_data");
 		parameters.SetInt("table_id", ToRequestId(table_id.index));
 		parameters.SetBool("delete_attempted", true);
+	}
+}
+
+void RESTMetadataManager::AddInserts(const TransactionChangeInformation &transaction_changes, RESTJsonOut requests) {
+	auto &dropped_tables = transaction_changes.dropped_tables;
+	for (auto &entry : transaction.GetLocalChanges().Changes()) {
+		if (dropped_tables.find(entry.first) != dropped_tables.end()) {
+			continue;
+		}
+		auto table_id = ToRequestId(entry.first.index);
+		auto &changes = entry.second;
+		if (!changes.new_data_files.empty()) {
+			auto parameters = AddRequest(requests, "insert_files");
+			parameters.SetInt("table_id", table_id);
+			auto files = parameters.Arr("files");
+			for (auto &file : changes.new_data_files) {
+				DuckLakeRESTSerializer::Write(files.AppendObj(), file);
+			}
+		}
+		if (changes.new_inlined_data && changes.new_inlined_data->data) {
+			auto parameters = AddRequest(requests, "insert_rows");
+			parameters.SetInt("table_id", table_id);
+			WriteInlinedRows(parameters, *changes.new_inlined_data);
+		}
+		if (!changes.compactions.empty()) {
+			auto parameters = AddRequest(requests, "compact");
+			parameters.SetInt("table_id", table_id);
+			auto compactions = parameters.Arr("compactions");
+			for (auto &compaction : changes.compactions) {
+				DuckLakeRESTSerializer::Write(compactions.AppendObj(), compaction);
+			}
+		}
 	}
 }
 
@@ -772,11 +788,21 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 	if (!flush_transaction.GetNewNameMaps().name_maps.empty()) {
 		throw NotImplementedException("DuckLake REST catalogs do not support name maps yet");
 	}
-	AddDataChanges(transaction_changes);
+	RESTJsonWriter commit_request;
+	auto root = commit_request.Root();
+	auto requests = root.Arr("requests");
+	// deletes go first, as the catalog changes of the transaction can depend on them (e.g. SET NOT NULL)
+	AddDeletes(transaction_changes, requests);
+	RESTJsonReader catalog_changes(catalog_requests.ToString());
+	for (auto &request : catalog_changes.Root().Get("requests").Items()) {
+		requests.AppendRaw(commit_request.writer.CreateCopy(request.val));
+	}
+	// inserts go last, they are in the format of the tables at the end of the transaction
+	AddInserts(transaction_changes, requests);
 	auto &flushed_tables = flush_transaction.GetFlushedInlinedTables();
 	auto &flushed_file_deletions = flush_transaction.GetFlushedInlinedFileDeletions();
 	if (!flushed_tables.empty() || !flushed_file_deletions.empty()) {
-		auto parameters = AddCommitRequest("flush_inlined_data");
+		auto parameters = AddRequest(requests, "flush_inlined_data");
 		auto inlined_tables = parameters.Arr("inlined_tables");
 		for (auto &flushed_table : flushed_tables) {
 			auto table_out = inlined_tables.AppendObj();
@@ -791,7 +817,6 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 			deletions_out.SetUInt("flush_snapshot_id", entry.second);
 		}
 	}
-	auto root = commit_request.Root();
 	if (transaction_snapshot.snapshot_id != DConstants::INVALID_INDEX) {
 		root.SetUInt("snapshot_id", transaction_snapshot.snapshot_id);
 	}

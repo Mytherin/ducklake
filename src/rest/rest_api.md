@@ -401,6 +401,10 @@ when that is safe; otherwise it fails with a `409`.
 Columns get the field ids `1..n` in the order of the columns (nested fields are numbered depth-first), as in
 `CREATE TABLE`.
 
+Clients send the deletes of committed data first, then the catalog changes in the order in which they were made, and
+then the inserted data in the format of the tables at the end of the transaction. This order matters: e.g. a
+`SET NOT NULL` that follows a delete of the `NULL` rows only succeeds after the delete.
+
 Requests that refer to existing entries identify them by `schema_path` and `name`. They are applied in order, so a
 name always refers to the entry as it is at that point of the transaction.
 
