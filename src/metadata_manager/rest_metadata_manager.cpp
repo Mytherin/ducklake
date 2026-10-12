@@ -879,9 +879,9 @@ static bool AltersView(const AlterInfo &info) {
 }
 
 //! The type an ALTER TABLE gives a column, if any
-static optional_ptr<const LogicalType> GetAlteredType(const AlterInfo &info) {
+static LogicalType GetAlteredType(const AlterInfo &info) {
 	if (info.type != AlterType::ALTER_TABLE) {
-		return nullptr;
+		return LogicalType::INVALID;
 	}
 	auto &alter = info.Cast<AlterTableInfo>();
 	switch (alter.alter_table_type) {
@@ -892,15 +892,15 @@ static optional_ptr<const LogicalType> GetAlteredType(const AlterInfo &info) {
 	case AlterTableType::ALTER_COLUMN_TYPE:
 		return alter.Cast<ChangeColumnTypeInfo>().target_type;
 	default:
-		return nullptr;
+		return LogicalType::INVALID;
 	}
 }
 
 void RESTMetadataManager::OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) {
 	auto altered_type = GetAlteredType(info);
-	if (altered_type) {
-		DuckLakeTypes::ToString(*altered_type);
-		DuckLakeTypes::CheckSupportedType(*altered_type, transaction.GetCatalog().GetDuckLakeVersion());
+	if (altered_type.id() != LogicalTypeId::INVALID) {
+		DuckLakeTypes::ToString(altered_type);
+		DuckLakeTypes::CheckSupportedType(altered_type, transaction.GetCatalog().GetDuckLakeVersion());
 	}
 	auto parameters = AddCommitRequest(AltersView(info) ? "alter_view" : "alter_table");
 	WriteSchemaPath(parameters, schema);

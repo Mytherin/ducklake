@@ -5,7 +5,7 @@
 include test/template/rest_setup.test_template
 
 statement ok
-ATTACH 'ducklake:rest:{rest_server}' AS dl
+ATTACH 'ducklake:rest:{rest_server}' AS dl (DATA_INLINING_ROW_LIMIT 10)
 
 statement ok
 CREATE TABLE dl.t(i INTEGER, s VARCHAR)
