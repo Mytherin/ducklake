@@ -395,6 +395,18 @@ static void TableChangesEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input,
 	}
 }
 
+static void DuckLakeTablesEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
+	auto names = output.Arr("table_names");
+	for (auto &name : request.GetMetadataManager().GetMetadataTableNames()) {
+		names.AppendStr(name);
+	}
+}
+
+static void DuckLakeTableEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
+	auto result = request.GetMetadataManager().ReadMetadataTable(input.Str("table_name"));
+	WriteQueryResult(output, *result);
+}
+
 static void KnownFilesEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
 	auto paths = output.Arr("paths");
 	for (auto &path : request.GetMetadataManager().GetKnownFilePaths()) {
@@ -906,6 +918,8 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTServer::GetEndpoints()
 	    {"files_for_cleanup", FilesForCleanupEndpoint},
 	    {"remove_cleaned_up_files", RemoveCleanedUpFilesEndpoint},
 	    {"known_files", KnownFilesEndpoint},
+	    {"ducklake_tables", DuckLakeTablesEndpoint},
+	    {"ducklake_table", DuckLakeTableEndpoint},
 	    {"files_for_compaction", FilesForCompactionEndpoint},
 	    {"table_sizes", TableSizesEndpoint},
 	    {"column_mappings", ColumnMappingsEndpoint},

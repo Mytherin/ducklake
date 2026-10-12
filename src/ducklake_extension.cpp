@@ -108,6 +108,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	DuckLakeCurrentSnapshotFunction current_snapshot;
 	loader.RegisterFunction(current_snapshot);
 
+	DuckLakeMetadataTableFunction metadata_table;
+	loader.RegisterFunction(metadata_table);
+
 	DuckLakeLastCommittedSnapshotFunction last_committed;
 	loader.RegisterFunction(last_committed);
 

@@ -167,6 +167,24 @@ Response:
 }
 ```
 
+### `ducklake_tables` / `ducklake_table`
+
+Give access to the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...) as they are
+stored in the catalog, e.g. to inspect a DuckLake or to export all of its metadata. `ducklake_tables` returns the names
+of the tables: `{"table_names": ["ducklake_column", "ducklake_data_file", ...]}`. `ducklake_table` returns the contents
+of one table, in the format of `read_inlined_data`:
+
+Request: `{"table_name": "ducklake_snapshot"}`, response:
+
+```json
+{"columns": [{"name": "snapshot_id", "type": {"id": "BIGINT"}}, {"name": "snapshot_time", "type": {"id": "TIMESTAMP_TZ"}},
+             {"name": "schema_version", "type": {"id": "BIGINT"}}, {"name": "next_catalog_id", "type": {"id": "BIGINT"}},
+             {"name": "next_file_id", "type": {"id": "BIGINT"}}],
+ "rows": [[0, "2026-09-30 10:50:52.394735+00", 0, 1, 0]]}
+```
+
+In SQL, `ducklake_metadata_table('lake', 'ducklake_snapshot')` reads a table of the metadata catalog of any DuckLake.
+
 ### `snapshot_data`
 
 Returns a snapshot together with (optionally) the catalog and the table statistics of that snapshot, so a client can

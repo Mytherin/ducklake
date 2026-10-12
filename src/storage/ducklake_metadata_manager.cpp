@@ -5003,6 +5003,32 @@ vector<string> DuckLakeMetadataManager::GetKnownFilePaths() {
 	return result;
 }
 
+vector<string> DuckLakeMetadataManager::GetMetadataTableNames() {
+	auto &catalog = transaction.GetCatalog();
+	auto schema_name = catalog.MetadataSchemaName();
+	if (schema_name.empty()) {
+		schema_name = transaction.GetDefaultSchemaName();
+	}
+	auto &context = *transaction.GetConnection().context;
+	auto &metadata_catalog = Catalog::GetCatalog(context, Identifier(catalog.MetadataDatabaseName()));
+	auto &schema = metadata_catalog.GetSchema(context, schema_name);
+	vector<string> names;
+	schema.Scan(context, CatalogType::TABLE_ENTRY,
+	            [&](CatalogEntry &entry) { names.push_back(entry.name.GetIdentifierName()); });
+	std::sort(names.begin(), names.end());
+	return names;
+}
+
+unique_ptr<QueryResult> DuckLakeMetadataManager::ReadMetadataTable(const string &table_name) {
+	auto names = GetMetadataTableNames();
+	if (std::find(names.begin(), names.end(), table_name) == names.end()) {
+		throw CatalogException("\"%s\" is not a table of the DuckLake metadata catalog", table_name);
+	}
+	auto result = Query("SELECT * FROM {METADATA_CATALOG}." + SQLIdentifier::ToString(table_name));
+	result->ThrowIfError("Failed to read a table of the DuckLake metadata catalog: ");
+	return result;
+}
+
 vector<DuckLakeFileForCleanup> DuckLakeMetadataManager::GetOrphanFilesForCleanup(const string &older_than) {
 	string filter;
 	if (!older_than.empty()) {

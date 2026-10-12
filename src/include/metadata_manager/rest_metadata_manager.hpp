@@ -97,6 +97,8 @@ public:
 	void DeleteSnapshots(const vector<DuckLakeSnapshotInfo> &snapshots) override;
 	vector<DuckLakeFileForCleanup> GetOldFilesForCleanup(const string &older_than) override;
 	vector<string> GetKnownFilePaths() override;
+	vector<string> GetMetadataTableNames() override;
+	unique_ptr<QueryResult> ReadMetadataTable(const string &table_name) override;
 	void SetConfigOption(const DuckLakeConfigOption &option) override;
 	bool ResetConfigOption(const DuckLakeConfigOption &option) override;
 	vector<DuckLakeTableSizeInfo> GetTableSizes(DuckLakeSnapshot snapshot) override;
@@ -127,8 +129,8 @@ private:
 	unique_ptr<RESTJsonReader> Post(const string &endpoint, const RESTJsonWriter &request);
 	//! Adds a catalog change to the requests that are sent when the transaction commits
 	RESTJsonOut AddCommitRequest(const string &path);
-	//! Reads inlined rows, the request has to have the table and the columns to read
-	unique_ptr<QueryResult> ReadInlinedRows(RESTJsonWriter &request);
+	//! Reads rows, which an endpoint returns as "columns" and "rows"
+	unique_ptr<QueryResult> ReadRows(const string &endpoint, RESTJsonWriter &request);
 	unique_ptr<RESTJsonReader> GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot, bool include_catalog,
 	                                           bool include_stats);
 	void AddDeletes(const TransactionChangeInformation &changes, RESTJsonOut requests);

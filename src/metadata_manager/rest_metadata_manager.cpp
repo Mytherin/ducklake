@@ -247,8 +247,8 @@ bool RESTMetadataManager::IsColumnCreatedWithTable(const string &table_name, con
 	return response->Root().Get("created_with_table").Bool();
 }
 
-unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedRows(RESTJsonWriter &request) {
-	auto response = Post("read_inlined_data", request);
+unique_ptr<QueryResult> RESTMetadataManager::ReadRows(const string &endpoint, RESTJsonWriter &request) {
+	auto response = Post(endpoint, request);
 	auto response_root = response->Root();
 	vector<Identifier> names;
 	vector<LogicalType> types;
@@ -312,7 +312,7 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedData(DuckLakeSnapshot sn
                                                              const vector<string> &columns_to_read) {
 	RESTJsonWriter request;
 	InlinedReadRequest(request, snapshot, "scan", inlined_table_name, columns_to_read);
-	return ReadInlinedRows(request);
+	return ReadRows("read_inlined_data", request);
 }
 
 unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedDataInsertions(DuckLakeSnapshot start_snapshot,
@@ -322,7 +322,7 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedDataInsertions(DuckLakeS
 	RESTJsonWriter request;
 	auto root = InlinedReadRequest(request, end_snapshot, "insertions", inlined_table_name, columns_to_read);
 	DuckLakeRESTSerializer::Write(root.Obj("start_snapshot"), start_snapshot);
-	return ReadInlinedRows(request);
+	return ReadRows("read_inlined_data", request);
 }
 
 unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedDataDeletions(DuckLakeSnapshot start_snapshot,
@@ -332,7 +332,7 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedDataDeletions(DuckLakeSn
 	RESTJsonWriter request;
 	auto root = InlinedReadRequest(request, end_snapshot, "deletions", inlined_table_name, columns_to_read);
 	DuckLakeRESTSerializer::Write(root.Obj("start_snapshot"), start_snapshot);
-	return ReadInlinedRows(request);
+	return ReadRows("read_inlined_data", request);
 }
 
 unique_ptr<QueryResult> RESTMetadataManager::ReadAllInlinedDataForFlush(DuckLakeSnapshot snapshot,
@@ -345,7 +345,7 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadAllInlinedDataForFlush(DuckLake
 	root.SetUInt("table_id", table.GetTableId().index);
 	root.SetStr("order_by", sort_order_sql);
 	WriteTransactionDeletes(root, table, inlined_table_name);
-	return ReadInlinedRows(request);
+	return ReadRows("read_inlined_data", request);
 }
 
 vector<DuckLakeFlushedRowDeletion>
@@ -525,6 +525,22 @@ vector<DuckLakeFileForCleanup> RESTMetadataManager::GetOldFilesForCleanup(const 
 		result.push_back(std::move(info));
 	}
 	return result;
+}
+
+vector<string> RESTMetadataManager::GetMetadataTableNames() {
+	RESTJsonWriter request;
+	auto response = Post("ducklake_tables", request);
+	vector<string> result;
+	for (auto &name : response->Root().Get("table_names").Items()) {
+		result.push_back(name.Str());
+	}
+	return result;
+}
+
+unique_ptr<QueryResult> RESTMetadataManager::ReadMetadataTable(const string &table_name) {
+	RESTJsonWriter request;
+	request.Root().SetStr("table_name", table_name);
+	return ReadRows("ducklake_table", request);
 }
 
 vector<string> RESTMetadataManager::GetKnownFilePaths() {

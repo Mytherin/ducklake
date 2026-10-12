@@ -398,6 +398,10 @@ public:
 	vector<DuckLakeFileForCleanup> GetFilesForCleanup(const string &older_than, CleanupType type);
 	//! The paths of all files the metadata refers to
 	virtual vector<string> GetKnownFilePaths();
+	//! The names of the tables of the metadata catalog
+	virtual vector<string> GetMetadataTableNames();
+	//! The contents of a table of the metadata catalog
+	virtual unique_ptr<QueryResult> ReadMetadataTable(const string &table_name);
 
 	virtual void RemoveFilesScheduledForCleanup(const vector<DuckLakeFileForCleanup> &cleaned_up_files);
 	static string DropSchemas(const set<SchemaIndex> &ids);

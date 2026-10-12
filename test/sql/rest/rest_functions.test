@@ -145,6 +145,22 @@ SELECT (SELECT id FROM dl.current_snapshot()) = max(snapshot_id) FROM dl.snapsho
 ----
 true
 
+# the tables of the metadata catalog
+query I
+SELECT count(*) > 0 FROM ducklake_metadata_table('dl', 'ducklake_snapshot')
+----
+true
+
+query I
+SELECT table_name FROM ducklake_metadata_table('dl', 'ducklake_table') WHERE end_snapshot IS NULL
+----
+t
+
+statement error
+SELECT * FROM ducklake_metadata_table('dl', 'pg_class')
+----
+is not a table of the DuckLake metadata catalog
+
 statement ok
 DETACH dl
 
