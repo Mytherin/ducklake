@@ -10,7 +10,7 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/mutex.hpp"
-#include "rest/ducklake_rest_json.hpp"
+#include "rest/ducklake_rest_api.hpp"
 
 namespace duckdb_httplib {
 class Client;
@@ -19,14 +19,13 @@ class Client;
 namespace duckdb {
 
 //! Sends requests to a DuckLake REST server, the connections to the server are pooled
-class DuckLakeRESTClient {
+class DuckLakeRESTClient : public DuckLakeRESTClientAPI {
 public:
 	//! Requests carry the token as a bearer token, if it is set
 	DuckLakeRESTClient(string base_url, string token);
-	~DuckLakeRESTClient();
+	~DuckLakeRESTClient() override;
 
-	//! Sends the request to an endpoint, rethrows the error reported by the server
-	unique_ptr<RESTJsonReader> Post(const string &endpoint, const RESTJsonWriter &request);
+	unique_ptr<RESTJsonReader> Post(const string &endpoint, const RESTJsonWriter &request) override;
 	//! Sends a request body to an endpoint, returns the status code and the body of the response
 	int32_t PostRaw(const string &endpoint, const string &body, string &response);
 

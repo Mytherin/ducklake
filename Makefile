@@ -24,5 +24,8 @@ endif
 # Include the Makefile from extension-ci-tools
 include extension-ci-tools/makefiles/duckdb_extension.Makefile
 
+generate-rest-api:
+	python3 scripts/generate_rest_api.py
+
 unittest_relassert:
 	python3 duckdb/scripts/ci/run_tests.py build/relassert/test/unittest --batch-timeout 900 --max-retries 10 $(T)

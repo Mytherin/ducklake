@@ -7,7 +7,6 @@
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 #include "ducklake_extension.hpp"
-#include "rest/ducklake_rest_serialization.hpp"
 #include "functions/ducklake_table_functions.hpp"
 #include "storage/ducklake_catalog.hpp"
 #include "storage/ducklake_transaction.hpp"
@@ -41,16 +40,18 @@ DuckLakeSnapshot DuckLakeRESTRequest::GetSnapshotById(idx_t snapshot_id) {
 	return transaction->GetSnapshot(at_clause);
 }
 
-DuckLakeSnapshot DuckLakeRESTRequest::GetSnapshot(RESTJsonIn request, const string &key) {
-	auto snapshot = request.TryGet(key);
-	if (!snapshot.IsNull()) {
-		return DuckLakeRESTSerializer::ReadSnapshot(snapshot);
+DuckLakeSnapshot DuckLakeRESTRequest::GetSnapshot(const DuckLakeSnapshot &snapshot, optional_idx snapshot_id) {
+	if (!RESTIsNull(snapshot)) {
+		return snapshot;
 	}
-	auto snapshot_id = request.TryGet(key + "_id");
-	if (snapshot_id.IsNull()) {
+	if (!snapshot_id.IsValid()) {
 		return transaction->GetSnapshot();
 	}
-	return GetSnapshotById(snapshot_id.UInt());
+	return GetSnapshotById(snapshot_id.GetIndex());
+}
+
+DuckLakeSnapshot DuckLakeRESTRequest::GetSnapshot(const RESTSnapshotReference &reference) {
+	return GetSnapshot(reference.snapshot, reference.snapshot_id);
 }
 
 //===--------------------------------------------------------------------===//
@@ -89,14 +90,9 @@ static int32_t StatusCodeForError(ExceptionType type) {
 
 int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &body, string &response) {
 	try {
-		auto &endpoints = GetEndpoints();
+		auto &endpoints = DuckLakeRESTAPI::GetEndpoints();
 		auto entry = endpoints.find(endpoint);
 		string request_body = body.empty() ? "{}" : body;
-		if (entry == endpoints.end() && IsCommitRequest(endpoint)) {
-			// a request of a commit on its own commits a transaction with only this request
-			request_body = "{\"requests\": [{\"path\": \"" + endpoint + "\", \"parameters\": " + request_body + "}]}";
-			entry = endpoints.find("commit_transaction");
-		}
 		if (entry == endpoints.end()) {
 			throw InvalidInputException("Unknown DuckLake REST endpoint \"%s\"", endpoint);
 		}
@@ -108,7 +104,7 @@ int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &
 		RESTJsonWriter output;
 		DuckLakeRESTRequest request(*database, catalog_name);
 		try {
-			entry->second(request, input.Root(), output.Root());
+			entry->second(request, input.Root(), output);
 			if (request.connection.HasActiveTransaction()) {
 				request.connection.Commit();
 			}

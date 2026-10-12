@@ -196,22 +196,21 @@ static string FilterNodeSQL(const DuckLakeFilterNode &node, const DuckLakeTableE
 	}
 }
 
-void DuckLakeRESTFilters::Write(RESTJsonOut out, const FilterPushdownInfo &filters, const DuckLakeTableEntry &table) {
-	auto expressions = out.Arr("expressions");
+RESTScanFilters DuckLakeRESTFilters::Write(const FilterPushdownInfo &filters, const DuckLakeTableEntry &table) {
+	RESTScanFilters result;
 	for (auto &entry : filters.column_filters) {
 		auto sql = ColumnFilterSQL(entry.second, table);
 		if (!sql.empty()) {
-			expressions.AppendStr(sql);
+			result.expressions.push_back(std::move(sql));
 		}
 	}
 	for (auto &tree : filters.filter_trees) {
 		auto sql = FilterNodeSQL(*tree.root, table);
 		if (!sql.empty()) {
-			expressions.AppendStr(sql);
+			result.expressions.push_back(std::move(sql));
 		}
 	}
-	vector<idx_t> runtime_filter_columns = filters.runtime_filter_columns;
-	auto dynamic_filters = out.Arr("dynamic_filters");
+	result.runtime_filter_columns = filters.runtime_filter_columns;
 	for (auto &entry : filters.column_filters) {
 		auto &filter = entry.second;
 		if (!filter.table_filter) {
@@ -220,7 +219,7 @@ void DuckLakeRESTFilters::Write(RESTJsonOut out, const FilterPushdownInfo &filte
 		if (filter.table_filter->expr &&
 		    ExpressionFilter::ContainsInternalFunction(*filter.table_filter->expr, PrefixRangeScalarFun::NAME)) {
 			// prefix ranges are evaluated against the min/max of the files at runtime
-			runtime_filter_columns.push_back(filter.column_field_index);
+			result.runtime_filter_columns.push_back(filter.column_field_index);
 		}
 		auto dynamic_filter_data = ExpressionFilter::GetOptionalDynamicFilterData(*filter.table_filter);
 		if (!dynamic_filter_data) {
@@ -231,16 +230,14 @@ void DuckLakeRESTFilters::Write(RESTJsonOut out, const FilterPushdownInfo &filte
 			lock_guard<mutex> guard(dynamic_filter_data->lock);
 			comparison_type = dynamic_filter_data->comparison_type;
 		}
-		auto dynamic_filter = dynamic_filters.AppendObj();
-		dynamic_filter.SetUInt("column_id", filter.column_field_index);
-		dynamic_filter.SetStr("comparison_type", EnumUtil::ToString(comparison_type));
-		dynamic_filter.SetRaw("type", RESTJson::TypeToJson(*out.writer, filter.column_type));
-		runtime_filter_columns.push_back(filter.column_field_index);
+		RESTDynamicFilter dynamic_filter;
+		dynamic_filter.column_id = filter.column_field_index;
+		dynamic_filter.comparison_type = EnumUtil::ToString(comparison_type);
+		dynamic_filter.type = filter.column_type;
+		result.dynamic_filters.push_back(std::move(dynamic_filter));
+		result.runtime_filter_columns.push_back(filter.column_field_index);
 	}
-	auto runtime_columns = out.Arr("runtime_filter_columns");
-	for (auto column_id : runtime_filter_columns) {
-		runtime_columns.AppendUInt(column_id);
-	}
+	return result;
 }
 
 //===--------------------------------------------------------------------===//
@@ -469,14 +466,14 @@ static void AddColumnFilter(FilterPushdownInfo &filters, ColumnFilterInfo filter
 	existing.table_filter = make_uniq<ExpressionFilter>(std::move(combined));
 }
 
-unique_ptr<FilterPushdownInfo> DuckLakeRESTFilters::Read(ClientContext &context, RESTJsonIn in,
+unique_ptr<FilterPushdownInfo> DuckLakeRESTFilters::Read(ClientContext &context, const RESTScanFilters &filters,
                                                          const DuckLakeTableEntry &table) {
 	auto result = make_uniq<FilterPushdownInfo>();
 	DuckLakeRESTFilterBinder binder(context, table);
-	for (auto &expression : in.TryGet("expressions").Items()) {
+	for (auto &expression : filters.expressions) {
 		vector<unique_ptr<ParsedExpression>> conjuncts;
 		try {
-			auto parsed = Parser::GetBuiltinParser().ParseExpressionList(expression.Str());
+			auto parsed = Parser::GetBuiltinParser().ParseExpressionList(expression);
 			for (auto &expr : parsed) {
 				SplitConjuncts(std::move(expr), conjuncts);
 			}
@@ -499,13 +496,11 @@ unique_ptr<FilterPushdownInfo> DuckLakeRESTFilters::Read(ClientContext &context,
 			result->filter_trees.push_back(std::move(tree));
 		}
 	}
-	for (auto &column_id : in.TryGet("runtime_filter_columns").Items()) {
-		result->runtime_filter_columns.push_back(column_id.UInt());
-	}
-	for (auto &dynamic_filter : in.TryGet("dynamic_filters").Items()) {
-		result->dynamic_filters.push_back({dynamic_filter.UInt("column_id"),
-		                                   EnumUtil::FromString<ExpressionType>(dynamic_filter.Str("comparison_type")),
-		                                   RESTJson::TypeFromJson(dynamic_filter.Get("type"))});
+	result->runtime_filter_columns = filters.runtime_filter_columns;
+	for (auto &dynamic_filter : filters.dynamic_filters) {
+		result->dynamic_filters.push_back({dynamic_filter.column_id,
+		                                   EnumUtil::FromString<ExpressionType>(dynamic_filter.comparison_type),
+		                                   dynamic_filter.type});
 	}
 	return result;
 }

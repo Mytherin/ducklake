@@ -118,339 +118,391 @@ Values whose type is known from the context (e.g. the rows of a table) are encod
 Values without a known type (e.g. tags) are `null`, a JSON string for `VARCHAR` values, or an object
 `{"type": <type>, "value": <value>}`.
 
-### Snapshots
+## Specification
 
-```json
-{"snapshot_id": 3, "schema_version": 1, "next_catalog_id": 2, "next_file_id": 1}
-```
+The API is specified as a [Smithy](https://smithy.io) model in `src/rest/api/*.smithy`: the `DuckLake` service, an
+operation per endpoint (`POST /v1/<endpoint>`) and the shapes they exchange. The reference below, the request and
+response structures of the server and the client, and their JSON conversions are generated from it with
+`python3 scripts/generate_rest_api.py`, which reads the model with the
+[Smithy CLI](https://smithy.io/2.0/guides/smithy-cli/cli_installation.html) (`smithy` on the `PATH`, or `SMITHY`).
+`--check` verifies that the generated files are up to date. To change the API, change the model and run the script.
+
+Operations that are `@readonly` read the catalog, the members of the `CommitRequest` union are the requests of a commit
+(`commit_transaction`), and the other operations are maintenance endpoints. The traits of `src/rest/api/codegen.smithy`
+bind shapes to the C++ classes of DuckLake; they do not change the JSON of the API. Members are encoded as follows:
+
+| Type           | Smithy shape     | JSON                                                                         |
+|----------------|------------------|------------------------------------------------------------------------------|
+| `string`       | `String`         | a string                                                                     |
+| `bool`         | `Boolean`        | a boolean                                                                    |
+| `uint64`       | `UInt64`         | a non-negative integer                                                       |
+| `int64`        | `Long`           | an integer                                                                   |
+| `double`       | `Double`         | a number                                                                     |
+| `timestamp`    | `Timestamp`      | a timestamp with time zone as a string, e.g. `"2025-01-01 00:00:00+00"`      |
+| `value`        | `Value`          | a [value without a known type](#values)                                      |
+| `logical_type` | `LogicalType`    | a [type](#types)                                                             |
+| `rows`         | `Rows`           | an array of rows, each an array of [values](#values) of the types of the columns |
+| `json`         | `Document`       | any JSON value, specified by the description                                 |
+| `list of T`    | `list`           | an array                                                                     |
+| `object of T`  | `map`            | an object with arbitrary keys                                                |
+
+Members that are not `@required` and have no default are optional: they can be `null` or absent. Unions, like
+`CommitRequest`, are objects with exactly one member, e.g. `{"create_table": {...}}`.
+
+<!-- BEGIN GENERATED REFERENCE: edit src/rest/api/*.smithy and run scripts/generate_rest_api.py -->
 
 ## Read Endpoints
 
-### `table_sizes`
+These endpoints read the catalog. Each request runs in a transaction of its own on the server.
 
-Returns the storage used by each table at a snapshot. Request: `{"snapshot_id": 3}`, response:
-`{"tables": [{"schema_id": 0, "table_id": 1, "table_name": "t", "table_uuid": "...", "file_size_bytes": 100,
-"delete_file_size_bytes": 0, "file_count": 1, "delete_file_count": 0}]}`
+### `column_created_with_table`
+
+Returns whether a column was created together with its table (rather than added later).
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_name` | `string` | The table. |
+| `column_name` | `string` | The column. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `created_with_table` | `bool` | Whether the column was created with the table. |
 
 ### `column_mappings`
 
-Returns the name maps (`ducklake_column_mapping` / `ducklake_name_mapping`) of files that were added with
-`ducklake_add_data_files`, starting from a mapping id. Request: `{"start_from": 5}`, response:
+Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
 
-```json
-{"mappings": [{"table_id": 1, "mapping_id": 5, "type": "map_by_name",
-               "columns": [{"column_id": 0, "source_name": "j", "target_field_id": 1, "hive_partition": false,
-                            "parent_column": null}]}]}
-```
+Request:
 
-### `table_changes`
+| Field | Type | Description |
+|-------|------|-------------|
+| `start_from` | `uint64` (optional) | The first mapping id to return. |
 
-Returns the files that hold the changes of a table between two snapshots, for change data feeds.
+Response:
 
-| Parameter           | Description                                                                         |
-|---------------------|-------------------------------------------------------------------------------------|
-| `table_id`          | The table.                                                                          |
-| `start_snapshot_id` | The first snapshot of the range.                                                    |
-| `snapshot_id`       | The last snapshot of the range.                                                     |
-| `changes`           | `"insertions"`: the files with inserted rows, in the format of `select`. `"deletions"`: the files with deleted rows (below). |
-
-Deletions:
-
-```json
-{"files": [{"file": {...}, "delete_file": {...}, "previous_delete_file": {...}, "record_count": 10,
-            "row_id_start": 0, "mapping_id": null, "snapshot_id": 3, "file_deleted": false, "start_snapshot": 2,
-            "end_snapshot": 4, "file_id": 1, "inlined_file_deletions": [{"row_id": 3, "snapshot_id": 3}]}]}
-```
-
-Inlined changes are read with `read_inlined_data` in `insertions` / `deletions` mode.
+| Field | Type | Description |
+|-------|------|-------------|
+| `mappings` | list of [`NameMap`](#namemap) (default `[]`) | The name maps. |
 
 ### `config`
 
 Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 
-Response:
+The `data_path` is the resolved data path of the served DuckLake.
 
-```json
-{
-  "tags": [{"key": "version", "value": "1.1-dev1"}, {"key": "data_path", "value": "/data/"}],
-  "schema_settings": [{"schema_id": 0, "key": "...", "value": "..."}],
-  "table_settings": [{"table_id": 1, "key": "...", "value": "..."}]
-}
-```
+Request: an empty object.
 
-### `ducklake_tables` / `ducklake_table`
-
-Give access to the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...) as they are
-stored in the catalog, e.g. to inspect a DuckLake or to export all of its metadata. `ducklake_tables` returns the names
-of the tables: `{"table_names": ["ducklake_column", "ducklake_data_file", ...]}`. `ducklake_table` returns the contents
-of one table, in the format of `read_inlined_data`:
-
-Request: `{"table_name": "ducklake_snapshot"}`, response:
-
-```json
-{"columns": [{"name": "snapshot_id", "type": {"id": "BIGINT"}}, {"name": "snapshot_time", "type": {"id": "TIMESTAMP_TZ"}},
-             {"name": "schema_version", "type": {"id": "BIGINT"}}, {"name": "next_catalog_id", "type": {"id": "BIGINT"}},
-             {"name": "next_file_id", "type": {"id": "BIGINT"}}],
- "rows": [[0, "2026-09-30 10:50:52.394735+00", 0, 1, 0]]}
-```
-
-In SQL, `ducklake_metadata_table('lake', 'ducklake_snapshot')` reads a table of the metadata catalog of any DuckLake.
-
-### `snapshot_data`
-
-Returns a snapshot together with (optionally) the catalog and the table statistics of that snapshot, so a client can
-start a transaction in a single round-trip.
-
-| Parameter         | Description                                                                              |
-|-------------------|------------------------------------------------------------------------------------------|
-| `snapshot_id`     | The snapshot to return, the latest snapshot if absent.                                   |
-| `at`              | `{"unit": "version" \| "timestamp", "value": <value>}` - find the snapshot of an `AT` clause. |
-| `bound`           | `"upper"` (default) or `"lower"`: whether a timestamp finds the last snapshot before or the first snapshot after it. |
-| `include_catalog` | Whether to return the catalog (schemas, tables, views, macros, partitioning, sorting).   |
-| `include_stats`   | Whether to return the table statistics.                                                  |
-| `cached_metadata_version` | The schema version of the latest catalog the client has loaded. If the snapshot has a different schema version, its catalog is returned. |
-| `cached_data_version` | The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a different next file id, its statistics are returned. |
-
-Clients pass `cached_metadata_version` and `cached_data_version` when they start a transaction, so they get the
-latest snapshot and, if it changed since, its catalog and statistics in a single round-trip.
-
-Response:
-
-```json
-{
-  "snapshot": {"snapshot_id": 1, "schema_version": 1, "next_catalog_id": 2, "next_file_id": 0},
-  "catalog": {
-    "schemas": [{"schema_id": 0, "parent_schema_id": null, "schema_uuid": "...", "schema_name": "main",
-                 "path": "/data/main/", "tags": []}],
-    "tables": [{
-      "table_id": 1, "schema_id": 0, "table_uuid": "...", "table_name": "t", "path": "/data/main/t/",
-      "columns": [{"column_id": 1, "column_name": "i", "column_type": "int32", "initial_default": null,
-                   "default_value": null, "default_value_type": "", "nulls_allowed": true, "tags": [],
-                   "children": []}],
-      "tags": [],
-      "inlined_data_tables": [{"table_name": "ducklake_inlined_data_1_1", "schema_version": 1}]
-    }],
-    "views": [{"view_id": 2, "schema_id": 0, "view_uuid": "...", "view_name": "v", "dialect": "duckdb",
-               "column_aliases": [], "sql": "SELECT ...", "tags": [], "column_tags": []}],
-    "macros": [{"schema_id": 0, "macro_id": 3, "macro_name": "m", "implementations": [
-      {"dialect": "duckdb", "sql": "a + 1", "type": "scalar",
-       "parameters": [{"parameter_name": "a", "parameter_type": "unknown", "default_value": null,
-                       "default_value_type": ""}]}]}],
-    "partitions": [{"partition_id": 4, "table_id": 1,
-                    "fields": [{"partition_key_index": 0, "column_id": 1, "transform": "identity"}]}],
-    "sorts": [{"sort_id": 5, "table_id": 1, "fields": [{"sort_key_index": 0, "expression": "i",
-               "dialect": "duckdb", "sort_direction": "ASCENDING", "null_order": "NULLS_LAST"}]}]
-  },
-  "stats": [{
-    "table_id": 1, "initialized": true, "record_count": 2, "next_row_id": 2, "file_size_bytes": 0,
-    "column_stats": [{"column_id": 1, "contains_null": false, "contains_nan": null, "min_value": "1",
-                      "max_value": "2", "extra_stats": null, "min_is_exact": true, "max_is_exact": true}]
-  }]
-}
-```
-
-### `select`
-
-Plans a scan of a table: returns the data files of the table that are visible in a snapshot, together with their
-delete files and inlined deletions, and optionally the rows of the table that are inlined in the catalog.
-
-| Parameter     | Description                                                                           |
-|---------------|---------------------------------------------------------------------------------------|
-| `snapshot_id` | The snapshot to scan.                                                                 |
-| `table_id`    | The table to scan.                                                                    |
-| `extended`    | Return the extended file list used to plan deletes and updates (see below).          |
-| `filters`     | Optional filters to prune files with, see below.                                      |
-| `include_inlined_data` | Also return the inlined rows of the table that are visible in the snapshot.  |
-
-Response:
-
-```json
-{
-  "files": [{
-    "data_file_id": 1, "file_id": 1,
-    "file": {"path": "/data/main/t/f1.parquet", "encryption_key": "", "file_size_bytes": 84, "footer_size": 20,
-             "format": "parquet"},
-    "delete_file": {"path": "/data/main/t/d1.parquet", "file_size_bytes": 40, "footer_size": 20, ...},
-    "row_id_start": 0, "snapshot_id": 2, "max_row_count": null, "snapshot_filter_max": null,
-    "snapshot_filter_min": null, "mapping_id": null, "data_type": "data_file",
-    "inlined_file_deletions": [3, 4], "column_min_max": []
-  }]
-}
-```
-
-With `include_inlined_data`, `inlined_data` holds the visible rows of each inlined data table of the table, with
-the row id, the begin and end snapshot and all columns of the table at the schema version of the inlined data table:
-
-```json
-{"files": [...],
- "inlined_data": [{"table_name": "ducklake_inlined_data_1_1", "schema_version": 1,
-                   "columns": [{"name": "row_id", "type": {"id": "BIGINT"}},
-                               {"name": "begin_snapshot", "type": {"id": "UBIGINT"}},
-                               {"name": "end_snapshot", "type": {"id": "UBIGINT"}},
-                               {"name": "i", "type": {"id": "INTEGER"}}],
-                   "rows": [[0, 2, null, 1], [1, 2, null, 2]]}]}
-```
-
-The inlined rows of a single inlined data table can also be read with `read_inlined_data`.
-
-Filters are optional: a server may ignore them, and a client applies them to the scanned rows regardless.
-
-```json
-{"expressions": ["i >= 150", "s = 'a' OR st.a IN (1, 2)"],
- "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "INTEGER"}}],
- "runtime_filter_columns": [1]}
-```
-
-`expressions` are SQL expressions that all hold for the rows of the scan. They refer to the columns of the table by
-name, and to the fields of structs by their path (`st.a`). The server prunes files on the statistics of their columns
-with the parts of the expressions it understands: comparisons of a column with a constant, `IN` lists of constants,
-`IS [NOT] NULL`, and `AND` / `OR` combinations of those. The server ignores the other parts, and leaves out an `OR`
-entirely if it does not understand one of its parts.
-
-`dynamic_filters` are filters whose value is only known while the scan runs (e.g. of a top-N): the server orders the
-files so that these filters can prune files early. For `runtime_filter_columns` the server returns the min/max
-statistics of the files in `column_min_max` (`{"column_id", "min_value", "max_value", "contains_nan"}`), so the
-client can prune files at runtime.
-
-The extended file list (`"extended": true`) returns the ids of the data and delete files and the number of deleted
-rows of each file instead:
-
-```json
-{"files": [{"file_id": 1, "delete_file_id": 2, "file": {...}, "delete_file": {...}, "row_id_start": 0,
-            "snapshot_id": 2, "delete_file_begin_snapshot": 3, "record_count": 100, "delete_count": 10,
-            "mapping_id": null, "data_type": "data_file"}]}
-```
-
-### `read_inlined_data`
-
-Reads the rows of an inlined data table.
-
-| Parameter           | Description                                                                          |
-|---------------------|--------------------------------------------------------------------------------------|
-| `snapshot_id`       | The snapshot to read.                                                                |
-| `table_name`        | The inlined data table (from `inlined_data_tables` of the table).                    |
-| `columns`           | The columns to read, e.g. `["row_id", "i"]`.                                         |
-| `mode`              | `"scan"` (default): the rows visible in the snapshot. `"insertions"` / `"deletions"`: the rows inserted / deleted between `start_snapshot_id` and `snapshot_id`. `"flush"`: all rows that were inserted up to the snapshot (including deleted rows), in the order in which they are flushed. |
-| `start_snapshot_id` | For `insertions` and `deletions`.                                                    |
-| `table_id`          | For `flush`, the table of the inlined data table.                                   |
-| `order_by`          | For `flush`, optional: the sort order of the table, as an `ORDER BY` list (e.g. `"i DESC NULLS LAST"`). The rows are ordered by it, then by their row id. |
-
-Response:
-
-```json
-{"columns": [{"name": "row_id", "type": {"id": "BIGINT"}}, {"name": "i", "type": {"id": "INTEGER"}}],
- "rows": [[0, 1], [1, 2]]}
-```
+Response: [`Metadata`](#metadata).
 
 ### `deleted_inlined_rows`
 
-Returns the deleted versions of the rows of an inlined data table that a flush writes, so that the client can write
-delete files for the flushed rows.
+Returns the deleted versions of the rows of an inlined data table that a flush writes.
 
-| Parameter     | Description                         |
-|---------------|-------------------------------------|
-| `snapshot_id` | The snapshot of the flush.          |
-| `table_id`    | The table.                          |
-| `table_name`  | The inlined data table.             |
+The client writes delete files for the flushed rows with them.
 
-Response: `{"rows": [{"row_id": 1, "begin_snapshot": 2, "end_snapshot": 5}]}`
+Request:
 
-### `inlined_file_deletions`
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `table_id` | `uint64` | The table. |
+| `table_name` | `string` | The inlined data table. |
+| `deleted_row_ids` | list of `uint64` (default `[]`) | Rows that the transaction of the client deleted, which are not flushed. |
 
-Returns the deletions of rows of data files that are inlined in the catalog, together with the delete file of each
-data file, so that a client can write them to delete files.
+Response:
 
-Request: `{"snapshot_id": 4, "table_id": 1}`, response:
+| Field | Type | Description |
+|-------|------|-------------|
+| `rows` | list of [`DeletedRowVersion`](#deletedrowversion) (default `[]`) | The deleted rows. |
 
-```json
-{"deletions": [{"data_file_id": 1, "data_file_path": "/data/main/t/f1.parquet", "row_id": 3, "begin_snapshot": 4,
-                "delete_file_id": 2, "delete_file": {"path": "...", ...}, "delete_file_begin_snapshot": 3}]}
-```
+### `ducklake_table`
+
+Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
+
+This makes it possible to inspect a DuckLake or to export all of its metadata.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_name` | `string` | The table, e.g. `ducklake_snapshot`. |
+
+Response: [`InlinedRows`](#inlinedrows).
+
+### `ducklake_tables`
+
+Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
+
+In SQL, `ducklake_metadata_table('lake', 'ducklake_snapshot')` reads a table of the metadata catalog of any
+DuckLake.
+
+Request: an empty object.
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_names` | list of `string` (default `[]`) | The tables. |
 
 ### `files_for_compaction`
 
 Returns the data files of a table that are candidates for compaction, together with their delete files.
 
-| Parameter          | Description                                                                         |
-|--------------------|-------------------------------------------------------------------------------------|
-| `snapshot_id`      | The snapshot.                                                                       |
-| `table_id`         | The table.                                                                          |
-| `type`             | `"merge_adjacent"` or `"rewrite_delete"`.                                           |
-| `delete_threshold` | For `rewrite_delete`: the fraction of deleted rows above which files are rewritten. |
-| `min_file_size`, `max_file_size`, `target_file_size` | Optional file size limits in bytes.               |
-| `newer_than`, `older_than` | Optional timestamps: only consider files written in this range.             |
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `table_id` | `uint64` | The table. |
+| `type` | [`CompactionType`](#compactiontype) | The type of the compaction. |
+| `delete_threshold` | `double` (optional) | For `rewrite_delete`: the fraction of deleted rows above which files are rewritten. |
+| `min_file_size` | `uint64` (optional) | Only consider files of at least this size. |
+| `max_file_size` | `uint64` (optional) | Only consider files of at most this size. |
+| `target_file_size` | `uint64` | The size of the compacted files. |
+| `newer_than` | `value` (optional) | Only consider files written at or after this timestamp. |
+| `older_than` | `value` (optional) | Only consider files written before this timestamp. |
 
 Response:
 
-```json
-{"files": [{
-  "data_file": {"file_id": 1, "file": {...}, "record_count": 10, "begin_snapshot": 2, "end_snapshot": null,
-                "max_row_count": null, "row_id_start": 0, "mapping_id": null, "partition_id": null,
-                "partition_values": []},
-  "delete_files": [{"file_id": 1, "delete_file_id": 3, "file": {...}, "record_count": 2, "begin_snapshot": 3,
-                    "end_snapshot": null, "max_row_count": null, "max_snapshot": null}],
-  "max_partial_file_snapshot": null, "schema_version": 1, "partition_schema_version": null,
-  "inlined_file_deletions": [], "has_inlined_deletions": false, "delete_ratio": 0.2
-}]}
-```
+| Field | Type | Description |
+|-------|------|-------------|
+| `files` | list of [`CompactionFileEntry`](#compactionfileentry) (default `[]`) | The candidates. |
 
-### `table_schema_versions`
+### `inlined_file_deletions`
 
-Returns when a table and its schema versions were created.
+Returns the deletions of rows of data files that are inlined in the catalog.
 
-| Parameter        | Description                                                                   |
-|------------------|-------------------------------------------------------------------------------|
-| `table_id`       | The table.                                                                    |
-| `snapshot_id`    | If set, also return the first and last schema version of the table at it.    |
-| `schema_version` | If set, also return the snapshot that created this schema version.           |
+Each deletion comes with the delete file of its data file, so that a client can write them to delete files.
 
-Response: `{"begin_snapshot": 1, "creation": 1, "last_change": 3, "schema_version_begin_snapshot": 5}`
+Request:
 
-### `row_count`
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `table_id` | `uint64` | The table. |
 
-Counts the rows of a table that are visible in a snapshot.
+Response:
 
-| Parameter     | Description                                                                                       |
-|---------------|---------------------------------------------------------------------------------------------------|
-| `snapshot_id` | The snapshot.                                                                                     |
-| `count`       | `"data_files"` (rows in data files minus deleted rows), `"data_files_exact"` (the same, `null` if it cannot be computed exactly) or `"inlined"` (rows of an inlined data table). |
-| `table_id`    | The table, for data file counts.                                                                  |
-| `table_name`  | The inlined data table, for inlined counts.                                                       |
-
-Response: `{"row_count": 42}`
+| Field | Type | Description |
+|-------|------|-------------|
+| `deletions` | list of [`InlinedFileDeletion`](#inlinedfiledeletion) (default `[]`) | The deletions. |
 
 ### `inlined_tables`
 
 Returns the names of all inlined data tables of a table (of any schema version).
 
-Request: `{"table_id": 1}`, response: `{"table_names": ["ducklake_inlined_data_1_1"]}`
+Request:
 
-### `next_column_id`
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `uint64` | The table. |
 
-Returns the next free column (field) id of a table. Request: `{"table_id": 1}`, response: `{"next_column_id": 4}`
+Response:
 
-### `column_created_with_table`
-
-Returns whether a column was created together with its table (rather than added later).
-Request: `{"table_name": "t", "column_name": "i"}`, response: `{"created_with_table": true}`
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_names` | list of `string` (default `[]`) | The inlined data tables. |
 
 ### `list_snapshots`
 
 Returns the snapshots, optionally filtered.
 
-| Parameter        | Description                                                  |
-|------------------|--------------------------------------------------------------|
-| `exclude_latest` | Exclude the latest snapshot.                                 |
-| `older_than`     | Only snapshots created before this timestamp.                |
-| `snapshot_ids`   | Only these snapshots.                                        |
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `exclude_latest` | `bool` (default `false`) | Exclude the latest snapshot. |
+| `older_than` | `timestamp` (optional) | Only snapshots created before this timestamp. |
+| `snapshot_ids` | list of `uint64` (optional) | Only these snapshots. |
 
 Response:
 
-```json
-{"snapshots": [{"snapshot_id": 0, "snapshot_time": "2026-01-01 00:00:00+00", "schema_version": 0,
-                "next_file_id": 0, "changes_made": "created_schema:\"main\"", "author": null,
-                "commit_message": null, "commit_extra_info": null}]}
-```
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshots` | list of [`SnapshotInfo`](#snapshotinfo) (default `[]`) | The snapshots. |
+
+### `next_column_id`
+
+Returns the next free column (field) id of a table.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `uint64` | The table. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `next_column_id` | `uint64` | The next free column id. |
+
+### `read_inlined_data`
+
+Reads the rows of an inlined data table.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `table_name` | `string` | The inlined data table (from `inlined_data_tables` of the table). |
+| `columns` | list of `string` | The columns to read, e.g. `["row_id", "i"]`. Columns can be cast to the type to read them as, e.g. `"i::BIGINT"`. |
+| `mode` | [`InlinedReadMode`](#inlinedreadmode) (default `"scan"`) | Which rows to read. |
+| `start_snapshot` | [`Snapshot`](#snapshot) (optional) | For `insertions` and `deletions`: the first snapshot of the range. |
+| `start_snapshot_id` | `uint64` (optional) | For `insertions` and `deletions`: the id of the first snapshot of the range. |
+| `table_id` | `uint64` (optional) | For `flush`: the table of the inlined data table. |
+| `order_by` | `string` (default `""`) | For `flush`: the sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are ordered by it, then by their row id. |
+| `deleted_row_ids` | list of `uint64` (default `[]`) | For `flush`: rows that the transaction of the client deleted, which are not flushed. |
+
+Response: [`InlinedRows`](#inlinedrows).
+
+### `row_count`
+
+Counts the rows of a table that are visible in a snapshot.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `count` | [`RowCountType`](#rowcounttype) | What to count. |
+| `table_id` | `uint64` (optional) | The table, for data file counts. |
+| `table_name` | `string` (default `""`) | The inlined data table, for inlined counts. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `row_count` | `uint64` (optional) | The number of rows. |
+
+### `select`
+
+Plans a scan of a table.
+
+Returns the data files of the table that are visible in a snapshot, together with their delete files and
+inlined deletions, and optionally the rows of the table that are inlined in the catalog. With
+`include_inlined_data`, `inlined_data` holds the visible rows of each inlined data table of the table, with the
+row id, the begin and end snapshot and all columns of the table at the schema version of the inlined data table.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `table_id` | `uint64` | The table to scan. |
+| `extended` | `bool` (default `false`) | Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`. |
+| `filters` | [`ScanFilters`](#scanfilters) (optional) | Filters to prune files with. |
+| `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows of the table that are visible in the snapshot. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `files` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of the scan. |
+| `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of the scan, for `extended` scans. |
+| `inlined_data` | list of [`InlinedTableRows`](#inlinedtablerows) (optional) | The inlined rows of the table, for `include_inlined_data`. |
+
+### `snapshot_data`
+
+Returns a snapshot together with (optionally) the catalog and the table statistics of that snapshot.
+
+Clients pass `cached_metadata_version` and `cached_data_version` when they start a transaction, so they get the
+latest snapshot and, if it changed since, its catalog and statistics in a single round-trip.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `at` | [`AtClause`](#atclause) (optional) | Find the snapshot of an `AT` clause instead. |
+| `bound` | [`SnapshotBound`](#snapshotbound) (default `"upper"`) | Whether a timestamp of `at` finds the last snapshot before or the first snapshot after it. |
+| `include_catalog` | `bool` (default `false`) | Return the catalog of the snapshot. |
+| `include_stats` | `bool` (default `false`) | Return the table statistics of the snapshot. |
+| `cached_metadata_version` | `uint64` (optional) | The schema version of the latest catalog the client has loaded. If the snapshot has a different schema version, its catalog is returned. |
+| `cached_data_version` | `uint64` (optional) | The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a different next file id, its statistics are returned. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) | The snapshot. |
+| `catalog` | [`CatalogInfo`](#cataloginfo) (optional) | The catalog of the snapshot. |
+| `stats` | list of [`GlobalTableStats`](#globaltablestats) (optional) | The statistics of the tables of the snapshot. |
+
+### `table_changes`
+
+Returns the files that hold the changes of a table between two snapshots, for change data feeds.
+
+Inlined changes are read with `read_inlined_data` in `insertions` / `deletions` mode.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `table_id` | `uint64` | The table. The snapshot is the last snapshot of the range. |
+| `start_snapshot` | [`Snapshot`](#snapshot) (optional) | The first snapshot of the range. |
+| `start_snapshot_id` | `uint64` (optional) | The id of the first snapshot of the range. |
+| `changes` | [`TableChangeType`](#tablechangetype) | The changes to return. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `insertions` | list of [`FileListEntry`](#filelistentry) (default `[]`) | For `insertions`: the files with inserted rows. |
+| `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | For `deletions`: the files with deleted rows. |
+
+### `table_schema_versions`
+
+Returns when a table and its schema versions were created.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `table_id` | `uint64` | The table. With a snapshot, the first and last schema version of the table at it are also returned. |
+| `schema_version` | `uint64` (optional) | Also return the snapshot that created this schema version. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `begin_snapshot` | `uint64` | The snapshot that created the table. |
+| `creation` | `uint64` (optional) | The first schema version of the table at the snapshot. |
+| `last_change` | `uint64` (optional) | The last schema version of the table at the snapshot. |
+| `schema_version_begin_snapshot` | `uint64` (optional) | The snapshot that created `schema_version`. |
+
+### `table_sizes`
+
+Returns the storage used by each table at a snapshot.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tables` | list of [`TableSize`](#tablesize) (default `[]`) | The tables. |
 
 ## Maintenance Endpoints
 
@@ -458,134 +510,1244 @@ These endpoints change the catalog directly, outside of a transaction.
 
 ### `expire_snapshots`
 
-Expires snapshots: removes them, together with the catalog entries and files that are only visible in them. The data
-files are scheduled for deletion. Request: `{"snapshot_ids": [1, 2]}`, response: `{"expired_snapshots": 2}`
+Expires snapshots.
+
+Removes the snapshots, together with the catalog entries and files that are only visible in them. The data files are
+scheduled for deletion.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot_ids` | list of `uint64` | The snapshots to expire. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `expired_snapshots` | `uint64` | The number of expired snapshots. |
 
 ### `files_for_cleanup`
 
-Returns the files scheduled for deletion. Request: `{"older_than": "2025-01-01T00:00:00Z"}` (optional), response:
-`{"files": [{"data_file_id": 1, "path": "...", "schedule_start": "2024-12-31 10:00:00+00"}]}`
+Returns the files scheduled for deletion.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `older_than` | `timestamp` (optional) | Only files scheduled for deletion before this timestamp. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `files` | list of [`FileForCleanup`](#fileforcleanup) (default `[]`) | The files. |
+
+### `known_files`
+
+Returns the paths of all files that the catalog refers to.
+
+These are the data files, delete files and files scheduled for deletion, so a client can find orphaned files in the
+data path.
+
+Request: an empty object.
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `paths` | list of `string` (default `[]`) | The paths. |
 
 ### `remove_cleaned_up_files`
 
 Removes files from the files scheduled for deletion, after the client deleted them.
-Request: `{"data_file_ids": [1, 2]}`
 
-### `known_files`
+Request:
 
-Returns the paths of all files that the catalog refers to (data files, delete files and files scheduled for deletion),
-so a client can find orphaned files in the data path. Response: `{"paths": ["/data/main/t/f1.parquet"]}`
+| Field | Type | Description |
+|-------|------|-------------|
+| `data_file_ids` | list of `uint64` | The files. |
+
+Response: an empty object.
 
 ## Committing Transactions
 
-### `commit_transaction`
+A client records the changes of a transaction and sends them to `commit_transaction` when it commits. The changes
+are a list of requests that are applied in order; later requests can refer to entries created by earlier requests
+through negative placeholder ids: `-1` is the first entry (schema, table, view, ...) created in the transaction,
+`-2` the second one, etc.
 
-Commits a set of changes atomically. The changes are a list of requests that are applied in order; later requests
-can refer to entries created by earlier requests through negative placeholder ids: `-1` is the first entry (schema,
-table, view, ...) created in the transaction, `-2` the second one, etc.
+Every request of a commit can also be sent on its own to the endpoint of its name (e.g. `POST /v1/create_table`),
+which commits a transaction with only that request, based on the latest snapshot.
 
-| Parameter                    | Description                                                                               |
-|------------------------------|-------------------------------------------------------------------------------------------|
-| `snapshot_id`                | The snapshot the changes are based on. The server detects conflicts with every snapshot committed after it. If absent, the changes are based on the latest snapshot. |
-| `commit_info`                | `{"author": ..., "commit_message": ..., "commit_extra_info": ..., "is_commit_info_set": bool}` |
-| `requires_new_inlined_table` | Whether the commit inlines rows into a table that has no inlined data table yet.          |
-| `requests`                   | The changes: `[{"path": "<request>", "parameters": {...}}]`.                               |
-
-Response: the committed snapshot, the ids of the tables the transaction created, and the ids of the created entries
-that their requests gave an `entry_reference`:
-
-```json
-{"snapshot_id": 4, "schema_version": 2, "table_ids": [{"placeholder": -1, "table_id": 7}],
- "entry_ids": [{"entry_reference": 1234, "type": "TABLE_ENTRY", "id": 7}]}
-```
-
-`snapshot_id` and `schema_version` are `null` if the requests did not create a snapshot (e.g. if they only set
-options).
-
-Every request of a commit can also be sent on its own to the endpoint of its name (e.g. `POST /v1/create_table`), which
-commits a transaction with only that request, based on the latest snapshot.
-
-The `create_schema`, `create_table`, `create_view` and `create_macro` requests take an optional `entry_reference`: a
-number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can use it to
-keep track of the entries it created, e.g. to keep their oids stable.
-
-If the transaction conflicts with a transaction that committed after `snapshot_id` the server retries the commit
-when that is safe; otherwise it fails with a `409`.
-
-#### `create_schema`
-
-| Parameter     | Description                                                     |
-|---------------|-----------------------------------------------------------------|
-| `schema_path` | The path of the schema, e.g. `["parent", "child"]`.             |
-| `schema_uuid` | Optional, the uuid of the schema.                                |
-| `path`        | Optional, the data path of the schema.                           |
-
-#### `create_table`
-
-| Parameter        | Description                                                                         |
-|------------------|-------------------------------------------------------------------------------------|
-| `table_id`       | The placeholder id of the table.                                                    |
-| `schema_path`    | The schema of the table, e.g. `["main"]`.                                           |
-| `table_name`     | The name of the table.                                                              |
-| `table_uuid`     | Optional, the uuid of the table.                                                    |
-| `path`           | Optional, the data path of the table.                                               |
-| `columns`        | `[{"column_name": "i", "column_type": "INTEGER", "default": "42", "not_null": false, "comment": "..."}]`. `default` is a SQL expression. |
-| `partitioned_by` | Optional, the partition keys as SQL expressions, e.g. `["year(ts)"]`.               |
-| `sorted_by`      | Optional, the sort keys as SQL expressions.                                         |
-| `options`        | Optional, table options as SQL expressions, e.g. `{"data_inlining_row_limit": "10"}`. |
-| `comment`        | Optional, the comment of the table.                                                 |
-| `partition_id`   | Optional, an id of the client for the partitioning of the table. Files that are inserted later in the transaction refer to the partitioning with it. |
-
-Columns get the field ids `1..n` in the order of the columns (nested fields are numbered depth-first), as in
-`CREATE TABLE`.
-
-Clients send the deletes of committed data first, then the catalog changes in the order in which they were made, and
-then the inserted data in the format of the tables at the end of the transaction. This order matters: e.g. a
+Clients send the deletes of committed data first, then the catalog changes in the order in which they were made,
+and then the inserted data in the format of the tables at the end of the transaction. This order matters: e.g. a
 `SET NOT NULL` that follows a delete of the `NULL` rows only succeeds after the delete.
 
 Requests that refer to existing entries identify them by `schema_path` and `name`. They are applied in order, so a
-name always refers to the entry as it is at that point of the transaction.
+name always refers to the entry as it is at that point of the transaction. An empty `schema_path` refers to the
+default schema.
 
-#### `drop_schema`, `drop_table`, `drop_view`, `drop_macro`
+### `alter_table`
 
-| Parameter     | Description                                                                    |
-|---------------|--------------------------------------------------------------------------------|
-| `schema_path` | The schema of the entry (for `drop_schema`: the path of the schema itself).    |
-| `name`        | The name of the entry.                                                         |
-| `macro_type`  | For `drop_macro`: `"scalar"` (default) or `"table"`.                           |
+Alters a table.
 
-Schemas have to be empty when they are dropped.
+Request:
 
-#### `create_view`
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_path` | list of `string` (default `[]`) | The schema of the table. |
+| `name` | `string` | The name of the table. |
+| `alter` | `json` | The change, see [alterations](#alterations). |
+| `partition_id` | `uint64` (optional) | For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`). |
 
-| Parameter        | Description                                          |
-|------------------|------------------------------------------------------|
-| `schema_path`    | The schema of the view.                              |
-| `view_name`      | The name of the view.                                |
-| `view_uuid`      | Optional, the uuid of the view.                      |
-| `dialect`        | The SQL dialect of the view, only `duckdb` for now.  |
-| `sql`            | The query of the view.                               |
-| `column_aliases` | Optional, the names of the columns of the view.      |
-| `comment`        | Optional, the comment of the view.                   |
+Response: as for [`commit_transaction`](#commit_transaction).
 
-#### `create_macro`
+### `alter_view`
 
-| Parameter     | Description                                                                                  |
-|---------------|----------------------------------------------------------------------------------------------|
-| `schema_path` | The schema of the macro.                                                                     |
-| `macro`       | The macro, in the format of the `macros` of the [catalog](#snapshot_data) (without ids).      |
+Alters a view.
 
-#### `alter_table`, `alter_view`
+Request:
 
-| Parameter     | Description                                 |
-|---------------|---------------------------------------------|
-| `schema_path` | The schema of the table or view.            |
-| `name`        | The name of the table or view.              |
-| `alter`       | The change, one of the alterations below.   |
-| `partition_id`| For `set_partitioned_by`: optionally, an id of the client for the new partitioning (as for `create_table`). |
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_path` | list of `string` (default `[]`) | The schema of the view. |
+| `name` | `string` | The name of the view. |
+| `alter` | `json` | The change, see [alterations](#alterations). |
 
-Columns are referred to by name; nested fields by their path from the top-level column, e.g. `["s", "a"]`.
-Expressions are SQL expressions.
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `commit_transaction`
+
+Commits a set of changes atomically.
+
+If the transaction conflicts with a transaction that committed after its snapshot, the server retries the
+commit when that is safe; otherwise it fails with a `409`. The snapshot is the snapshot the changes are based
+on: the server detects conflicts with every snapshot committed after it. Without a snapshot, the changes are
+based on the latest snapshot.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `commit_info` | [`CommitInfo`](#commitinfo) (optional) | The commit information of the snapshot. |
+| `retry` | [`RetryConfig`](#retryconfig) (optional) | How the server retries the commit on conflicts. |
+| `requires_new_inlined_table` | `bool` (default `false`) | Whether the commit inlines rows into a table that has no inlined data table yet. |
+| `requests` | list of `commit_request` (default `[]`) | The changes, applied in order, e.g. `[{"create_table": {...}}, {"insert_rows": {...}}]`. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot_id` | `uint64` (optional) | The committed snapshot, absent if the requests did not create a snapshot (e.g. if they only set options). |
+| `schema_version` | `uint64` (optional) | The schema version of the committed snapshot. |
+| `table_ids` | list of [`CreatedTable`](#createdtable) (default `[]`) | The ids of the tables the transaction created. |
+| `entry_ids` | list of [`CreatedEntry`](#createdentry) (default `[]`) | The ids of the created entries whose requests had an `entry_reference`. |
+
+### `compact`
+
+Replaces data files with compacted files that were written by the client.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `int64` | The table. |
+| `compactions` | list of [`Compaction`](#compaction) | The compactions. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `create_macro`
+
+Creates a macro.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entry_reference` | `uint64` (optional) | See `create_schema`. |
+| `schema_path` | list of `string` (default `[]`) | The schema of the macro. |
+| `macro` | [`MacroInfo`](#macroinfo) | The macro (its ids are ignored). |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `create_name_map`
+
+Registers a name map for files that are inserted later in the transaction.
+
+`mapping.mapping_id` is an id of the client, which files of the transaction refer to with their `mapping_id`.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `int64` | The table. |
+| `mapping` | [`NameMap`](#namemap) | The name map. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `create_schema`
+
+Creates a schema.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entry_reference` | `uint64` (optional) | A number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can use it to keep track of the entries it created, e.g. to keep their oids stable. |
+| `schema_path` | list of `string` | The path of the schema, e.g. `["parent", "child"]`. |
+| `schema_uuid` | `string` (optional) | The uuid of the schema. |
+| `path` | `string` (optional) | The data path of the schema. |
+| `if_not_exists` | `bool` (default `false`) | Do nothing if the schema exists. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `create_table`
+
+Creates a table.
+
+Columns get the field ids `1..n` in the order of the columns (nested fields are numbered depth-first), as in `CREATE
+TABLE`.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `int64` (optional) | The placeholder id of the table. |
+| `entry_reference` | `uint64` (optional) | See `create_schema`. |
+| `schema_path` | list of `string` (default `[]`) | The schema of the table, e.g. `["main"]`. |
+| `table_name` | `string` | The name of the table. |
+| `table_uuid` | `string` (optional) | The uuid of the table. |
+| `path` | `string` (optional) | The data path of the table. |
+| `columns` | list of [`ColumnDefinition`](#columndefinition) | The columns of the table. |
+| `partitioned_by` | list of `string` (default `[]`) | The partition keys as SQL expressions, e.g. `["year(ts)"]`. |
+| `sorted_by` | list of `string` (default `[]`) | The sort keys as SQL expressions. |
+| `options` | object of `string` (default `{}`) | Table options as SQL expressions, e.g. `{"data_inlining_row_limit": "10"}`. |
+| `comment` | `string` (optional) | The comment of the table. |
+| `partition_id` | `uint64` (optional) | An id of the client for the partitioning of the table. Files that are inserted later in the transaction refer to the partitioning with it. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `create_view`
+
+Creates a view.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entry_reference` | `uint64` (optional) | See `create_schema`. |
+| `schema_path` | list of `string` (default `[]`) | The schema of the view. |
+| `view_name` | `string` | The name of the view. |
+| `view_uuid` | `string` (optional) | The uuid of the view. |
+| `dialect` | `string` (default `"duckdb"`) | The SQL dialect of the view, only `duckdb` for now. |
+| `sql` | `string` | The query of the view. |
+| `column_aliases` | list of `string` (default `[]`) | The names of the columns of the view. |
+| `comment` | `string` (optional) | The comment of the view. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `delete_data`
+
+Deletes rows from a table.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `int64` | The table. |
+| `delete_files` | list of [`DeleteFile`](#deletefile) (default `[]`) | Delete files written by the client. |
+| `inlined_deletes` | list of [`InlinedRowDeletes`](#inlinedrowdeletes) (default `[]`) | Deletes of inlined rows. |
+| `file_row_deletes` | list of [`FileRowDeletes`](#filerowdeletes) (default `[]`) | Deletes of rows of data files that are inlined in the catalog. |
+| `dropped_files` | list of [`DroppedFile`](#droppedfile) (default `[]`) | Data files that are deleted entirely. |
+| `delete_attempted` | `bool` (default `false`) | Whether a delete was evaluated against the table, even if it did not delete any rows. This makes the commit conflict with concurrent inserts. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `drop_macro`
+
+Drops a macro.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_path` | list of `string` (default `[]`) | The schema of the macro. |
+| `name` | `string` | The name of the macro. |
+| `macro_type` | [`MacroType`](#macrotype) (default `"scalar"`) | The type of the macro. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `drop_schema`
+
+Drops a schema, which has to be empty.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_path` | list of `string` | The path of the schema. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `drop_table`
+
+Drops a table.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_path` | list of `string` (default `[]`) | The schema of the table. |
+| `name` | `string` | The name of the table. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `drop_view`
+
+Drops a view.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_path` | list of `string` (default `[]`) | The schema of the view. |
+| `name` | `string` | The name of the view. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `flush_inlined_data`
+
+Marks inlined data as flushed.
+
+The rows are deleted from the inlined data tables when the transaction commits. The files that hold the flushed rows
+are inserted with `insert_files`.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `inlined_tables` | list of [`FlushedInlinedTable`](#flushedinlinedtable) (default `[]`) | The inlined data tables whose rows up to the snapshot were flushed. |
+| `file_deletions` | list of [`FlushedFileDeletions`](#flushedfiledeletions) (default `[]`) | The tables whose inlined deletions of data file rows up to the snapshot were flushed to delete files (registered with `delete_data`). |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `insert_files`
+
+Registers Parquet files that were written by the client.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `int64` | The table. |
+| `files` | list of [`DataFile`](#datafile) | The files. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `insert_rows`
+
+Inserts rows that are inlined in the catalog.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `int64` | The table. |
+| `column_types` | list of `logical_type` | The types of the columns of the rows, in the order of the columns of the table. |
+| `rows` | `rows` | The rows, as arrays of values. |
+| `row_ids` | list of `int64` (default `[]`) | The row ids of the rows (for updates that keep the row ids of the updated rows). |
+| `column_stats` | list of [`ColumnStats`](#columnstats) (default `[]`) | Each entry has an additional field `column_id`. The statistics of the rows per column. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `set_option`
+
+Sets or resets a DuckLake option (`ducklake_metadata`).
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `option` | [`OptionSetting`](#optionsetting) | The option. |
+| `reset` | `bool` (default `false`) | Reset the option instead of setting it. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+## Types
+
+The structures that the endpoints share. Fields that are optional can be `null` or absent; the server and the
+client leave them out when they have no value.
+
+### `AtClause`
+
+The `AT` clause of a time travel query.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `unit` | [`AtUnit`](#atunit) | The unit of the value. |
+| `value` | `value` | The snapshot id or timestamp. |
+
+### `AtUnit`
+
+The unit of an `AT` clause.
+
+| Value | Description |
+|-------|-------------|
+| `version` | A snapshot id. |
+| `timestamp` | A timestamp. |
+
+### `CatalogInfo`
+
+The catalog at a snapshot.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schemas` | list of [`SchemaInfo`](#schemainfo) (default `[]`) | The schemas. |
+| `tables` | list of [`TableInfo`](#tableinfo) (default `[]`) | The tables. |
+| `views` | list of [`ViewInfo`](#viewinfo) (default `[]`) | The views. |
+| `macros` | list of [`MacroInfo`](#macroinfo) (default `[]`) | The macros. |
+| `partitions` | list of [`PartitionInfo`](#partitioninfo) (default `[]`) | The partitionings of the tables. |
+| `sorts` | list of [`SortInfo`](#sortinfo) (default `[]`) | The sort orders of the tables. |
+
+### `ColumnDefinition`
+
+The definition of a column in a catalog change.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_name` | `string` | The name of the column. |
+| `column_type` | `string` | The type of the column, as a DuckDB SQL type name (e.g. `INTEGER`, `STRUCT(a INTEGER)`). |
+| `default` | `string` (optional) | The default of the column, as a SQL expression. |
+| `comment` | `string` (optional) | The comment of the column. |
+| `not_null` | `bool` (default `false`) | Whether the column is `NOT NULL`. |
+
+### `ColumnInfo`
+
+A column of a table, as stored in `ducklake_column`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_id` | `uint64` (optional) | The field id of the column. |
+| `column_name` | `string` | The name of the column. |
+| `column_type` | `string` | The type of the column, as a type name of the DuckLake specification (e.g. `int32`, `varchar`). |
+| `initial_default` | `value` (optional) | The value of the column for rows that were written before the column was added. |
+| `default_value` | `value` (optional) | The default value of the column. |
+| `default_value_type` | `string` (default `""`) | Whether the default is a `literal` or an `expression`. |
+| `nulls_allowed` | `bool` (default `true`) | Whether the column can hold `NULL`. |
+| `tags` | list of [`Tag`](#tag) (default `[]`) | The tags of the column. |
+| `children` | list of [`ColumnInfo`](#columninfo) (default `[]`) | The fields of nested columns. |
+
+### `ColumnStats`
+
+The statistics of a column of a file or of inserted rows.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `logical_type` | The type of the column. |
+| `min_value` | `string` (optional) | The minimum value. |
+| `max_value` | `string` (optional) | The maximum value. |
+| `null_count` | `uint64` (optional) | The number of `NULL` values. |
+| `value_count` | `uint64` (optional) | The number of values. |
+| `column_size_bytes` | `uint64` (default `0`) | The size of the column. |
+| `contains_nan` | `bool` (optional) | Whether the column contains `NaN` values. |
+| `any_valid` | `bool` (default `true`) | Whether the column contains any value that is not `NULL`. |
+| `bounds_unknown` | `bool` (default `false`) | Whether the minimum and maximum are unknown. |
+| `min_is_exact` | `bool` (default `false`) | Whether the minimum is exact. |
+| `max_is_exact` | `bool` (default `false`) | Whether the maximum is exact. |
+| `extra_stats` | `string` (optional) | Type-specific statistics. |
+
+### `CommitInfo`
+
+The commit information of a transaction.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `author` | `value` (optional) | The author of the commit. |
+| `commit_message` | `value` (optional) | The commit message. |
+| `commit_extra_info` | `value` (optional) | Extra information of the commit. |
+| `is_commit_info_set` | `bool` (default `false`) | Whether the commit information was set. |
+
+### `Compaction`
+
+Data files that are replaced by compacted files.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | [`CompactionType`](#compactiontype) | The type of the compaction. |
+| `row_id_start` | `uint64` (optional) | The row id of the first row of the compacted files. |
+| `source_files` | list of [`CompactionFileEntry`](#compactionfileentry) (default `[]`) | The files that are replaced, as returned by `files_for_compaction`. |
+| `written_files` | list of [`DataFile`](#datafile) (default `[]`) | The compacted files. |
+
+### `CompactionBaseFile`
+
+A file of a compaction.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `file_id` | `uint64` (optional) | The id of the file. |
+| `file` | [`FileData`](#filedata) | The file. |
+| `record_count` | `uint64` | The number of rows. |
+| `begin_snapshot` | `uint64` | The snapshot that added the file. |
+| `end_snapshot` | `uint64` (optional) | The snapshot that removed the file. |
+| `max_row_count` | `uint64` (optional) | The number of rows of the file to read. |
+
+### `CompactionDataFile`
+
+A data file that is a candidate for compaction.
+
+Has the fields of [`CompactionBaseFile`](#compactionbasefile), and:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `row_id_start` | `uint64` (optional) | The row id of the first row. |
+| `mapping_id` | `uint64` (optional) | The name map of the file. |
+| `partition_id` | `uint64` (optional) | The partitioning of the file. |
+| `partition_values` | list of `value` (default `[]`) | The values of the partition keys. |
+
+### `CompactionDeleteFile`
+
+A delete file of a data file that is a candidate for compaction.
+
+Has the fields of [`CompactionBaseFile`](#compactionbasefile), and:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `delete_file_id` | `uint64` (optional) | The id of the delete file. |
+| `max_snapshot` | `uint64` (optional) | The last snapshot whose deletes the file holds. |
+
+### `CompactionFileEntry`
+
+A data file that is a candidate for compaction, together with its delete files.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `data_file` | [`CompactionDataFile`](#compactiondatafile) | The data file. |
+| `delete_files` | list of [`CompactionDeleteFile`](#compactiondeletefile) (default `[]`) | The delete files of the data file. |
+| `max_partial_file_snapshot` | `uint64` (optional) | The last snapshot whose rows the file holds, for partial files. |
+| `schema_version` | `uint64` | The schema version the file was written with. |
+| `partition_schema_version` | `uint64` (optional) | The schema version of the partitioning of the file. |
+| `inlined_file_deletions` | list of `uint64` (default `[]`) | The positions of the deleted rows of the file that are inlined in the catalog. |
+| `has_inlined_deletions` | `bool` (default `false`) | Whether rows of the file are deleted by inlined deletions. |
+| `delete_ratio` | `double` (default `0`) | The fraction of deleted rows. |
+
+### `CompactionType`
+
+The type of a compaction.
+
+| Value | Description |
+|-------|-------------|
+| `merge_adjacent` | Merges small adjacent files. |
+| `rewrite_delete` | Rewrites files with many deleted rows. |
+
+### `CreatedEntry`
+
+An entry that a commit created.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entry_reference` | `uint64` | The `entry_reference` of the request that created the entry. |
+| `type` | `string` | The type of the entry, e.g. `TABLE_ENTRY`. |
+| `id` | `uint64` | The id the commit gave the entry. |
+
+### `CreatedTable`
+
+A table that a commit created.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `placeholder` | `int64` (optional) | The placeholder id of the table in the request. |
+| `table_id` | `uint64` | The id the commit gave the table. |
+
+### `DataFile`
+
+A Parquet file written by a client. The file includes the statistics of its columns, so the server does not need to
+read it.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | `string` | The path of the file. |
+| `record_count` | `uint64` | The number of rows. |
+| `file_size_bytes` | `uint64` | The size of the file. |
+| `footer_size` | `uint64` (optional) | The size of the footer. |
+| `row_group_count` | `uint64` (optional) | The number of row groups. |
+| `partition_id` | `uint64` (optional) | The partitioning the file was written for. Partitionings set in the transaction are referred to by the `partition_id` of their request. |
+| `encryption_key` | `string` (default `""`) | The key the file is encrypted with, if any. |
+| `mapping_id` | `uint64` (optional) | The name map of the file. Name maps created in the transaction are referred to by the `mapping_id` of their request. |
+| `begin_snapshot` | `uint64` (optional) | The snapshot of the rows, if it is not the snapshot of the commit. |
+| `max_partial_file_snapshot` | `uint64` (optional) | The last snapshot whose rows the file holds, for partial files. |
+| `flush_row_id_start` | `uint64` (optional) | The row id of the first row, for files that hold flushed inlined rows. |
+| `created_by_ducklake` | `bool` (default `false`) | Whether the file was written by DuckLake (rather than added with `ducklake_add_data_files`). |
+| `column_stats` | list of [`ColumnStats`](#columnstats) (default `[]`) | Each entry has an additional field `column_id`. The statistics of the columns of the file. |
+| `partition_values` | list of [`FilePartitionValue`](#filepartitionvalue) (default `[]`) | The values of the partition keys. |
+| `delete_files` | list of [`DeleteFile`](#deletefile) (default `[]`) | Delete files for the rows of the file. |
+
+### `DataType`
+
+Where the rows of a file list entry are stored.
+
+| Value | Description |
+|-------|-------------|
+| `data_file` | In a data file. |
+| `inlined_data` | In an inlined data table. |
+| `transaction_local_inlined_data` | In the inlined data of the transaction. |
+
+### `DeleteFile`
+
+A delete file written by a client, which replaces the previous delete file of its data file.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `data_file_id` | `uint64` (optional) | The data file whose rows are deleted. |
+| `data_file_path` | `string` (default `""`) | The path of the data file. |
+| `path` | `string` | The path of the delete file. |
+| `format` | [`FileFormat`](#fileformat) (default `"parquet"`) | The format of the delete file. |
+| `delete_count` | `uint64` | The number of deleted rows. |
+| `file_size_bytes` | `uint64` | The size of the delete file. |
+| `footer_size` | `uint64` (default `0`) | The size of the footer of the delete file. |
+| `row_group_count` | `uint64` (optional) | The number of row groups of the delete file. |
+| `encryption_key` | `string` (default `""`) | The key the file is encrypted with, if any. |
+| `overwrites_existing_delete` | `bool` (default `false`) | Whether the delete file replaces a delete file of the data file. |
+| `overwritten_delete_file_id` | `uint64` (optional) | The delete file that is replaced. |
+| `overwritten_delete_file_path` | `string` (default `""`) | The path of the delete file that is replaced. |
+| `begin_snapshot` | `uint64` (optional) | The snapshot of the deletes, if it is not the snapshot of the commit. |
+| `max_snapshot` | `uint64` (optional) | The last snapshot whose deletes the file holds, for partial delete files. |
+| `source` | [`DeleteFileSource`](#deletefilesource) (default `"regular"`) | Why the delete file was written. |
+
+### `DeleteFileSource`
+
+Why a delete file was written.
+
+| Value | Description |
+|-------|-------------|
+| `regular` | By a delete. |
+| `flush` | By a flush of inlined deletions. |
+
+### `DeleteScanEntry`
+
+A data file whose rows were deleted between two snapshots.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `file` | [`FileData`](#filedata) | The data file. |
+| `delete_file` | [`FileData`](#filedata) (optional) | The delete file at the end of the range. |
+| `previous_delete_file` | [`FileData`](#filedata) (optional) | The delete file at the start of the range. |
+| `record_count` | `uint64` | The number of rows of the data file. |
+| `row_id_start` | `uint64` (optional) | The row id of the first row. |
+| `mapping_id` | `uint64` (optional) | The name map of the file. |
+| `snapshot_id` | `uint64` (optional) | The snapshot of the deletes. |
+| `file_deleted` | `bool` (default `false`) | Whether the data file was deleted entirely. |
+| `start_snapshot` | `uint64` (optional) | The first snapshot of the range. |
+| `end_snapshot` | `uint64` (optional) | The last snapshot of the range. |
+| `file_id` | `uint64` (optional) | The id of the data file. |
+| `inlined_file_deletions` | list of `uint64` (default `[]`) | Entries of `row_id` and `snapshot_id`. The deleted rows of the file that are inlined in the catalog, with the snapshot that deleted them. |
+
+### `DeletedRowVersion`
+
+A deleted version of a row of an inlined data table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `row_id` | `int64` | The row id. |
+| `begin_snapshot` | `int64` | The snapshot that inserted the row. |
+| `end_snapshot` | `int64` | The snapshot that deleted the row. |
+
+### `DroppedFile`
+
+A data file that is deleted entirely.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `data_file_id` | `uint64` | The data file. |
+| `path` | `string` | The path of the file. |
+| `record_count` | `uint64` | The number of rows of the file. |
+| `file_size_bytes` | `uint64` | The size of the file. |
+
+### `DynamicFilter`
+
+A filter whose value is only known while the scan runs (e.g. of a top-N).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_id` | `uint64` | The column. |
+| `comparison_type` | `string` | The comparison, as a DuckDB `ExpressionType` (e.g. `COMPARE_GREATERTHAN`). |
+| `type` | `logical_type` | The type of the column. |
+
+### `FileColumnStats`
+
+The min/max statistics of a column of a file.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `min_value` | `string` (optional) | The minimum value. |
+| `max_value` | `string` (optional) | The maximum value. |
+| `contains_nan` | `bool` (optional) | Whether the column contains `NaN` values. |
+
+### `FileData`
+
+A file that a client reads.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | `string` | The absolute path of the file. |
+| `encryption_key` | `string` (default `""`) | The key the file is encrypted with, if any. |
+| `file_size_bytes` | `uint64` (default `0`) | The size of the file. |
+| `footer_size` | `uint64` (optional) | The size of the footer of the file. |
+| `format` | [`FileFormat`](#fileformat) (default `"parquet"`) | The format of the file. |
+
+### `FileForCleanup`
+
+A file that is scheduled for deletion.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `data_file_id` | `uint64` | The id of the file. |
+| `path` | `string` | The path of the file. |
+| `schedule_start` | `timestamp` | When the file was scheduled for deletion. |
+
+### `FileFormat`
+
+The format of a file.
+
+| Value | Description |
+|-------|-------------|
+| `parquet` | A Parquet file. |
+| `puffin` | A deletion vector in a Puffin file (Iceberg V3). |
+
+### `FileListEntry`
+
+A data file of a table that is visible in a snapshot, together with its deletes.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `data_file_id` | `uint64` (optional) | The id of the data file. |
+| `file_id` | `uint64` (optional) | The id of the file. |
+| `file` | [`FileData`](#filedata) | The data file. |
+| `delete_file` | [`FileData`](#filedata) (optional) | The delete file of the data file. |
+| `row_id_start` | `uint64` (optional) | The row id of the first row of the file. |
+| `snapshot_id` | `uint64` (optional) | The snapshot that added the file. |
+| `max_row_count` | `uint64` (optional) | The number of rows of the file to read. |
+| `snapshot_filter_max` | `uint64` (optional) | Only read rows that were inserted up to this snapshot. |
+| `snapshot_filter_min` | `uint64` (optional) | Only read rows that were inserted from this snapshot. |
+| `mapping_id` | `uint64` (optional) | The name map of the file. |
+| `data_type` | [`DataType`](#datatype) (default `"data_file"`) | Where the rows are stored. |
+| `inlined_file_deletions` | list of `uint64` (default `[]`) | The positions of the rows of the file that are deleted by deletions inlined in the catalog. |
+| `column_min_max` | list of [`FileColumnStats`](#filecolumnstats) (default `[]`) | Each entry has an additional field `column_id`. The statistics of the columns of the scan's `runtime_filter_columns`. |
+
+### `FileListExtendedEntry`
+
+A data file of a table with the ids of its files, used to plan deletes and updates.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `file_id` | `uint64` (optional) | The id of the data file. |
+| `delete_file_id` | `uint64` (optional) | The id of the delete file. |
+| `file` | [`FileData`](#filedata) | The data file. |
+| `delete_file` | [`FileData`](#filedata) (optional) | The delete file. |
+| `row_id_start` | `uint64` (optional) | The row id of the first row of the file. |
+| `snapshot_id` | `uint64` (optional) | The snapshot that added the file. |
+| `delete_file_begin_snapshot` | `uint64` (optional) | The snapshot that added the delete file. |
+| `record_count` | `uint64` | The number of rows of the file. |
+| `delete_count` | `uint64` (default `0`) | The number of deleted rows of the file. |
+| `mapping_id` | `uint64` (optional) | The name map of the file. |
+| `data_type` | [`DataType`](#datatype) (default `"data_file"`) | Where the rows are stored. |
+
+### `FilePartitionValue`
+
+The value of a partition key for the rows of a file.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `partition_key_index` | `uint64` | The partition key. |
+| `partition_value` | `value` (optional) | The value. |
+
+### `FileRowDeletes`
+
+Deletes of rows of a data file that are inlined in the catalog.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `data_file_id` | `uint64` | The data file. |
+| `row_ids` | list of `uint64` | The positions of the deleted rows in the file. |
+
+### `FlushedFileDeletions`
+
+The inlined deletions of rows of data files of a table that were flushed.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `int64` | The table. |
+| `flush_snapshot_id` | `uint64` | The deletions up to this snapshot were flushed. |
+
+### `FlushedInlinedTable`
+
+An inlined data table whose rows were flushed.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_name` | `string` | The inlined data table. |
+| `schema_version` | `uint64` | The schema version of the inlined data table. |
+| `flush_snapshot_id` | `uint64` | The rows up to this snapshot were flushed. |
+
+### `GlobalColumnStats`
+
+The statistics of a column of a table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_id` | `uint64` (optional) | The column. |
+| `contains_null` | `bool` (optional) | Whether the column contains `NULL` values. |
+| `contains_nan` | `bool` (optional) | Whether the column contains `NaN` values. |
+| `min_value` | `string` (optional) | The minimum value. |
+| `max_value` | `string` (optional) | The maximum value. |
+| `extra_stats` | `string` (optional) | Type-specific statistics. |
+| `min_is_exact` | `bool` (default `false`) | Whether the minimum is exact (rather than a bound). |
+| `max_is_exact` | `bool` (default `false`) | Whether the maximum is exact (rather than a bound). |
+
+### `GlobalTableStats`
+
+The statistics of a table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `uint64` (optional) | The table. |
+| `initialized` | `bool` (default `true`) | Whether the statistics have been initialized. |
+| `record_count` | `uint64` (optional) | The number of rows of the table, absent if unknown. |
+| `next_row_id` | `uint64` (default `0`) | The next free row id of the table. |
+| `file_size_bytes` | `uint64` (optional) | The size of the files of the table, absent if unknown. |
+| `column_stats` | list of [`GlobalColumnStats`](#globalcolumnstats) (default `[]`) | The statistics of the columns. |
+
+### `InlinedFileDeletion`
+
+A deletion of a row of a data file that is inlined in the catalog.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `data_file_id` | `uint64` | The data file. |
+| `data_file_path` | `string` | The path of the data file. |
+| `row_id` | `uint64` | The position of the row in the file. |
+| `begin_snapshot` | `uint64` | The snapshot that deleted the row. |
+| `delete_file_id` | `uint64` (optional) | The current delete file of the data file. |
+| `delete_file` | [`FileData`](#filedata) (optional) | The current delete file. |
+| `delete_file_begin_snapshot` | `uint64` (default `0`) | The snapshot that added the current delete file. |
+
+### `InlinedReadMode`
+
+Which rows of an inlined data table to read.
+
+| Value | Description |
+|-------|-------------|
+| `scan` | The rows visible in the snapshot. |
+| `insertions` | The rows inserted between the start snapshot and the snapshot. |
+| `deletions` | The rows deleted between the start snapshot and the snapshot. |
+| `flush` | All rows that were inserted up to the snapshot (including deleted rows), in the order in which they are flushed. |
+
+### `InlinedRowDeletes`
+
+Deletes of inlined rows.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_name` | `string` | The inlined data table. |
+| `row_ids` | list of `uint64` | The row ids of the deleted rows. |
+
+### `InlinedRows`
+
+A set of rows, e.g. the rows of an inlined data table.
+
+Has the fields of [`RowSet`](#rowset), and:
+
+No fields.
+
+### `InlinedTableInfo`
+
+An inlined data table of a table, which holds rows that are inlined in the catalog.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_name` | `string` | The name of the inlined data table. |
+| `schema_version` | `uint64` | The schema version of the table whose columns the inlined data table has. |
+
+### `InlinedTableRows`
+
+The rows of an inlined data table.
+
+Has the fields of [`RowSet`](#rowset), and:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_name` | `string` | The inlined data table. |
+| `schema_version` | `uint64` | The schema version of the inlined data table. |
+
+### `MacroImplementation`
+
+An implementation (overload) of a macro.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dialect` | `string` (default `"duckdb"`) | The SQL dialect of the implementation. |
+| `sql` | `string` | The body of the macro. |
+| `type` | [`MacroType`](#macrotype) | The type of the macro. |
+| `parameters` | list of [`MacroParameter`](#macroparameter) (default `[]`) | The parameters of the macro. |
+
+### `MacroInfo`
+
+A macro of the catalog.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_id` | `uint64` (optional) | The schema of the macro. |
+| `macro_id` | `uint64` (optional) | The id of the macro. |
+| `macro_name` | `string` | The name of the macro. |
+| `implementations` | list of [`MacroImplementation`](#macroimplementation) (default `[]`) | The implementations of the macro. |
+
+### `MacroParameter`
+
+A parameter of a macro.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `parameter_name` | `string` | The name of the parameter. |
+| `parameter_type` | `string` (default `""`) | The type of the parameter, `unknown` if it has none. |
+| `default_value` | `value` (optional) | The default value of the parameter. |
+| `default_value_type` | `string` (default `""`) | Whether the default is a `literal` or an `expression`. |
+
+### `MacroType`
+
+The type of a macro.
+
+| Value | Description |
+|-------|-------------|
+| `scalar` | A scalar macro. |
+| `table` | A table macro. |
+
+### `Metadata`
+
+The global metadata of the DuckLake (the contents of `ducklake_metadata`).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tags` | list of [`Tag`](#tag) (default `[]`) | The global options, including the `version` and the `data_path` of the DuckLake. |
+| `schema_settings` | list of [`SchemaSetting`](#schemasetting) (default `[]`) | The options set for schemas. |
+| `table_settings` | list of [`TableSetting`](#tablesetting) (default `[]`) | The options set for tables. |
+
+### `NameMap`
+
+A name map (`ducklake_column_mapping` / `ducklake_name_mapping`) of files that were added with
+`ducklake_add_data_files`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `uint64` (optional) | The table. |
+| `mapping_id` | `uint64` (optional) | The id of the name map. |
+| `type` | `string` (default `"map_by_name"`) | The type of the name map. |
+| `columns` | list of [`NameMapColumn`](#namemapcolumn) (default `[]`) | The columns of the name map. |
+
+### `NameMapColumn`
+
+A column of a name map: maps a column of a file to a field of the table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_id` | `uint64` | The id of the entry in the name map. |
+| `source_name` | `string` | The name of the column in the file. |
+| `target_field_id` | `uint64` (optional) | The field of the table. |
+| `hive_partition` | `bool` (default `false`) | Whether the column is a hive partition of the file path. |
+| `parent_column` | `uint64` (optional) | The entry of the parent column, for nested columns. |
+
+### `NullOrder`
+
+Where a sort key orders `NULL` values.
+
+| Value | Description |
+|-------|-------------|
+| `NULLS_FIRST` |  |
+| `NULLS_LAST` |  |
+| `ORDER_DEFAULT` |  |
+
+### `OptionSetting`
+
+An option of the DuckLake.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `key` | `string` | The option, e.g. `data_inlining_row_limit`. |
+| `value` | `string` (default `""`) | The value of the option. |
+| `schema_id` | `uint64` (optional) | The schema, for options of a schema. |
+| `table_id` | `int64` (optional) | The table, for options of a table. Can be a placeholder. |
+
+### `PartitionField`
+
+A partition key of a table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `partition_key_index` | `uint64` | The position of the key in the partitioning. |
+| `column_id` | `uint64` (optional) | The column the key is computed from. |
+| `transform` | `string` | The transform of the column, e.g. `identity` or `year`. |
+
+### `PartitionInfo`
+
+The partitioning of a table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `partition_id` | `uint64` (optional) | The id of the partitioning. |
+| `table_id` | `uint64` (optional) | The table. |
+| `fields` | list of [`PartitionField`](#partitionfield) (default `[]`) | The partition keys. |
+
+### `ResultColumn`
+
+A column of a set of rows.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | The name of the column. |
+| `type` | `logical_type` | The type of the column. |
+
+### `RetryConfig`
+
+How a commit is retried on conflicts.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `max_retry_count` | `uint64` | The number of retries. |
+| `retry_wait_ms` | `uint64` | The wait before the first retry. |
+| `retry_backoff` | `double` | The factor the wait grows with on every retry. |
+
+### `RowCountType`
+
+What `row_count` counts.
+
+| Value | Description |
+|-------|-------------|
+| `data_files` | The rows in data files minus the deleted rows. |
+| `data_files_exact` | The same, absent if it cannot be computed exactly. |
+| `inlined` | The rows of an inlined data table. |
+
+### `RowSet`
+
+The columns and rows of a set of rows.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `columns` | list of [`ResultColumn`](#resultcolumn) | The columns of the rows. |
+| `rows` | `rows` | The rows, as arrays of values of the types of the columns. |
+
+### `ScanFilters`
+
+Filters of a scan. Filters are optional: a server may ignore them, and a client applies them to the scanned rows
+regardless.
+
+`expressions` are SQL expressions that all hold for the rows of the scan. They refer to the columns of the table
+by name, and to the fields of structs by their path (`st.a`). The server prunes files on the statistics of their
+columns with the parts of the expressions it understands: comparisons of a column with a constant, `IN` lists of
+constants, `IS [NOT] NULL`, and `AND` / `OR` combinations of those. The server ignores the other parts, and leaves
+out an `OR` entirely if it does not understand one of its parts.
+
+`dynamic_filters` let the server order the files so that these filters can prune files early. For
+`runtime_filter_columns` the server returns the min/max statistics of the files in `column_min_max`, so the client
+can prune files at runtime.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `expressions` | list of `string` (default `[]`) | SQL expressions that hold for all rows of the scan. |
+| `dynamic_filters` | list of [`DynamicFilter`](#dynamicfilter) (default `[]`) | Filters whose value is only known while the scan runs. |
+| `runtime_filter_columns` | list of `uint64` (default `[]`) | The columns to return the min/max statistics of. |
+
+### `SchemaInfo`
+
+A schema of the catalog.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_id` | `uint64` (optional) | The id of the schema. |
+| `parent_schema_id` | `uint64` (optional) | The parent schema, for nested schemas. |
+| `schema_uuid` | `string` (default `""`) | The uuid of the schema. |
+| `schema_name` | `string` | The name of the schema. |
+| `path` | `string` (default `""`) | The data path of the schema. |
+| `tags` | list of [`Tag`](#tag) (default `[]`) | The tags of the schema. |
+
+### `SchemaSetting`
+
+An option of the DuckLake that is set for a schema.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_id` | `uint64` (optional) | The schema. |
+| `key` | `string` | The option. |
+| `value` | `string` (default `""`) | The value of the option. |
+
+### `Snapshot`
+
+A snapshot of the DuckLake, which identifies the state of the catalog to read.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot_id` | `uint64` | The id of the snapshot. |
+| `schema_version` | `uint64` | The schema version of the snapshot, which changes with every change of the catalog. |
+| `next_catalog_id` | `uint64` | The next free id of a catalog entry. |
+| `next_file_id` | `uint64` | The next free id of a file. |
+
+### `SnapshotBound`
+
+How a timestamp finds a snapshot.
+
+| Value | Description |
+|-------|-------------|
+| `upper` | The last snapshot before the timestamp. |
+| `lower` | The first snapshot after the timestamp. |
+
+### `SnapshotInfo`
+
+A snapshot, with its commit information.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot_id` | `uint64` | The id of the snapshot. |
+| `snapshot_time` | `timestamp` | When the snapshot was committed. |
+| `schema_version` | `uint64` | The schema version of the snapshot. |
+| `next_file_id` | `uint64` | The next free file id of the snapshot. |
+| `changes_made` | `string` (default `""`) | The changes of the snapshot, as in `ducklake_snapshot_changes`. |
+| `author` | `value` (optional) | The author of the commit. |
+| `commit_message` | `value` (optional) | The commit message. |
+| `commit_extra_info` | `value` (optional) | Extra information of the commit. |
+
+### `SnapshotReference`
+
+The snapshot that a request reads. A `snapshot` is used as-is, which also allows reading at snapshots that
+have been expired since the client loaded them. Without `snapshot` and `snapshot_id`, the latest snapshot is read.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+
+### `SortDirection`
+
+The direction of a sort key.
+
+| Value | Description |
+|-------|-------------|
+| `ASCENDING` |  |
+| `DESCENDING` |  |
+| `ORDER_DEFAULT` |  |
+
+### `SortField`
+
+A sort key of a table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sort_key_index` | `uint64` | The position of the key in the sort order. |
+| `expression` | `string` | The expression to sort by. |
+| `dialect` | `string` (default `"duckdb"`) | The SQL dialect of the expression. |
+| `sort_direction` | [`SortDirection`](#sortdirection) | The direction. |
+| `null_order` | [`NullOrder`](#nullorder) | The order of `NULL` values. |
+
+### `SortInfo`
+
+The sort order of a table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sort_id` | `uint64` (optional) | The id of the sort order. |
+| `table_id` | `uint64` (optional) | The table. |
+| `fields` | list of [`SortField`](#sortfield) (default `[]`) | The sort keys. |
+
+### `TableChangeType`
+
+The changes that `table_changes` returns.
+
+| Value | Description |
+|-------|-------------|
+| `insertions` | The files with inserted rows. |
+| `deletions` | The files with deleted rows. |
+
+### `TableInfo`
+
+A table of the catalog.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `uint64` (optional) | The id of the table. |
+| `schema_id` | `uint64` (optional) | The schema of the table. |
+| `table_uuid` | `string` (default `""`) | The uuid of the table. |
+| `table_name` | `string` | The name of the table. |
+| `path` | `string` (default `""`) | The data path of the table. |
+| `columns` | list of [`ColumnInfo`](#columninfo) (default `[]`) | The columns of the table. |
+| `tags` | list of [`Tag`](#tag) (default `[]`) | The tags of the table. |
+| `inlined_data_tables` | list of [`InlinedTableInfo`](#inlinedtableinfo) (default `[]`) | The inlined data tables of the table. |
+
+### `TableSetting`
+
+An option of the DuckLake that is set for a table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `uint64` (optional) | The table. |
+| `key` | `string` | The option. |
+| `value` | `string` (default `""`) | The value of the option. |
+
+### `TableSize`
+
+The storage used by a table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_id` | `uint64` (optional) | The schema of the table. |
+| `table_id` | `uint64` (optional) | The table. |
+| `table_name` | `string` | The name of the table. |
+| `table_uuid` | `string` (default `""`) | The uuid of the table. |
+| `file_size_bytes` | `uint64` (default `0`) | The size of the data files. |
+| `delete_file_size_bytes` | `uint64` (default `0`) | The size of the delete files. |
+| `file_count` | `uint64` (default `0`) | The number of data files. |
+| `delete_file_count` | `uint64` (default `0`) | The number of delete files. |
+
+### `Tag`
+
+A key / value pair, e.g. a tag of a catalog entry or an option.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `key` | `string` | The key. |
+| `value` | `string` (default `""`) | The value. |
+
+### `ViewColumnTag`
+
+A tag of a column of a view.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_name` | `string` | The column. |
+| `key` | `string` | The key of the tag. |
+| `value` | `value` (optional) | The value of the tag. |
+
+### `ViewInfo`
+
+A view of the catalog.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `view_id` | `uint64` (optional) | The id of the view. |
+| `schema_id` | `uint64` (optional) | The schema of the view. |
+| `view_uuid` | `string` (default `""`) | The uuid of the view. |
+| `view_name` | `string` | The name of the view. |
+| `dialect` | `string` (default `"duckdb"`) | The SQL dialect of the view. |
+| `column_aliases` | list of `string` (default `[]`) | The names of the columns of the view. |
+| `sql` | `string` | The query of the view. |
+| `tags` | list of [`Tag`](#tag) (default `[]`) | The tags of the view. |
+| `column_tags` | list of [`ViewColumnTag`](#viewcolumntag) (default `[]`) | The tags of the columns of the view. |
+
+<!-- END GENERATED REFERENCE -->
+
+## Alterations
+
+The `alter` of `alter_table` and `alter_view` is an object with a `type` and the fields of that type. Columns are
+referred to by name; nested fields by their path from the top-level column, e.g. `["s", "a"]`. Expressions are SQL
+expressions.
 
 | `type`               | Fields                                                                         |
 |----------------------|--------------------------------------------------------------------------------|
@@ -608,108 +1770,6 @@ Expressions are SQL expressions.
 | `set_comment`        | `entry_type` (`TABLE_ENTRY` / `VIEW_ENTRY`), `comment`                         |
 | `set_column_comment` | `entry_type`, `column_name`, `comment`                                         |
 
-#### `set_option`
-
-Sets or resets a DuckLake option (`ducklake_metadata`).
-
-| Parameter | Description                                                                                       |
-|-----------|---------------------------------------------------------------------------------------------------|
-| `option`  | `{"key": "data_inlining_row_limit", "value": "10", "schema_id": null, "table_id": 1}`. `table_id` can be a placeholder. |
-| `reset`   | Reset the option instead of setting it.                                                           |
-
-#### `create_name_map`
-
-Registers a name map for files that are inserted later in the transaction (see `column_mappings` for the format).
-`mapping.mapping_id` is an id of the client, which files of the transaction refer to with their `mapping_id`.
-
-| Parameter  | Description            |
-|------------|------------------------|
-| `table_id` | The table.             |
-| `mapping`  | The name map.          |
-
-#### `insert_rows`
-
-Inserts rows that are inlined in the catalog.
-
-| Parameter      | Description                                                                                  |
-|----------------|----------------------------------------------------------------------------------------------|
-| `table_id`     | The table.                                                                                   |
-| `column_types` | The types of the columns of the rows, in the order of the columns of the table.              |
-| `rows`         | The rows, as arrays of values.                                                               |
-| `row_ids`      | Optional, the row ids of the rows (for updates that keep the row ids of the updated rows).   |
-| `column_stats` | The statistics of the rows per column, see [Column statistics](#column-statistics).          |
-
-#### `insert_files`
-
-Registers Parquet files that were written by the client. The files have to include the statistics of their columns,
-so the server does not need to read them.
-
-| Parameter  | Description            |
-|------------|------------------------|
-| `table_id` | The table.             |
-| `files`    | The files, see below.  |
-
-```json
-{
-  "path": "/data/main/t/f1.parquet", "record_count": 2, "file_size_bytes": 512, "footer_size": 200,
-  "row_group_count": 1, "partition_id": null, "encryption_key": "", "mapping_id": null, "begin_snapshot": null,
-  "max_partial_file_snapshot": null, "flush_row_id_start": null, "created_by_ducklake": true,
-  "column_stats": [{"column_id": 1, ...}],
-  "partition_values": [{"partition_key_index": 0, "partition_value": "2025"}],
-  "delete_files": []
-}
-```
-
-#### Column statistics
-
-```json
-{"column_id": 1, "type": {"id": "INTEGER"}, "min_value": "1", "max_value": "2", "null_count": 0,
- "value_count": 2, "column_size_bytes": 10, "contains_nan": null, "any_valid": true, "bounds_unknown": false,
- "min_is_exact": true, "max_is_exact": true, "extra_stats": null}
-```
-
-#### `flush_inlined_data`
-
-Marks inlined data as flushed: the rows are deleted from the inlined data tables when the transaction commits. The
-files that hold the flushed rows are inserted with `insert_files`.
-
-| Parameter        | Description                                                                                    |
-|------------------|------------------------------------------------------------------------------------------------|
-| `inlined_tables` | `[{"table_name": "...", "schema_version": 1, "flush_snapshot_id": 4}]`: the inlined data tables whose rows up to the snapshot were flushed. |
-| `file_deletions` | `[{"table_id": 1, "flush_snapshot_id": 4}]`: the tables whose inlined deletions of data file rows up to the snapshot were flushed to delete files (registered with `delete_data`). |
-
-#### `compact`
-
-Replaces data files with compacted files that were written by the client.
-
-| Parameter     | Description                                                                                  |
-|---------------|----------------------------------------------------------------------------------------------|
-| `table_id`    | The table.                                                                                   |
-| `compactions` | `[{"type": "merge_adjacent", "row_id_start": 0, "source_files": [...], "written_files": [...]}]`. The source files are in the format returned by `files_for_compaction`, the written files in the format of `insert_files`. |
-
-#### `delete_data`
-
-Deletes rows from a table.
-
-| Parameter          | Description                                                                                  |
-|--------------------|----------------------------------------------------------------------------------------------|
-| `table_id`         | The table.                                                                                   |
-| `delete_files`     | Delete files written by the client, see below.                                               |
-| `inlined_deletes`  | Deletes of inlined rows: `[{"table_name": "<inlined data table>", "row_ids": [1, 2]}]`.      |
-| `file_row_deletes` | Deletes of rows of data files that are inlined in the catalog: `[{"data_file_id": 1, "row_ids": [0, 5]}]`. `row_ids` are the positions of the rows in the file. |
-| `dropped_files`    | Data files that are deleted entirely: `[{"data_file_id": 1, "path": "...", "record_count": 10, "file_size_bytes": 100}]`. |
-| `delete_attempted` | Whether a delete was evaluated against the table, even if it did not delete any rows. This makes the commit conflict with concurrent inserts. |
-
-A delete file replaces the previous delete file of its data file:
-
-```json
-{"data_file_id": 1, "data_file_path": "/data/main/t/f1.parquet", "path": "/data/main/t/d1.parquet",
- "format": "parquet", "delete_count": 10, "file_size_bytes": 300, "footer_size": 100, "row_group_count": 1,
- "encryption_key": "", "overwrites_existing_delete": true, "overwritten_delete_file_id": 3,
- "overwritten_delete_file_path": "/data/main/t/d0.parquet", "begin_snapshot": null, "max_snapshot": null,
- "source": "regular"}
-```
-
 ## Reference Implementation
 
 The server (`src/rest/ducklake_rest_server.cpp`, `src/rest/ducklake_rest_endpoints.cpp`) serves a DuckLake catalog
@@ -724,8 +1784,11 @@ The client (`RESTMetadataManager`, `src/metadata_manager/rest_metadata_manager.c
 transaction as requests while they are made, and sends them together with the data changes of the transaction when it
 commits. Data files are written and read by the client.
 
-The JSON conversions of the metadata structures are in `src/rest/ducklake_rest_serialization.cpp`, those of catalog
-changes in `src/rest/ducklake_rest_catalog_changes.cpp`.
+Both use the code that is generated from the [specification](#specification) (`src/include/rest/ducklake_rest_api.hpp`):
+the server implements the handlers of `DuckLakeRESTEndpoints` and `DuckLakeRESTCommitHandler`, the client calls the
+endpoints through `DuckLakeRESTClientAPI`. The JSON conversions that are not generated are in
+`src/rest/ducklake_rest_serialization.cpp` (column statistics, rows) and `src/rest/ducklake_rest_catalog_changes.cpp`
+(alterations).
 
 ### Testing
 

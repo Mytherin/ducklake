@@ -23,8 +23,8 @@ SELECT status FROM ducklake_rest_request('{rest_server}', 'insert_rows',
 query II
 SELECT response->>'$.snapshot_id', response->>'$.table_ids[0].placeholder' FROM ducklake_rest_request('{rest_server}', 'commit_transaction',
 '{"requests": [
-  {"path": "create_table", "parameters": {"table_id": -1, "schema_path": ["main"], "table_name": "t2", "columns": [{"column_name": "j", "column_type": "BIGINT", "default": "42"}]}},
-  {"path": "insert_rows", "parameters": {"table_id": -1, "column_types": [{"id": "BIGINT"}], "rows": [[100]], "column_stats": []}}
+  {"create_table": {"table_id": -1, "schema_path": ["main"], "table_name": "t2", "columns": [{"column_name": "j", "column_type": "BIGINT", "default": "42"}]}},
+  {"insert_rows": {"table_id": -1, "column_types": [{"id": "BIGINT"}], "rows": [[100]], "column_stats": []}}
 ]}')
 ----
 3	-1
@@ -101,6 +101,42 @@ SELECT status FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
 '{"table_name": "ducklake_inlined_data_1_1", "columns": ["(SELECT 42)"]}')
 ----
 400
+
+# requests are validated against the specification of the API
+query II
+SELECT status, response->>'$.error.message' LIKE '%not a valid InlinedReadMode%' FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
+'{"table_name": "ducklake_inlined_data_1_1", "columns": ["i"], "mode": "everything"}')
+----
+400	true
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%missing required field "table_id"%' FROM ducklake_rest_request('{rest_server}', 'select', '{}')
+----
+400	true
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%expected a JSON integer%' FROM ducklake_rest_request('{rest_server}', 'select', '{"table_id": "one"}')
+----
+400	true
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%Unsupported request "create_everything"%' FROM ducklake_rest_request('{rest_server}', 'commit_transaction',
+'{"requests": [{"create_everything": {}}]}')
+----
+400	true
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%exactly one member%' FROM ducklake_rest_request('{rest_server}', 'commit_transaction',
+'{"requests": [{"create_schema": {"schema_path": ["s2"]}, "drop_schema": {"schema_path": ["s2"]}}]}')
+----
+400	true
+
+# the changes of a table are returned by their type
+query II
+SELECT status, json_array_length(response->'$.insertions') > 0 FROM ducklake_rest_request('{rest_server}', 'table_changes',
+'{"table_id": 1, "start_snapshot_id": 0, "changes": "insertions"}')
+----
+200	false
 
 statement ok
 DETACH dl

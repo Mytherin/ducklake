@@ -18,15 +18,6 @@ class DuckLakeSchemaEntry;
 struct CreateTableInfo;
 struct CreateSchemaInfo;
 
-//! Rows that a REST response returned as "columns" and "rows"
-struct RESTInlinedRows {
-	vector<Identifier> names;
-	vector<LogicalType> types;
-	unique_ptr<ColumnDataCollection> rows;
-
-	static RESTInlinedRows FromJson(RESTJsonIn rows_json);
-};
-
 //! Communicates with a DuckLake REST server instead of a metadata database
 class RESTMetadataManager : public DuckLakeMetadataManager {
 public:
@@ -134,36 +125,36 @@ public:
 	                idx_t file_size_bytes) override;
 
 private:
-	//! Sends a request to the server, the request is not part of the commit of the transaction
-	unique_ptr<RESTJsonReader> Post(const string &endpoint, const RESTJsonWriter &request);
+	DuckLakeRESTClient &GetClient();
 	//! Adds a catalog change to the requests that are sent when the transaction commits
-	RESTJsonOut AddCommitRequest(const string &path);
-	//! Reads rows, which an endpoint returns as "columns" and "rows"
-	unique_ptr<QueryResult> ReadRows(const string &endpoint, RESTJsonWriter &request);
+	template <class T>
+	T &AddCommitRequest() {
+		auto request = make_uniq<T>();
+		auto &result = *request;
+		catalog_requests.push_back(std::move(request));
+		return result;
+	}
 	unique_ptr<QueryResult> ToQueryResult(RESTInlinedRows rows);
 	//! Keeps the inlined rows that came along with a file list, until the scan reads them
-	void CacheInlinedRows(DuckLakeSnapshot snapshot, RESTJsonIn response);
+	void CacheInlinedRows(DuckLakeSnapshot snapshot, vector<RESTInlinedTableRows> &inlined_data);
 	unique_ptr<QueryResult> TryReadCachedInlinedRows(DuckLakeSnapshot snapshot, const string &inlined_table_name,
 	                                                 const vector<string> &columns_to_read);
-	unique_ptr<RESTJsonReader> GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot, bool include_catalog,
-	                                           bool include_stats);
-	void AddDeletes(const TransactionChangeInformation &changes, RESTJsonOut requests);
-	void AddInserts(const TransactionChangeInformation &changes, RESTJsonOut requests);
-	void AddNameMaps(RESTJsonOut requests);
-	void WriteTransactionDeletes(RESTJsonOut out, const DuckLakeTableEntry &table, const string &inlined_table_name);
-	unique_ptr<RESTJsonReader> GetTableChanges(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
-	                                           DuckLakeSnapshot snapshot, const string &changes);
-	void WriteDroppedFiles(RESTJsonOut parameters, TableIndex table_id);
+	RESTSnapshotDataResponse GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot, bool include_catalog,
+	                                         bool include_stats);
+	void AddDeletes(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
+	void AddInserts(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
+	void AddNameMaps(vector<unique_ptr<RESTCommitRequest>> &requests);
+	//! The inlined rows the transaction deleted, which are not flushed
+	set<idx_t> GetTransactionDeletes(const DuckLakeTableEntry &table, const string &inlined_table_name);
+	RESTTableChangesResponse GetTableChanges(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
+	                                         DuckLakeSnapshot snapshot, const string &changes);
+	vector<RESTDroppedFile> GetDroppedFiles(TableIndex table_id);
 	optional_idx GetRowCount(DuckLakeSnapshot snapshot, const string &count, TableIndex table_id,
 	                         const string &table_name);
 
 private:
 	//! The catalog changes of the transaction, in the order in which they were made
-	RESTJsonWriter catalog_requests;
-	RESTJsonOut catalog_change_requests;
-	idx_t catalog_request_count = 0;
-	//! The parameters of the last catalog change, which OnEntryChanged completes
-	RESTJsonOut last_catalog_change;
+	vector<unique_ptr<RESTCommitRequest>> catalog_requests;
 	mutex cache_lock;
 	//! The catalog of a snapshot that the transaction loaded, which came along with the snapshot
 	unique_ptr<DuckLakeCatalogInfo> prefetched_catalog;

@@ -12,7 +12,7 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/function/table_function.hpp"
-#include "rest/ducklake_rest_json.hpp"
+#include "rest/ducklake_rest_api.hpp"
 
 #include <thread>
 
@@ -32,17 +32,15 @@ public:
 	DuckLakeRESTRequest(DatabaseInstance &db, const string &catalog_name);
 
 	DuckLakeMetadataManager &GetMetadataManager();
-	//! The snapshot of a request: the "snapshot" object, the snapshot with the id "snapshot_id", or the latest
-	//! snapshot if both are absent
-	DuckLakeSnapshot GetSnapshot(RESTJsonIn request, const string &key = "snapshot");
+	//! The snapshot of a request: the snapshot, the snapshot with the id, or the latest snapshot if both are absent
+	DuckLakeSnapshot GetSnapshot(const DuckLakeSnapshot &snapshot, optional_idx snapshot_id);
+	DuckLakeSnapshot GetSnapshot(const RESTSnapshotReference &reference);
 	DuckLakeSnapshot GetSnapshotById(idx_t snapshot_id);
 
 	Connection connection;
 	DuckLakeCatalog *catalog;
 	DuckLakeTransaction *transaction;
 };
-
-typedef void (*rest_endpoint_t)(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output);
 
 //! An HTTP server that exposes a DuckLake catalog through the DuckLake REST API
 class DuckLakeRESTServer {
@@ -70,10 +68,6 @@ public:
 
 	//! Handles a request for an endpoint, returns the HTTP status code
 	int32_t HandleRequest(const string &endpoint, const string &body, string &response);
-
-	static const unordered_map<string, rest_endpoint_t> &GetEndpoints();
-	//! Whether a path is a request of commit_transaction, which can also be sent on its own
-	static bool IsCommitRequest(const string &path);
 
 private:
 	weak_ptr<DatabaseInstance> db;

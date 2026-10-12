@@ -31,30 +31,39 @@ static unique_ptr<ParsedExpression> ReadExpression(RESTJsonIn in, const string &
 	return Parser::GetBuiltinParser().ParseSingleExpression(expression.Str());
 }
 
-void DuckLakeRESTCatalogChanges::WriteColumn(RESTJsonOut out, const ColumnDefinition &column, bool not_null) {
-	out.SetStr("column_name", column.GetName().GetIdentifierName());
-	out.SetStr("column_type", column.GetType().ToString());
+RESTColumnDefinition DuckLakeRESTCatalogChanges::WriteColumn(const ColumnDefinition &column, bool not_null) {
+	RESTColumnDefinition result;
+	result.column_name = column.GetName().GetIdentifierName();
+	result.column_type = column.GetType().ToString();
 	if (column.HasDefaultValue()) {
-		out.SetStr("default", column.DefaultValue().ToString());
+		result.default_value = column.DefaultValue().ToString();
 	}
 	if (!column.Comment().IsNull()) {
-		out.SetStr("comment", column.Comment().ToString());
+		result.comment = column.Comment().ToString();
 	}
-	out.SetBool("not_null", not_null);
+	result.not_null = not_null;
+	return result;
 }
 
-ColumnDefinition DuckLakeRESTCatalogChanges::ReadColumn(ClientContext &context, RESTJsonIn in) {
-	auto type = TransformStringToLogicalType(in.Str("column_type"), context);
-	ColumnDefinition column(Identifier(in.Str("column_name")), std::move(type));
-	auto default_value = ReadExpression(in, "default");
-	if (default_value) {
-		column.SetDefaultValue(std::move(default_value));
+ColumnDefinition DuckLakeRESTCatalogChanges::ReadColumn(ClientContext &context, const RESTColumnDefinition &column) {
+	auto type = TransformStringToLogicalType(column.column_type, context);
+	ColumnDefinition result(Identifier(column.column_name), std::move(type));
+	if (!column.default_value.empty()) {
+		result.SetDefaultValue(Parser::GetBuiltinParser().ParseSingleExpression(column.default_value));
 	}
-	auto comment = in.TryGet("comment");
-	if (!comment.IsNull()) {
-		column.SetComment(Value(comment.Str()));
+	if (column.comment.has_value) {
+		result.SetComment(Value(column.comment.value));
 	}
-	return column;
+	return result;
+}
+
+static void WriteColumnDefinition(RESTJsonOut out, const string &key, const ColumnDefinition &column, bool not_null) {
+	out.SetRaw(key,
+	           DuckLakeRESTSerializer::Write(*out.writer, DuckLakeRESTCatalogChanges::WriteColumn(column, not_null)));
+}
+
+static RESTColumnDefinition ReadColumnDefinition(RESTJsonIn in, const string &key) {
+	return DuckLakeRESTSerializer::Read<RESTColumnDefinition>(in.Get(key));
 }
 
 void DuckLakeRESTCatalogChanges::WriteAlter(RESTJsonOut out, const AlterInfo &info) {
@@ -83,7 +92,7 @@ void DuckLakeRESTCatalogChanges::WriteAlter(RESTJsonOut out, const AlterInfo &in
 		case AlterTableType::ADD_COLUMN: {
 			auto &add = alter.Cast<AddColumnInfo>();
 			out.SetStr("type", "add_column");
-			WriteColumn(out.Obj("column"), add.new_column, add.add_column_constraints.add_not_null);
+			WriteColumnDefinition(out, "column", add.new_column, add.add_column_constraints.add_not_null);
 			out.SetBool("if_not_exists", add.if_column_not_exists);
 			return;
 		}
@@ -91,7 +100,7 @@ void DuckLakeRESTCatalogChanges::WriteAlter(RESTJsonOut out, const AlterInfo &in
 			auto &add = alter.Cast<AddFieldInfo>();
 			out.SetStr("type", "add_field");
 			WritePath(out, "column_path", add.column_path);
-			WriteColumn(out.Obj("field"), add.new_field, false);
+			WriteColumnDefinition(out, "field", add.new_field, false);
 			out.SetBool("if_not_exists", add.if_field_not_exists);
 			return;
 		}
@@ -220,14 +229,15 @@ unique_ptr<AlterInfo> DuckLakeRESTCatalogChanges::ReadAlter(ClientContext &conte
 		return make_uniq<RenameFieldInfo>(entry, ReadPath(in, "column_path"), Identifier(in.Str("new_name")));
 	}
 	if (type == "add_column") {
-		auto column_in = in.Get("column");
+		auto column = ReadColumnDefinition(in, "column");
 		AddColumnConstraints constraints;
-		constraints.add_not_null = column_in.Bool("not_null", false);
-		return make_uniq<AddColumnInfo>(entry, ReadColumn(context, column_in), in.Bool("if_not_exists", false),
+		constraints.add_not_null = column.not_null;
+		return make_uniq<AddColumnInfo>(entry, ReadColumn(context, column), in.Bool("if_not_exists", false),
 		                                constraints);
 	}
 	if (type == "add_field") {
-		return make_uniq<AddFieldInfo>(entry, ReadPath(in, "column_path"), ReadColumn(context, in.Get("field")),
+		return make_uniq<AddFieldInfo>(entry, ReadPath(in, "column_path"),
+		                               ReadColumn(context, ReadColumnDefinition(in, "field")),
 		                               in.Bool("if_not_exists", false));
 	}
 	if (type == "remove_column") {

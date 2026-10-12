@@ -52,6 +52,10 @@ public:
 	RESTJsonOut Root() {
 		return RESTJsonOut(writer, root);
 	}
+	void SetRoot(JSONMutableValue value) {
+		root = value;
+		writer.SetRoot(value);
+	}
 	string ToString() const {
 		return writer.ToString();
 	}
