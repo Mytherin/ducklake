@@ -3709,6 +3709,88 @@ ORDER BY %s;)",
 	return result;
 }
 
+vector<DuckLakeFlushedRowDeletion>
+DuckLakeMetadataManager::GetFlushedRowDeletions(DuckLakeTableEntry &table, const string &inlined_table_name,
+                                                const string &sort_order_sql, const vector<Value> &partition_values,
+                                                idx_t offset, idx_t count, DuckLakeSnapshot snapshot) {
+	auto col_names = InlinedColNames();
+	auto order_by = InlinedFlushOrder(sort_order_sql);
+	auto flush_source = InlinedFlushSource(inlined_table_name, table);
+	string partition_filter;
+	auto partition_sql_exprs = table.GetPartitionSQLExpressions();
+	if (!partition_sql_exprs.empty()) {
+		partition_filter =
+		    " AND " + DuckLakePartitionUtils::BuildPartitionFilter(partition_sql_exprs, partition_values);
+	}
+	auto result =
+	    Query(snapshot, StringUtil::Format(R"(
+WITH all_rows AS (
+	SELECT %s AS end_snapshot, ROW_NUMBER() OVER (ORDER BY %s) - 1 AS output_position
+	FROM %s
+	WHERE {SNAPSHOT_ID} >= %s%s
+)
+SELECT end_snapshot, output_position
+FROM all_rows
+WHERE end_snapshot IS NOT NULL
+AND output_position >= %d AND output_position < %d;)",
+	                                       col_names.end_snapshot, order_by, flush_source, col_names.begin_snapshot,
+	                                       partition_filter, offset, offset + count));
+	CheckInlinedDataReadError(*result, inlined_table_name);
+	vector<DuckLakeFlushedRowDeletion> deletions;
+	for (auto &row : *result) {
+		deletions.push_back({row.GetValue<idx_t>(1), row.GetValue<idx_t>(0)});
+	}
+	return deletions;
+}
+
+vector<DuckLakeInlinedFileDeletionEntry>
+DuckLakeMetadataManager::GetInlinedFileDeletionsForFlush(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot) {
+	vector<DuckLakeInlinedFileDeletionEntry> deletions;
+	auto table_id = table.GetTableId();
+	auto inlined_table_name = GetInlinedDeletionTableName(table_id, snapshot);
+	if (inlined_table_name.empty()) {
+		return deletions;
+	}
+	// the inlined deletions with the delete file active when their data file was last visible
+	auto result = Query(snapshot, StringUtil::Format(R"(
+SELECT del.file_id, data.path, data.path_is_relative, del.row_id, del.begin_snapshot,
+       existing_del.delete_file_id, existing_del.path as del_path, existing_del.path_is_relative as del_path_is_relative,
+       existing_del.begin_snapshot as del_begin_snapshot, existing_del.encryption_key as del_encryption_key,
+       existing_del.format as del_format
+FROM {METADATA_CATALOG}.%s del
+JOIN {METADATA_CATALOG}.ducklake_data_file data ON del.file_id = data.data_file_id
+LEFT JOIN {METADATA_CATALOG}.ducklake_delete_file existing_del
+    ON del.file_id = existing_del.data_file_id AND existing_del.table_id = %d
+       AND {SNAPSHOT_ID} >= existing_del.begin_snapshot
+       AND (existing_del.end_snapshot IS NULL
+            OR existing_del.end_snapshot >= COALESCE(data.end_snapshot, {SNAPSHOT_ID} + 1))
+WHERE del.begin_snapshot <= {SNAPSHOT_ID}
+	)",
+	                                                 inlined_table_name, table_id.index));
+	result->ThrowIfError("Failed to query inlined file deletions for flush: ");
+	auto &separator = transaction.GetCatalog().Separator();
+	for (auto &row : *result) {
+		DuckLakeInlinedFileDeletionEntry entry;
+		entry.file_id = DataFileIndex(row.GetValue<idx_t>(0));
+		DuckLakePath data_file_path {row.GetValue<string>(1), row.GetValue<bool>(2)};
+		entry.data_file_path = FromRelativePath(data_file_path, table.DataPath(), separator);
+		entry.row_id = NumericCast<idx_t>(row.GetValue<int64_t>(3));
+		entry.begin_snapshot = row.GetValue<idx_t>(4);
+		if (!row.IsNull(5)) {
+			entry.delete_file_id = DataFileIndex(row.GetValue<idx_t>(5));
+			DuckLakePath delete_file_path {row.GetValue<string>(6), row.GetValue<bool>(7)};
+			entry.delete_file.path = FromRelativePath(delete_file_path, table.DataPath(), separator);
+			entry.delete_file_begin_snapshot = row.GetValue<idx_t>(8);
+			ReadEncryptionKey(row, 9, entry.delete_file.encryption_key);
+			if (!row.IsNull(10)) {
+				entry.delete_file.format = DeleteFileFormatFromString(row.GetValue<string>(10));
+			}
+		}
+		deletions.push_back(std::move(entry));
+	}
+	return deletions;
+}
+
 string DuckLakeMetadataManager::ReadInlinedDataAggregatesSql(const string &inlined_table_name,
                                                              const string &select_list,
                                                              const DuckLakeInlinedColNames &col_names) {
@@ -4796,7 +4878,25 @@ string DuckLakeMetadataManager::UpdateGlobalTableStatsSql(const DuckLakeGlobalSt
 	return batch_query;
 }
 
-vector<DuckLakeSnapshotInfo> DuckLakeMetadataManager::GetAllSnapshots(const string &filter) {
+static string SnapshotFilterSQL(const DuckLakeSnapshotFilter &filter) {
+	vector<string> conditions;
+	if (filter.exclude_latest) {
+		conditions.push_back("snapshot_id != (SELECT MAX(snapshot_id) FROM {METADATA_CATALOG}.ducklake_snapshot)");
+	}
+	if (!filter.older_than.empty()) {
+		conditions.push_back(
+		    StringUtil::Format("snapshot_time::TIMESTAMPTZ < %s", SQLString::ToString(filter.older_than)));
+	}
+	if (filter.has_snapshot_ids) {
+		auto ids = StringUtil::Join(filter.snapshot_ids, filter.snapshot_ids.size(), ", ",
+		                            [](idx_t id) { return to_string(id); });
+		conditions.push_back(ids.empty() ? "FALSE" : StringUtil::Format("snapshot_id IN (%s)", ids));
+	}
+	return StringUtil::Join(conditions, " AND ");
+}
+
+vector<DuckLakeSnapshotInfo> DuckLakeMetadataManager::GetAllSnapshots(const DuckLakeSnapshotFilter &snapshot_filter) {
+	auto filter = SnapshotFilterSQL(snapshot_filter);
 	auto res = Query(StringUtil::Format(R"(
 SELECT snapshot_id, snapshot_time, schema_version, next_file_id, changes_made, author, commit_message, commit_extra_info
 FROM {METADATA_CATALOG}.ducklake_snapshot
@@ -4824,11 +4924,14 @@ ORDER BY snapshot_id
 	return snapshots;
 }
 
-vector<DuckLakeFileForCleanup> DuckLakeMetadataManager::GetOldFilesForCleanup(const string &filter) {
-	auto query = R"(
+vector<DuckLakeFileForCleanup> DuckLakeMetadataManager::GetOldFilesForCleanup(const string &older_than) {
+	string query = R"(
 SELECT data_file_id, path, path_is_relative, schedule_start
 FROM {METADATA_CATALOG}.ducklake_files_scheduled_for_deletion
-)" + filter;
+)";
+	if (!older_than.empty()) {
+		query += StringUtil::Format("WHERE schedule_start::TIMESTAMPTZ < %s", SQLString::ToString(older_than));
+	}
 	auto res = Query(query);
 	res->ThrowIfError("Failed to get files scheduled for deletion from DuckLake: ");
 	auto context = transaction.context.lock();
@@ -4881,9 +4984,21 @@ FROM {METADATA_CATALOG}.ducklake_files_scheduled_for_deletion f
 )";
 }
 
-vector<DuckLakeFileForCleanup> DuckLakeMetadataManager::GetOrphanFilesForCleanup(const string &filter) {
+vector<string> DuckLakeMetadataManager::GetKnownFilePaths() {
 	auto known_files_res = Query(GetKnownFilesForCleanupQuery());
 	known_files_res->ThrowIfError("Failed to get files scheduled for deletion from DuckLake: ");
+	vector<string> result;
+	for (auto &row : *known_files_res) {
+		result.push_back(row.GetValue<string>(0));
+	}
+	return result;
+}
+
+vector<DuckLakeFileForCleanup> DuckLakeMetadataManager::GetOrphanFilesForCleanup(const string &older_than) {
+	string filter;
+	if (!older_than.empty()) {
+		filter = StringUtil::Format(" AND last_modified::TIMESTAMPTZ < %s", SQLString::ToString(older_than));
+	}
 
 	// compare canonical paths so differently spelled paths to the same file match
 	auto &fs = GetFileSystem();
@@ -4900,8 +5015,8 @@ vector<DuckLakeFileForCleanup> DuckLakeMetadataManager::GetOrphanFilesForCleanup
 		return normalized.substr(path_start, path_end - path_start);
 	};
 	unordered_set<string> known_files;
-	for (auto &row : *known_files_res) {
-		known_files.insert(canonical_path(row.GetValue<string>(0)));
+	for (auto &path : GetKnownFilePaths()) {
+		known_files.insert(canonical_path(path));
 	}
 
 	auto query = StringUtil::Format(R"(SELECT filename
@@ -4926,12 +5041,12 @@ WHERE (suffix(filename, '.parquet') OR suffix(filename, '.puffin'))
 	return result;
 }
 
-vector<DuckLakeFileForCleanup> DuckLakeMetadataManager::GetFilesForCleanup(const string &filter, CleanupType type) {
+vector<DuckLakeFileForCleanup> DuckLakeMetadataManager::GetFilesForCleanup(const string &older_than, CleanupType type) {
 	switch (type) {
 	case CleanupType::OLD_FILES:
-		return GetOldFilesForCleanup(filter);
+		return GetOldFilesForCleanup(older_than);
 	case CleanupType::ORPHANED_FILES:
-		return GetOrphanFilesForCleanup(filter);
+		return GetOrphanFilesForCleanup(older_than);
 	default:
 		throw InternalException("CleanupType in DuckLakeMetadataManager::GetFilesForCleanup is not valid");
 	}

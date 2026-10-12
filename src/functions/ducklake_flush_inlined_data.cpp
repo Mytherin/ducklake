@@ -107,50 +107,30 @@ SinkFinalizeType DuckLakeFlushData::Finalize(Pipeline &pipeline, Event &event, C
 		DeletesPerFile deletes_per_file;
 		auto partition_sql_exprs = table.GetPartitionSQLExpressions();
 
-		// read the rows in the same order and with the same types as the flush scan
-		auto col_names = metadata_manager.InlinedColNames();
-		auto order_by = metadata_manager.InlinedFlushOrder(sort_order_sql);
-		auto flush_source = metadata_manager.InlinedFlushSource(inlined_table.table_name, table);
-
 		// Track cumulative row offset per partition so each file knows its range
 		unordered_map<string, idx_t> partition_row_offsets;
 
 		for (auto &file : global_state.written_files) {
 			// Build partition filter (empty string for non-partitioned tables)
 			string partition_filter;
+			vector<Value> partition_values;
 			if (!partition_sql_exprs.empty()) {
-				vector<Value> values;
 				for (auto &pv : file.partition_values) {
-					values.push_back(pv.partition_value);
+					partition_values.push_back(pv.partition_value);
 				}
-				partition_filter = DuckLakePartitionUtils::BuildPartitionFilter(partition_sql_exprs, values);
+				partition_filter = DuckLakePartitionUtils::BuildPartitionFilter(partition_sql_exprs, partition_values);
 			}
 
 			idx_t file_offset = partition_row_offsets[partition_filter];
 			partition_row_offsets[partition_filter] += file.row_count;
 
-			// Query deleted rows within this file's row range, filtered to its partition
-			string extra_filter = partition_filter.empty() ? "" : " AND " + partition_filter;
-			auto deleted_rows_result = metadata_manager.Query(
-			    snapshot, StringUtil::Format(R"(
-				WITH all_rows AS (
-					SELECT %s AS end_snapshot, ROW_NUMBER() OVER (ORDER BY %s) - 1 AS output_position
-					FROM %s
-					WHERE {SNAPSHOT_ID} >= %s%s
-				)
-				SELECT end_snapshot, output_position
-				FROM all_rows
-				WHERE end_snapshot IS NOT NULL
-				AND output_position >= %d AND output_position < %d;)",
-			                                 col_names.end_snapshot, order_by, flush_source, col_names.begin_snapshot,
-			                                 extra_filter, file_offset, file_offset + file.row_count));
-			metadata_manager.CheckInlinedDataReadError(*deleted_rows_result, inlined_table.table_name);
-
-			for (auto &row : *deleted_rows_result) {
-				auto end_snap = row.GetValue<int64_t>(0);
-				auto output_position = row.GetValue<int64_t>(1);
-				int64_t pos_in_file = output_position - static_cast<int64_t>(file_offset);
-				PositionWithSnapshot pos_with_snap {pos_in_file, end_snap};
+			// the deleted rows within this file's row range, in the same order as the flush scan
+			auto deletions =
+			    metadata_manager.GetFlushedRowDeletions(table, inlined_table.table_name, sort_order_sql,
+			                                            partition_values, file_offset, file.row_count, snapshot);
+			for (auto &deletion : deletions) {
+				int64_t pos_in_file = static_cast<int64_t>(deletion.position) - static_cast<int64_t>(file_offset);
+				PositionWithSnapshot pos_with_snap {pos_in_file, static_cast<int64_t>(deletion.end_snapshot)};
 				deletes_per_file[file.file_name].insert(pos_with_snap);
 			}
 		}
@@ -346,64 +326,31 @@ static void FlushInlinedFileDeletions(ClientContext &context, DuckLakeCatalog &c
 	auto table_id = table.GetTableId();
 	auto snapshot = transaction.GetSnapshot();
 
-	// Check if this table has an inlined deletion table
-	auto inlined_table_name = metadata_manager.GetInlinedDeletionTableName(table_id, snapshot);
-	if (inlined_table_name.empty()) {
-		// No inlined deletions for this table, skiddadle
-		return;
-	}
-
-	// Query the inlined deletions with the delete file active when their data file was last visible
-	auto deletions_result = metadata_manager.Query(snapshot, StringUtil::Format(R"(
-SELECT del.file_id, data.path, data.path_is_relative, del.row_id, del.begin_snapshot,
-       existing_del.delete_file_id, existing_del.path as del_path, existing_del.path_is_relative as del_path_is_relative,
-       existing_del.begin_snapshot as del_begin_snapshot, existing_del.encryption_key as del_encryption_key,
-       existing_del.format as del_format
-FROM {METADATA_CATALOG}.%s del
-JOIN {METADATA_CATALOG}.ducklake_data_file data ON del.file_id = data.data_file_id
-LEFT JOIN {METADATA_CATALOG}.ducklake_delete_file existing_del
-    ON del.file_id = existing_del.data_file_id AND existing_del.table_id = %d
-       AND {SNAPSHOT_ID} >= existing_del.begin_snapshot
-       AND (existing_del.end_snapshot IS NULL
-            OR existing_del.end_snapshot >= COALESCE(data.end_snapshot, {SNAPSHOT_ID} + 1))
-WHERE del.begin_snapshot <= {SNAPSHOT_ID}
-	)",
-	                                                                            inlined_table_name, table_id.index));
-	deletions_result->ThrowIfError("Failed to query inlined file deletions for flush: ");
-
 	unordered_map<idx_t, FileDeleteInfo> files_to_flush;
-	auto &separator = catalog.Separator();
-	for (auto &row : *deletions_result) {
-		auto file_id = row.GetValue<idx_t>(0);
-		auto row_id = row.GetValue<int64_t>(3);
-		auto begin_snapshot = row.GetValue<idx_t>(4);
+	for (auto &deletion : metadata_manager.GetInlinedFileDeletionsForFlush(table, snapshot)) {
+		auto file_id = deletion.file_id.index;
+		auto begin_snapshot = deletion.begin_snapshot;
 
 		auto &file_info = files_to_flush[file_id];
 
 		// Initialize file info on first encounter
 		if (file_info.file_path.empty()) {
-			DuckLakePath data_file_path {row.GetValue<string>(1), row.GetValue<bool>(2)};
-			file_info.file_path =
-			    DuckLakeMetadataManager::FromRelativePath(data_file_path, table.DataPath(), separator);
+			file_info.file_path = deletion.data_file_path;
 			file_info.max_snapshot = begin_snapshot;
-			if (!row.IsNull(5)) {
+			if (deletion.delete_file_id.IsValid()) {
 				file_info.has_existing_delete_file = true;
-				file_info.existing_delete_file_id = DataFileIndex(row.GetValue<idx_t>(5));
-				DuckLakePath delete_file_path {row.GetValue<string>(6), row.GetValue<bool>(7)};
-				file_info.existing_delete_path =
-				    DuckLakeMetadataManager::FromRelativePath(delete_file_path, table.DataPath(), separator);
-				file_info.existing_delete_begin_snapshot = row.GetValue<idx_t>(8);
-				ReadEncryptionKey(row, 9, file_info.existing_delete_encryption_key);
-				if (!row.IsNull(10)) {
-					file_info.existing_delete_format = DeleteFileFormatFromString(row.GetValue<string>(10));
-				}
+				file_info.existing_delete_file_id = deletion.delete_file_id;
+				file_info.existing_delete_path = deletion.delete_file.path;
+				file_info.existing_delete_begin_snapshot = deletion.delete_file_begin_snapshot;
+				file_info.existing_delete_encryption_key = deletion.delete_file.encryption_key;
+				file_info.existing_delete_format = deletion.delete_file.format;
 			}
 		} else {
 			file_info.max_snapshot = MaxValue(file_info.max_snapshot, begin_snapshot);
 		}
 
 		PositionWithSnapshot pos_with_snap;
-		pos_with_snap.position = row_id;
+		pos_with_snap.position = static_cast<int64_t>(deletion.row_id);
 		pos_with_snap.snapshot_id = static_cast<int64_t>(begin_snapshot);
 		file_info.deletions.insert(pos_with_snap);
 	}

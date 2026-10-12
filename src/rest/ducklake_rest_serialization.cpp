@@ -768,6 +768,107 @@ DuckLakeDataFile DuckLakeRESTSerializer::ReadDataFile(RESTJsonIn in) {
 	return result;
 }
 
+static void WriteCompactionBaseFile(RESTJsonOut &out, const DuckLakeCompactionBaseFileData &file) {
+	SetIndex(out, "file_id", file.id);
+	DuckLakeRESTSerializer::Write(out.Obj("file"), file.data);
+	out.SetUInt("record_count", file.row_count);
+	out.SetUInt("begin_snapshot", file.begin_snapshot);
+	out.SetOpt("end_snapshot", file.end_snapshot);
+	out.SetOpt("max_row_count", file.max_row_count);
+}
+
+static void ReadCompactionBaseFile(const RESTJsonIn &in, DuckLakeCompactionBaseFileData &file) {
+	file.id = GetIndex<DataFileIndex>(in, "file_id");
+	file.data = DuckLakeRESTSerializer::ReadFileData(in.Get("file"));
+	file.row_count = in.UInt("record_count");
+	file.begin_snapshot = in.UInt("begin_snapshot");
+	file.end_snapshot = in.Opt("end_snapshot");
+	file.max_row_count = in.Opt("max_row_count");
+}
+
+void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeCompactionFileEntry &entry) {
+	auto file = out.Obj("data_file");
+	WriteCompactionBaseFile(file, entry.file);
+	file.SetOpt("row_id_start", entry.file.row_id_start);
+	SetIndex(file, "mapping_id", entry.file.mapping_id);
+	file.SetOpt("partition_id", entry.file.partition_id);
+	auto partition_values = file.Arr("partition_values");
+	for (auto &value : entry.file.partition_values) {
+		partition_values.AppendRaw(RESTJson::ValueToJson(*out.writer, value));
+	}
+	auto delete_files = out.Arr("delete_files");
+	for (auto &delete_file : entry.delete_files) {
+		auto delete_out = delete_files.AppendObj();
+		WriteCompactionBaseFile(delete_out, delete_file);
+		SetIndex(delete_out, "delete_file_id", delete_file.delete_file_id);
+		delete_out.SetOpt("max_snapshot", delete_file.max_snapshot);
+	}
+	out.SetOpt("max_partial_file_snapshot", entry.max_partial_file_snapshot);
+	out.SetUInt("schema_version", entry.schema_version);
+	out.SetOpt("partition_schema_version", entry.partition_schema_version);
+	auto deletions = out.Arr("inlined_file_deletions");
+	for (auto &row : entry.inlined_file_deletions) {
+		deletions.AppendUInt(row);
+	}
+	out.SetBool("has_inlined_deletions", entry.has_inlined_deletions);
+	out.SetDouble("delete_ratio", entry.delete_ratio);
+}
+
+DuckLakeCompactionFileEntry DuckLakeRESTSerializer::ReadCompactionFileEntry(RESTJsonIn in) {
+	DuckLakeCompactionFileEntry result;
+	auto file = in.Get("data_file");
+	ReadCompactionBaseFile(file, result.file);
+	result.file.row_id_start = file.Opt("row_id_start");
+	result.file.mapping_id = GetIndex<MappingIndex>(file, "mapping_id");
+	result.file.partition_id = file.Opt("partition_id");
+	for (auto &value : file.TryGet("partition_values").Items()) {
+		result.file.partition_values.push_back(RESTJson::ValueFromJson(value));
+	}
+	for (auto &delete_in : in.TryGet("delete_files").Items()) {
+		DuckLakeCompactionDeleteFileData delete_file;
+		ReadCompactionBaseFile(delete_in, delete_file);
+		delete_file.delete_file_id = GetIndex<DataFileIndex>(delete_in, "delete_file_id");
+		delete_file.max_snapshot = delete_in.Opt("max_snapshot");
+		result.delete_files.push_back(std::move(delete_file));
+	}
+	result.max_partial_file_snapshot = in.Opt("max_partial_file_snapshot");
+	result.schema_version = in.UInt("schema_version");
+	result.partition_schema_version = in.Opt("partition_schema_version");
+	for (auto &row : in.TryGet("inlined_file_deletions").Items()) {
+		result.inlined_file_deletions.insert(row.UInt());
+	}
+	result.has_inlined_deletions = in.Bool("has_inlined_deletions", false);
+	auto delete_ratio = in.TryGet("delete_ratio");
+	result.delete_ratio = delete_ratio.IsNull() ? 0 : delete_ratio.Double();
+	return result;
+}
+
+void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeCompactionEntry &entry) {
+	out.SetStr("type", CompactionTypeToString(entry.type));
+	out.SetOpt("row_id_start", entry.row_id_start);
+	auto source_files = out.Arr("source_files");
+	for (auto &file : entry.source_files) {
+		Write(source_files.AppendObj(), file);
+	}
+	auto written_files = out.Arr("written_files");
+	for (auto &file : entry.written_files) {
+		Write(written_files.AppendObj(), file);
+	}
+}
+
+DuckLakeCompactionEntry DuckLakeRESTSerializer::ReadCompactionEntry(RESTJsonIn in) {
+	DuckLakeCompactionEntry result;
+	result.type = CompactionTypeFromString(in.Str("type"));
+	result.row_id_start = in.Opt("row_id_start");
+	for (auto &file : in.TryGet("source_files").Items()) {
+		result.source_files.push_back(ReadCompactionFileEntry(file));
+	}
+	for (auto &file : in.TryGet("written_files").Items()) {
+		result.written_files.push_back(ReadDataFile(file));
+	}
+	return result;
+}
+
 void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeSnapshotInfo &snapshot) {
 	out.SetUInt("snapshot_id", snapshot.id);
 	out.SetStr("snapshot_time", Value::TIMESTAMPTZ(snapshot.time).ToString());

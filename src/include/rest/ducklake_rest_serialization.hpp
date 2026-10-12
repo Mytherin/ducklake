@@ -60,6 +60,11 @@ struct DuckLakeRESTSerializer {
 	static void Write(RESTJsonOut out, const DuckLakeDataFile &file);
 	static DuckLakeDataFile ReadDataFile(RESTJsonIn in);
 
+	static void Write(RESTJsonOut out, const DuckLakeCompactionFileEntry &entry);
+	static DuckLakeCompactionFileEntry ReadCompactionFileEntry(RESTJsonIn in);
+	static void Write(RESTJsonOut out, const DuckLakeCompactionEntry &entry);
+	static DuckLakeCompactionEntry ReadCompactionEntry(RESTJsonIn in);
+
 	static void Write(RESTJsonOut out, const DuckLakeSnapshotInfo &snapshot);
 	static DuckLakeSnapshotInfo ReadSnapshotInfo(RESTJsonIn in);
 

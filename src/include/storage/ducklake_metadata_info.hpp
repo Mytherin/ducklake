@@ -317,6 +317,17 @@ struct SnapshotDeletedFromFiles {
 	set<DataFileIndex> deleted_from_files;
 };
 
+//! Selects snapshots, an empty filter selects all snapshots
+struct DuckLakeSnapshotFilter {
+	//! Exclude the latest snapshot, which can never be expired
+	bool exclude_latest = false;
+	//! Only snapshots older than this ISO 8601 timestamp, if set
+	string older_than;
+	//! Only these snapshots, if set
+	bool has_snapshot_ids = false;
+	vector<idx_t> snapshot_ids;
+};
+
 struct DuckLakeSnapshotInfo {
 	idx_t id;
 	timestamp_tz_t time;
@@ -469,6 +480,24 @@ struct DuckLakeCompactionBaseFileData {
 	idx_t begin_snapshot = 0;
 	optional_idx end_snapshot;
 	optional_idx max_row_count;
+};
+
+//! An inlined deletion of a row of a data file, with the delete file the data file had when it was last visible
+struct DuckLakeInlinedFileDeletionEntry {
+	DataFileIndex file_id;
+	string data_file_path;
+	idx_t row_id = 0;
+	idx_t begin_snapshot = 0;
+	//! Invalid if the data file has no delete file
+	DataFileIndex delete_file_id;
+	DuckLakeFileData delete_file;
+	idx_t delete_file_begin_snapshot = 0;
+};
+
+//! A deleted inlined row, by its position in the order in which the inlined rows are flushed
+struct DuckLakeFlushedRowDeletion {
+	idx_t position;
+	idx_t end_snapshot;
 };
 
 struct DuckLakeFileForCleanup {

@@ -27,7 +27,7 @@ static unique_ptr<FunctionData> DuckLakeExpireSnapshotsBind(ClientContext &conte
 	if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "dry_run", "boolean", dry_run)) {
 		result->dry_run = BooleanValue::Get(dry_run);
 	}
-	vector<string> snapshot_ids;
+	DuckLakeSnapshotFilter filter;
 	auto versions_entry = input.named_parameters.find("versions");
 	bool has_versions = versions_entry != input.named_parameters.end();
 	if (has_versions && !versions_entry->second.IsNull()) {
@@ -38,7 +38,7 @@ static unique_ptr<FunctionData> DuckLakeExpireSnapshotsBind(ClientContext &conte
 			if (BigIntValue::Get(snapshot_id) < 0) {
 				throw BinderException("The versions option must only contain non-negative snapshot ids.");
 			}
-			snapshot_ids.push_back(snapshot_id.ToString());
+			filter.snapshot_ids.push_back(NumericCast<idx_t>(BigIntValue::Get(snapshot_id)));
 		}
 	}
 	Value older_than;
@@ -49,7 +49,7 @@ static unique_ptr<FunctionData> DuckLakeExpireSnapshotsBind(ClientContext &conte
 		    "same time. Please use only one criterion.");
 	}
 	// An explicitly empty version set expires no snapshots.
-	if (has_versions && snapshot_ids.empty()) {
+	if (has_versions && filter.snapshot_ids.empty()) {
 		return std::move(result);
 	}
 	// No criteria given and no global default: silently no-op.
@@ -57,18 +57,15 @@ static unique_ptr<FunctionData> DuckLakeExpireSnapshotsBind(ClientContext &conte
 		return std::move(result);
 	}
 
-	string filter;
 	// we can never delete the most recent snapshot
-	filter = "snapshot_id != (SELECT MAX(snapshot_id) FROM {METADATA_CATALOG}.ducklake_snapshot) AND ";
+	filter.exclude_latest = true;
 	if (has_timestamp) {
 		auto from_timestamp = older_than.GetValue<timestamp_tz_t>();
-		auto timestamp_filter = DuckLakeTableFunctionUtil::FormatTimestampISO8601(timestamp_t(from_timestamp.value));
-		filter += StringUtil::Format("snapshot_time::TIMESTAMPTZ < '%s'", timestamp_filter);
+		filter.older_than = DuckLakeTableFunctionUtil::FormatTimestampISO8601(timestamp_t(from_timestamp.value));
 	} else if (!has_versions) {
-		auto timestamp_filter = DuckLakeTableFunctionUtil::FormatTimestampOlderThan(older_than_default);
-		filter += StringUtil::Format("snapshot_time::TIMESTAMPTZ < '%s'", timestamp_filter);
+		filter.older_than = DuckLakeTableFunctionUtil::FormatTimestampOlderThan(older_than_default);
 	} else {
-		filter += StringUtil::Format("snapshot_id IN (%s)", StringUtil::Join(snapshot_ids, ", "));
+		filter.has_snapshot_ids = true;
 	}
 	auto &transaction = DuckLakeTransaction::Get(context, ducklake_catalog);
 	auto &metadata_manager = transaction.GetMetadataManager();

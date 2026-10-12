@@ -199,19 +199,77 @@ rows of each file instead:
 
 ### `read_inlined_data`
 
-Reads the rows of an inlined data table that are visible in a snapshot.
+Reads the rows of an inlined data table.
 
-| Parameter     | Description                                                       |
-|---------------|-------------------------------------------------------------------|
-| `snapshot_id` | The snapshot to read.                                             |
-| `table_name`  | The inlined data table (from `inlined_data_tables` of the table). |
-| `columns`     | The columns to read, e.g. `["row_id", "i"]`.                      |
+| Parameter           | Description                                                                          |
+|---------------------|--------------------------------------------------------------------------------------|
+| `snapshot_id`       | The snapshot to read.                                                                |
+| `table_name`        | The inlined data table (from `inlined_data_tables` of the table).                    |
+| `columns`           | The columns to read, e.g. `["row_id", "i"]`.                                         |
+| `mode`              | `"scan"` (default): the rows visible in the snapshot. `"insertions"` / `"deletions"`: the rows inserted / deleted between `start_snapshot_id` and `snapshot_id`. `"flush"`: all rows that were inserted up to the snapshot (including deleted rows), in the order in which they are flushed. |
+| `start_snapshot_id` | For `insertions` and `deletions`.                                                    |
+| `table_id`          | For `flush`, the table of the inlined data table.                                   |
+| `order_by`          | For `flush`, optional: the sort order of the table, as an `ORDER BY` list (e.g. `"i DESC NULLS LAST"`). The rows are ordered by it, then by their row id. |
 
 Response:
 
 ```json
 {"columns": [{"name": "row_id", "type": {"id": "BIGINT"}}, {"name": "i", "type": {"id": "INTEGER"}}],
  "rows": [[0, 1], [1, 2]]}
+```
+
+### `flushed_row_deletions`
+
+Returns which of the rows that are flushed into a file were deleted, by their position in the flush order.
+
+| Parameter          | Description                                                                        |
+|--------------------|------------------------------------------------------------------------------------|
+| `snapshot_id`      | The snapshot of the flush.                                                         |
+| `table_id`         | The table.                                                                         |
+| `table_name`       | The inlined data table.                                                            |
+| `order_by`         | The sort order, as for `read_inlined_data`.                                        |
+| `partition_values` | The partition values of the file, if the table is partitioned.                     |
+| `offset`, `count`  | The range of positions (within the partition) of the rows of the file.             |
+
+Response: `{"deletions": [{"position": 3, "end_snapshot": 5}]}`
+
+### `inlined_file_deletions`
+
+Returns the deletions of rows of data files that are inlined in the catalog, together with the delete file of each
+data file, so that a client can write them to delete files.
+
+Request: `{"snapshot_id": 4, "table_id": 1}`, response:
+
+```json
+{"deletions": [{"data_file_id": 1, "data_file_path": "/data/main/t/f1.parquet", "row_id": 3, "begin_snapshot": 4,
+                "delete_file_id": 2, "delete_file": {"path": "...", ...}, "delete_file_begin_snapshot": 3}]}
+```
+
+### `files_for_compaction`
+
+Returns the data files of a table that are candidates for compaction, together with their delete files.
+
+| Parameter          | Description                                                                         |
+|--------------------|-------------------------------------------------------------------------------------|
+| `snapshot_id`      | The snapshot.                                                                       |
+| `table_id`         | The table.                                                                          |
+| `type`             | `"merge_adjacent"` or `"rewrite_delete"`.                                           |
+| `delete_threshold` | For `rewrite_delete`: the fraction of deleted rows above which files are rewritten. |
+| `min_file_size`, `max_file_size`, `target_file_size` | Optional file size limits in bytes.               |
+| `newer_than`, `older_than` | Optional timestamps: only consider files written in this range.             |
+
+Response:
+
+```json
+{"files": [{
+  "data_file": {"file_id": 1, "file": {...}, "record_count": 10, "begin_snapshot": 2, "end_snapshot": null,
+                "max_row_count": null, "row_id_start": 0, "mapping_id": null, "partition_id": null,
+                "partition_values": []},
+  "delete_files": [{"file_id": 1, "delete_file_id": 3, "file": {...}, "record_count": 2, "begin_snapshot": 3,
+                    "end_snapshot": null, "max_row_count": null, "max_snapshot": null}],
+  "max_partial_file_snapshot": null, "schema_version": 1, "partition_schema_version": null,
+  "inlined_file_deletions": [], "has_inlined_deletions": false, "delete_ratio": 0.2
+}]}
 ```
 
 ### `table_schema_versions`
@@ -256,7 +314,13 @@ Request: `{"table_name": "t", "column_name": "i"}`, response: `{"created_with_ta
 
 ### `list_snapshots`
 
-Returns all snapshots.
+Returns the snapshots, optionally filtered.
+
+| Parameter        | Description                                                  |
+|------------------|--------------------------------------------------------------|
+| `exclude_latest` | Exclude the latest snapshot.                                 |
+| `older_than`     | Only snapshots created before this timestamp.                |
+| `snapshot_ids`   | Only these snapshots.                                        |
 
 Response:
 
@@ -265,6 +329,30 @@ Response:
                 "next_file_id": 0, "changes_made": "created_schema:\"main\"", "author": null,
                 "commit_message": null, "commit_extra_info": null}]}
 ```
+
+## Maintenance Endpoints
+
+These endpoints change the catalog directly, outside of a transaction.
+
+### `expire_snapshots`
+
+Expires snapshots: removes them, together with the catalog entries and files that are only visible in them. The data
+files are scheduled for deletion. Request: `{"snapshot_ids": [1, 2]}`, response: `{"expired_snapshots": 2}`
+
+### `files_for_cleanup`
+
+Returns the files scheduled for deletion. Request: `{"older_than": "2025-01-01T00:00:00Z"}` (optional), response:
+`{"files": [{"data_file_id": 1, "path": "...", "schedule_start": "2024-12-31 10:00:00+00"}]}`
+
+### `remove_cleaned_up_files`
+
+Removes files from the files scheduled for deletion, after the client deleted them.
+Request: `{"data_file_ids": [1, 2]}`
+
+### `known_files`
+
+Returns the paths of all files that the catalog refers to (data files, delete files and files scheduled for deletion),
+so a client can find orphaned files in the data path. Response: `{"paths": ["/data/main/t/f1.parquet"]}`
 
 ## Committing Transactions
 
@@ -417,6 +505,25 @@ so the server does not need to read them.
  "value_count": 2, "column_size_bytes": 10, "contains_nan": null, "any_valid": true, "bounds_unknown": false,
  "min_is_exact": true, "max_is_exact": true, "extra_stats": null}
 ```
+
+#### `flush_inlined_data`
+
+Marks inlined data as flushed: the rows are deleted from the inlined data tables when the transaction commits. The
+files that hold the flushed rows are inserted with `insert_files`.
+
+| Parameter        | Description                                                                                    |
+|------------------|------------------------------------------------------------------------------------------------|
+| `inlined_tables` | `[{"table_name": "...", "schema_version": 1, "flush_snapshot_id": 4}]`: the inlined data tables whose rows up to the snapshot were flushed. |
+| `file_deletions` | `[{"table_id": 1, "flush_snapshot_id": 4}]`: the tables whose inlined deletions of data file rows up to the snapshot were flushed to delete files (registered with `delete_data`). |
+
+#### `compact`
+
+Replaces data files with compacted files that were written by the client.
+
+| Parameter     | Description                                                                                  |
+|---------------|----------------------------------------------------------------------------------------------|
+| `table_id`    | The table.                                                                                   |
+| `compactions` | `[{"type": "merge_adjacent", "row_id_start": 0, "source_files": [...], "written_files": [...]}]`. The source files are in the format returned by `files_for_compaction`, the written files in the format of `insert_files`. |
 
 #### `delete_data`
 

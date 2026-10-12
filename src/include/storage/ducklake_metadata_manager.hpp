@@ -378,9 +378,13 @@ public:
 	//! The inserts of the given rows, in batches
 	static string InsertValuesSql(const string &table_name, const vector<string> &values);
 	virtual unordered_set<string> GetInlinedTableNames(TableIndex table_id);
-	virtual vector<DuckLakeFileForCleanup> GetOldFilesForCleanup(const string &filter);
-	virtual vector<DuckLakeFileForCleanup> GetOrphanFilesForCleanup(const string &filter);
-	virtual vector<DuckLakeFileForCleanup> GetFilesForCleanup(const string &filter, CleanupType type);
+	//! The files scheduled for deletion before an ISO 8601 timestamp (all of them if it is empty)
+	virtual vector<DuckLakeFileForCleanup> GetOldFilesForCleanup(const string &older_than);
+	//! The files in the data path that are not referenced by the metadata
+	virtual vector<DuckLakeFileForCleanup> GetOrphanFilesForCleanup(const string &older_than);
+	vector<DuckLakeFileForCleanup> GetFilesForCleanup(const string &older_than, CleanupType type);
+	//! The paths of all files the metadata refers to
+	virtual vector<string> GetKnownFilePaths();
 
 	virtual void RemoveFilesScheduledForCleanup(const vector<DuckLakeFileForCleanup> &cleaned_up_files);
 	static string DropSchemas(const set<SchemaIndex> &ids);
@@ -513,6 +517,13 @@ public:
 	                                                           const DuckLakeTableEntry &table,
 	                                                           const string &sort_order_sql,
 	                                                           const vector<string> &columns_to_read);
+	//! The deleted rows among the inlined rows [offset, offset + count) of a partition, in the flush order
+	virtual vector<DuckLakeFlushedRowDeletion>
+	GetFlushedRowDeletions(DuckLakeTableEntry &table, const string &inlined_table_name, const string &sort_order_sql,
+	                       const vector<Value> &partition_values, idx_t offset, idx_t count, DuckLakeSnapshot snapshot);
+	//! The inlined deletions of rows of data files, which a flush writes to delete files
+	virtual vector<DuckLakeInlinedFileDeletionEntry> GetInlinedFileDeletionsForFlush(DuckLakeTableEntry &table,
+	                                                                                 DuckLakeSnapshot snapshot);
 	//! SQL builders for the stats-refresh queries used by DuckLakeTransactionState::RecomputeGlobalStatsAfterRewrite.
 	//! Caller substitutes `{METADATA_CATALOG}` / `{SNAPSHOT_ID}` and executes via the commit context's executor.
 	static string ReadInlinedDataAggregatesSql(const string &inlined_table_name, const string &select_list,
@@ -530,7 +541,7 @@ public:
 	                                               const DuckLakeInlinedColNames &col_names);
 	static string InsertNewSchema(const DuckLakeSnapshot &snapshot, const set<TableIndex> &table_ids);
 
-	virtual vector<DuckLakeSnapshotInfo> GetAllSnapshots(const string &filter = string());
+	virtual vector<DuckLakeSnapshotInfo> GetAllSnapshots(const DuckLakeSnapshotFilter &filter = {});
 	virtual void DeleteSnapshots(const vector<DuckLakeSnapshotInfo> &snapshots);
 	virtual vector<DuckLakeTableSizeInfo> GetTableSizes(DuckLakeSnapshot snapshot);
 	virtual void SetConfigOption(const DuckLakeConfigOption &option);

@@ -748,15 +748,17 @@ Connection &DuckLakeTransaction::GetConnection() {
 		if (caller_context) {
 			DuckLakeUtil::CopyExtensionSettings(*caller_context, *connection->context);
 		}
-		// set the search path to the metadata catalog
-		auto &client_data = ClientData::Get(*connection->context);
-		// ensure we are only looking in the ducklake catalog schema during querying
-		CatalogSearchEntry metadata_entry(Identifier(ducklake_catalog.MetadataDatabaseName()),
-		                                  ducklake_catalog.MetadataSchemaName());
-		if (metadata_entry.GetSchema().empty()) {
-			metadata_entry.SetSchema("main");
+		if (!metadata_manager->IsRemote()) {
+			// set the search path to the metadata catalog
+			auto &client_data = ClientData::Get(*connection->context);
+			// ensure we are only looking in the ducklake catalog schema during querying
+			CatalogSearchEntry metadata_entry(Identifier(ducklake_catalog.MetadataDatabaseName()),
+			                                  ducklake_catalog.MetadataSchemaName());
+			if (metadata_entry.GetSchema().empty()) {
+				metadata_entry.SetSchema("main");
+			}
+			client_data.catalog_search_path->Set(metadata_entry, CatalogSetPathType::SET_DIRECTLY);
 		}
-		client_data.catalog_search_path->Set(metadata_entry, CatalogSetPathType::SET_DIRECTLY);
 
 		// set max error reporting to 0 so that during error reporting we don't traverse other schemas / catalogs
 		Settings::Set<CatalogErrorMaxSchemasSetting>(*connection->context, SetScope::SESSION, Value::UBIGINT(0));
