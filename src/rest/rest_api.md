@@ -252,7 +252,7 @@ Response:
 ### `select`
 
 Plans a scan of a table: returns the data files of the table that are visible in a snapshot, together with their
-delete files and inlined deletions.
+delete files and inlined deletions, and optionally the rows of the table that are inlined in the catalog.
 
 | Parameter     | Description                                                                           |
 |---------------|---------------------------------------------------------------------------------------|
@@ -260,6 +260,7 @@ delete files and inlined deletions.
 | `table_id`    | The table to scan.                                                                    |
 | `extended`    | Return the extended file list used to plan deletes and updates (see below).          |
 | `filters`     | Optional filters to prune files with, see below.                                      |
+| `include_inlined_data` | Also return the inlined rows of the table that are visible in the snapshot.  |
 
 Response:
 
@@ -277,7 +278,20 @@ Response:
 }
 ```
 
-The rows of a table that are inlined in the catalog are read with `read_inlined_data`.
+With `include_inlined_data`, `inlined_data` holds the visible rows of each inlined data table of the table, with
+the row id, the begin and end snapshot and all columns of the table at the schema version of the inlined data table:
+
+```json
+{"files": [...],
+ "inlined_data": [{"table_name": "ducklake_inlined_data_1_1", "schema_version": 1,
+                   "columns": [{"name": "row_id", "type": {"id": "BIGINT"}},
+                               {"name": "begin_snapshot", "type": {"id": "UBIGINT"}},
+                               {"name": "end_snapshot", "type": {"id": "UBIGINT"}},
+                               {"name": "i", "type": {"id": "INTEGER"}}],
+                   "rows": [[0, 2, null, 1], [1, 2, null, 2]]}]}
+```
+
+The inlined rows of a single inlined data table can also be read with `read_inlined_data`.
 
 Filters are optional: a server may ignore them, and a client applies them to the scanned rows regardless.
 

@@ -43,6 +43,18 @@ FROM dl.t2
 ----
 100
 
+# the scan plan returns the inlined rows of the table
+query III
+SELECT status, json_array_length(response->'$.inlined_data[0].rows'), response->>'$.inlined_data[0].columns[3].name'
+FROM ducklake_rest_request('{rest_server}', 'select', '{"table_id": 1, "include_inlined_data": true}')
+----
+200	2	i
+
+query I
+SELECT (response->'$.inlined_data') IS NULL FROM ducklake_rest_request('{rest_server}', 'select', '{"table_id": 1}')
+----
+true
+
 query I
 SELECT response->>'$.snapshot.snapshot_id' FROM ducklake_rest_request('{rest_server}', 'snapshot_data', '{}')
 ----

@@ -10,12 +10,22 @@
 
 #include "storage/ducklake_metadata_manager.hpp"
 #include "rest/ducklake_rest_client.hpp"
+#include "duckdb/common/types/column/column_data_collection.hpp"
 
 namespace duckdb {
 class DuckLakeTableEntry;
 class DuckLakeSchemaEntry;
 struct CreateTableInfo;
 struct CreateSchemaInfo;
+
+//! Rows that a REST response returned as "columns" and "rows"
+struct RESTInlinedRows {
+	vector<Identifier> names;
+	vector<LogicalType> types;
+	unique_ptr<ColumnDataCollection> rows;
+
+	static RESTInlinedRows FromJson(RESTJsonIn rows_json);
+};
 
 //! Communicates with a DuckLake REST server instead of a metadata database
 class RESTMetadataManager : public DuckLakeMetadataManager {
@@ -131,6 +141,11 @@ private:
 	RESTJsonOut AddCommitRequest(const string &path);
 	//! Reads rows, which an endpoint returns as "columns" and "rows"
 	unique_ptr<QueryResult> ReadRows(const string &endpoint, RESTJsonWriter &request);
+	unique_ptr<QueryResult> ToQueryResult(RESTInlinedRows rows);
+	//! Keeps the inlined rows that came along with a file list, until the scan reads them
+	void CacheInlinedRows(DuckLakeSnapshot snapshot, RESTJsonIn response);
+	unique_ptr<QueryResult> TryReadCachedInlinedRows(DuckLakeSnapshot snapshot, const string &inlined_table_name,
+	                                                 const vector<string> &columns_to_read);
 	unique_ptr<RESTJsonReader> GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot, bool include_catalog,
 	                                           bool include_stats);
 	void AddDeletes(const TransactionChangeInformation &changes, RESTJsonOut requests);
@@ -154,6 +169,8 @@ private:
 	//! The catalog of a snapshot that the transaction loaded, which came along with the snapshot
 	unique_ptr<DuckLakeCatalogInfo> prefetched_catalog;
 	idx_t prefetched_metadata_version = DConstants::INVALID_INDEX;
+	//! The inlined rows of file lists that were not read yet, by snapshot and inlined data table
+	map<pair<idx_t, string>, RESTInlinedRows> inlined_rows;
 	//! The table statistics read by the transaction, by snapshot
 	unordered_map<idx_t, vector<DuckLakeGlobalStatsInfo>> table_stats;
 	//! The data files dropped by the transaction, by table

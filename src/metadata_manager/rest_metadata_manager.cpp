@@ -1,6 +1,10 @@
 #include "metadata_manager/rest_metadata_manager.hpp"
 
 #include "duckdb/common/types/column/column_data_collection.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
+#include "duckdb/parser/parser.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
@@ -217,6 +221,7 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 	RESTJsonWriter request;
 	DuckLakeRESTSerializer::Write(request.Root().Obj("snapshot"), snapshot);
 	request.Root().SetUInt("table_id", table.GetTableId().index);
+	request.Root().SetBool("include_inlined_data", true);
 	if (filter_info) {
 		DuckLakeRESTFilters::Write(request.Root().Obj("filters"), *filter_info, table);
 	}
@@ -224,6 +229,7 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 	for (auto &file : response->Root().Get("files").Items()) {
 		result.push_back(DuckLakeRESTSerializer::ReadFileListEntry(file));
 	}
+	CacheInlinedRows(snapshot, response->Root());
 	return result;
 }
 
@@ -238,6 +244,7 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 	DuckLakeRESTSerializer::Write(request.Root().Obj("snapshot"), snapshot);
 	request.Root().SetUInt("table_id", table.GetTableId().index);
 	request.Root().SetBool("extended", true);
+	request.Root().SetBool("include_inlined_data", true);
 	if (filter_info) {
 		DuckLakeRESTFilters::Write(request.Root().Obj("filters"), *filter_info, table);
 	}
@@ -245,6 +252,7 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 	for (auto &file : response->Root().Get("files").Items()) {
 		result.push_back(DuckLakeRESTSerializer::ReadFileListExtendedEntry(file));
 	}
+	CacheInlinedRows(snapshot, response->Root());
 	return result;
 }
 
@@ -288,22 +296,19 @@ bool RESTMetadataManager::IsColumnCreatedWithTable(const string &table_name, con
 	return response->Root().Get("created_with_table").Bool();
 }
 
-unique_ptr<QueryResult> RESTMetadataManager::ReadRows(const string &endpoint, RESTJsonWriter &request) {
-	auto response = Post(endpoint, request);
-	auto response_root = response->Root();
-	vector<Identifier> names;
-	vector<LogicalType> types;
-	for (auto &column : response_root.Get("columns").Items()) {
-		names.emplace_back(column.Str("name"));
-		types.push_back(RESTJson::TypeFromJson(column.Get("type")));
+RESTInlinedRows RESTInlinedRows::FromJson(RESTJsonIn rows_json) {
+	RESTInlinedRows result;
+	for (auto &column : rows_json.Get("columns").Items()) {
+		result.names.emplace_back(column.Str("name"));
+		result.types.push_back(RESTJson::TypeFromJson(column.Get("type")));
 	}
-	auto context = transaction.context.lock();
-	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	auto &types = result.types;
+	result.rows = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
 	DataChunk chunk;
 	chunk.Initialize(Allocator::DefaultAllocator(), types);
 	ColumnDataAppendState append_state;
-	collection->InitializeAppend(append_state);
-	for (auto &row : response_root.Get("rows").Items()) {
+	result.rows->InitializeAppend(append_state);
+	for (auto &row : rows_json.Get("rows").Items()) {
 		auto values = row.Items();
 		auto row_idx = chunk.size();
 		for (idx_t col_idx = 0; col_idx < types.size(); col_idx++) {
@@ -311,15 +316,105 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadRows(const string &endpoint, RE
 		}
 		chunk.SetCardinality(row_idx + 1);
 		if (chunk.size() == STANDARD_VECTOR_SIZE) {
-			collection->Append(append_state, chunk);
+			result.rows->Append(append_state, chunk);
 			chunk.Reset();
 		}
 	}
 	if (chunk.size() > 0) {
-		collection->Append(append_state, chunk);
+		result.rows->Append(append_state, chunk);
 	}
-	return make_uniq<QueryResult>(StatementType::SELECT_STATEMENT, StatementProperties(), std::move(names),
-	                              std::move(collection), context->GetClientProperties());
+	return result;
+}
+
+unique_ptr<QueryResult> RESTMetadataManager::ToQueryResult(RESTInlinedRows rows) {
+	auto context = transaction.context.lock();
+	return make_uniq<QueryResult>(StatementType::SELECT_STATEMENT, StatementProperties(), std::move(rows.names),
+	                              std::move(rows.rows), context->GetClientProperties());
+}
+
+unique_ptr<QueryResult> RESTMetadataManager::ReadRows(const string &endpoint, RESTJsonWriter &request) {
+	auto response = Post(endpoint, request);
+	return ToQueryResult(RESTInlinedRows::FromJson(response->Root()));
+}
+
+void RESTMetadataManager::CacheInlinedRows(DuckLakeSnapshot snapshot, RESTJsonIn response) {
+	lock_guard<mutex> guard(cache_lock);
+	for (auto &inlined_table : response.TryGet("inlined_data").Items()) {
+		inlined_rows[make_pair(snapshot.snapshot_id, inlined_table.Str("table_name"))] =
+		    RESTInlinedRows::FromJson(inlined_table);
+	}
+}
+
+unique_ptr<QueryResult> RESTMetadataManager::TryReadCachedInlinedRows(DuckLakeSnapshot snapshot,
+                                                                      const string &inlined_table_name,
+                                                                      const vector<string> &columns_to_read) {
+	RESTInlinedRows rows;
+	{
+		lock_guard<mutex> guard(cache_lock);
+		auto entry = inlined_rows.find(make_pair(snapshot.snapshot_id, inlined_table_name));
+		if (entry == inlined_rows.end()) {
+			return nullptr;
+		}
+		rows = std::move(entry->second);
+		inlined_rows.erase(entry);
+	}
+	// the columns to read are column names, optionally cast to the type to read them as
+	auto context = transaction.context.lock();
+	vector<idx_t> column_indexes;
+	vector<LogicalType> types;
+	for (auto &column : columns_to_read) {
+		auto expressions = Parser::GetBuiltinParser().ParseExpressionList(column);
+		if (expressions.size() != 1) {
+			return nullptr;
+		}
+		optional_ptr<const ParsedExpression> column_ref = expressions[0].get();
+		optional<LogicalType> cast_type;
+		if (column_ref->GetExpressionClass() == ExpressionClass::CAST) {
+			auto &cast = column_ref->Cast<CastExpression>();
+			cast_type = TransformStringToLogicalType(cast.TargetType().ToString(), *context);
+			column_ref = cast.Child();
+		}
+		if (column_ref->GetExpressionClass() != ExpressionClass::COLUMN_REF ||
+		    column_ref->Cast<ColumnRefExpression>().IsQualified()) {
+			return nullptr;
+		}
+		auto &name = column_ref->Cast<ColumnRefExpression>().GetColumnName();
+		optional_idx column_index;
+		for (idx_t i = 0; i < rows.names.size(); i++) {
+			if (rows.names[i] == name) {
+				column_index = i;
+			}
+		}
+		if (!column_index.IsValid()) {
+			return nullptr;
+		}
+		column_indexes.push_back(column_index.GetIndex());
+		types.push_back(cast_type ? *cast_type : rows.types[column_index.GetIndex()]);
+	}
+	RESTInlinedRows result;
+	for (idx_t i = 0; i < column_indexes.size(); i++) {
+		result.names.push_back(Identifier("col" + to_string(i + 1)));
+	}
+	result.types = types;
+	result.rows = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	ColumnDataAppendState append_state;
+	result.rows->InitializeAppend(append_state);
+	DataChunk projected;
+	projected.Initialize(Allocator::DefaultAllocator(), types);
+	for (auto &chunk : rows.rows->Chunks()) {
+		projected.Reset();
+		for (idx_t i = 0; i < column_indexes.size(); i++) {
+			auto &source = chunk.data[column_indexes[i]];
+			if (source.GetType() == types[i]) {
+				projected.data[i].Reference(source);
+			} else {
+				VectorOperations::DefaultCast(source, projected.data[i], chunk.size());
+			}
+		}
+		projected.SetCardinality(chunk.size());
+		result.rows->Append(append_state, projected);
+	}
+	return ToQueryResult(std::move(result));
 }
 
 //! The inlined rows the transaction deleted, which are not flushed
@@ -351,6 +446,11 @@ static RESTJsonOut InlinedReadRequest(RESTJsonWriter &request, DuckLakeSnapshot 
 unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedData(DuckLakeSnapshot snapshot,
                                                              const string &inlined_table_name,
                                                              const vector<string> &columns_to_read) {
+	// the rows usually came along with the file list of the scan
+	auto cached = TryReadCachedInlinedRows(snapshot, inlined_table_name, columns_to_read);
+	if (cached) {
+		return cached;
+	}
 	RESTJsonWriter request;
 	InlinedReadRequest(request, snapshot, "scan", inlined_table_name, columns_to_read);
 	return ReadRows("read_inlined_data", request);

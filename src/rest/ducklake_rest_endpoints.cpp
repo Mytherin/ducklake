@@ -38,11 +38,12 @@ static DuckLakeTableEntry &GetTableEntry(DuckLakeRESTRequest &request, DuckLakeS
 	return entry->Cast<DuckLakeTableEntry>();
 }
 
-static void WriteQueryResult(RESTJsonOut out, QueryResult &result) {
+//! Writes the columns and rows of a result, optionally with other names for the columns
+static void WriteQueryResult(RESTJsonOut out, QueryResult &result, const vector<string> &names = {}) {
 	auto columns = out.Arr("columns");
 	for (idx_t col_idx = 0; col_idx < result.ColumnCount(); col_idx++) {
 		auto column = columns.AppendObj();
-		column.SetStr("name", result.GetNames()[col_idx].GetIdentifierName());
+		column.SetStr("name", names.empty() ? result.GetNames()[col_idx].GetIdentifierName() : names[col_idx]);
 		column.SetRaw("type", RESTJson::TypeToJson(*out.writer, result.GetTypes()[col_idx]));
 	}
 	auto rows = out.Arr("rows");
@@ -160,10 +161,39 @@ static void SelectEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJ
 		for (auto &file : metadata_manager.GetExtendedFilesForTable(table, snapshot, filters.get())) {
 			DuckLakeRESTSerializer::Write(files_out.AppendObj(), file);
 		}
+	} else {
+		for (auto &file : metadata_manager.GetFilesForTable(table, snapshot, filters.get())) {
+			DuckLakeRESTSerializer::Write(files_out.AppendObj(), file);
+		}
+	}
+	if (!input.Bool("include_inlined_data", false)) {
 		return;
 	}
-	for (auto &file : metadata_manager.GetFilesForTable(table, snapshot, filters.get())) {
-		DuckLakeRESTSerializer::Write(files_out.AppendObj(), file);
+	// the rows of the table that are inlined in the catalog, with all columns of their inlined data tables
+	auto col_names = metadata_manager.InlinedColNames();
+	auto inlined_data = output.Arr("inlined_data");
+	for (auto &inlined_table : table.GetInlinedDataTables(*request.transaction, snapshot)) {
+		auto table_at_version = request.catalog->GetTableAtSchemaVersion(*request.transaction, table.GetTableId(),
+		                                                                 inlined_table.schema_version);
+		if (!table_at_version) {
+			continue;
+		}
+		vector<string> names {col_names.row_id, col_names.begin_snapshot, col_names.end_snapshot};
+		vector<string> columns;
+		for (auto &name : names) {
+			columns.push_back(SQLIdentifier::ToString(name));
+		}
+		for (auto &column : table_at_version->GetColumns().Physical()) {
+			names.push_back(column.Name().GetIdentifierName());
+			columns.push_back(
+			    metadata_manager.CastColumnToTarget(SQLIdentifier::ToString(names.back()), column.Type()));
+		}
+		auto result = metadata_manager.ReadInlinedData(snapshot, inlined_table.table_name, columns);
+		result->ThrowIfError("Failed to read inlined data: ");
+		auto inlined_out = inlined_data.AppendObj();
+		inlined_out.SetStr("table_name", inlined_table.table_name);
+		inlined_out.SetUInt("schema_version", inlined_table.schema_version);
+		WriteQueryResult(inlined_out, *result, names);
 	}
 }
 
