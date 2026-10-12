@@ -803,27 +803,30 @@ static void WriteSchemaPath(RESTJsonOut out, DuckLakeSchemaEntry &schema) {
 
 void RESTMetadataManager::OnCreateSchema(DuckLakeSchemaEntry &schema) {
 	auto parameters = AddCommitRequest("create_schema");
+	parameters.SetUInt("entry_reference", schema.oid);
 	WriteSchemaPath(parameters, schema);
 	parameters.SetStr("schema_uuid", schema.GetSchemaUUID());
 	parameters.SetStr("path", schema.DataPath());
 }
 
-void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info, TableIndex table_id,
-                                        const string &table_uuid, const string &table_data_path) {
+void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info,
+                                        const DuckLakeTableEntry &table) {
 	auto parameters = AddCommitRequest("create_table");
-	parameters.SetInt("table_id", ToRequestId(table_id.index));
+	parameters.SetInt("table_id", ToRequestId(table.GetTableId().index));
+	parameters.SetUInt("entry_reference", table.oid);
 	WriteSchemaPath(parameters, schema);
 	parameters.SetStr("table_name", info.GetTableName().GetIdentifierName());
-	parameters.SetStr("table_uuid", table_uuid);
-	parameters.SetStr("path", table_data_path);
+	parameters.SetStr("table_uuid", table.GetTableUUID());
+	parameters.SetStr("path", table.DataPath());
 	auto columns = parameters.Arr("columns");
 	auto version = transaction.GetCatalog().GetDuckLakeVersion();
-	for (auto &column : info.columns.Logical()) {
+	auto not_null_fields = table.GetNotNullFields();
+	for (auto &column : table.GetColumns().Logical()) {
 		// fail with the error of a commit to a metadata database, rather than on a type the server cannot parse
 		DuckLakeTypes::ToString(column.GetType());
 		DuckLakeTypes::CheckSupportedType(column.GetType(), version);
 		DuckLakeRESTCatalogChanges::WriteColumn(columns.AppendObj(), column,
-		                                        info.FindNotNullConstraint(column.Logical()).IsValid());
+		                                        not_null_fields.count(column.Name().GetIdentifierName()) > 0);
 	}
 	auto partitioned_by = parameters.Arr("partitioned_by");
 	for (auto &key : info.partition_keys) {
@@ -837,13 +840,14 @@ void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const Creat
 	for (auto &option : info.options) {
 		options.SetStr(option.first, option.second->ToString());
 	}
-	if (!info.comment.IsNull()) {
-		parameters.SetStr("comment", info.comment.ToString());
+	if (!table.comment.IsNull()) {
+		parameters.SetStr("comment", table.comment.ToString());
 	}
 }
 
 void RESTMetadataManager::OnCreateView(DuckLakeViewEntry &view) {
 	auto parameters = AddCommitRequest("create_view");
+	parameters.SetUInt("entry_reference", view.oid);
 	WriteSchemaPath(parameters, view.ParentSchema().Cast<DuckLakeSchemaEntry>());
 	parameters.SetStr("view_name", view.name.GetIdentifierName());
 	parameters.SetStr("view_uuid", view.GetViewUUID());
@@ -860,6 +864,7 @@ void RESTMetadataManager::OnCreateView(DuckLakeViewEntry &view) {
 
 void RESTMetadataManager::OnCreateMacro(MacroCatalogEntry &macro) {
 	auto parameters = AddCommitRequest("create_macro");
+	parameters.SetUInt("entry_reference", macro.oid);
 	WriteSchemaPath(parameters, macro.schema.Cast<DuckLakeSchemaEntry>());
 	DuckLakeRESTSerializer::Write(parameters.Obj("macro"), DuckLakeTransactionState::GetMacroInfo(macro));
 }
@@ -1173,7 +1178,15 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 		flush_transaction.ApplyServerSideCommit(transaction_snapshot.schema_version);
 		return;
 	}
-	flush_transaction.GetCatalog().SetCommittedSnapshotId(snapshot_id.UInt());
+	auto &catalog = flush_transaction.GetCatalog();
+	// the created entries keep their oid under the ids the commit gave them
+	ducklake_entry_oids_t entry_oids;
+	for (auto &entry : response_root.TryGet("entry_ids").Items()) {
+		auto type = EnumUtil::FromString<CatalogType>(entry.Str("type"));
+		entry_oids.emplace(make_pair(type, entry.UInt("id")), entry.UInt("entry_reference"));
+	}
+	catalog.SetEntryOids(entry_oids);
+	catalog.SetCommittedSnapshotId(snapshot_id.UInt());
 	flush_transaction.ApplyServerSideCommit(response_root.UInt("schema_version"));
 }
 

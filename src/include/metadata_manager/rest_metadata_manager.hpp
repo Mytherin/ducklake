@@ -123,8 +123,8 @@ public:
 	unordered_set<string> GetInlinedTableNames(TableIndex table_id) override;
 
 	void OnCreateSchema(DuckLakeSchemaEntry &schema) override;
-	void OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info, TableIndex table_id,
-	                   const string &table_uuid, const string &table_data_path) override;
+	void OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info,
+	                   const DuckLakeTableEntry &table) override;
 	void OnCreateView(DuckLakeViewEntry &view) override;
 	void OnCreateMacro(MacroCatalogEntry &macro) override;
 	void OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) override;

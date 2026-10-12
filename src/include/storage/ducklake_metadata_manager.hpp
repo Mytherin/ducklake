@@ -229,8 +229,8 @@ public:
 	//! Invoked when the transaction creates a schema or table, for backends that replay catalog changes on commit
 	virtual void OnCreateSchema(DuckLakeSchemaEntry &schema) {
 	}
-	virtual void OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info, TableIndex table_id,
-	                           const string &table_uuid, const string &table_data_path) {
+	virtual void OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info,
+	                           const DuckLakeTableEntry &table) {
 	}
 	virtual void OnCreateView(DuckLakeViewEntry &view) {
 	}

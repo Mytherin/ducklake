@@ -218,6 +218,7 @@ public:
 	DuckLakeSnapshot GetCommittedSnapshot() const;
 	//! The ids that the commit gave the tables and views the transaction created, by their transaction-local id
 	const map<TableIndex, TableIndex> &GetCommittedTableIds() const;
+	const ducklake_entry_oids_t &GetCommittedEntryOids() const;
 	DuckLakeSnapshot GetSnapshot(optional_ptr<BoundAtClause> at_clause,
 	                             SnapshotBound bound = SnapshotBound::UPPER_BOUND);
 

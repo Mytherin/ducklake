@@ -1,4 +1,5 @@
 #include "rest/ducklake_rest_filters.hpp"
+#include "duckdb/common/exception/conversion_exception.hpp"
 
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
@@ -160,7 +161,12 @@ static string ColumnFilterSQL(const ColumnFilterInfo &filter, const DuckLakeTabl
 	if (column.empty()) {
 		return string();
 	}
-	return FilterExpressionSQL(*filter.table_filter->expr, column);
+	try {
+		return FilterExpressionSQL(*filter.table_filter->expr, column);
+	} catch (ConversionException &) {
+		// a constant that cannot be printed, e.g. a timestamp outside the printable range
+		return string();
+	}
 }
 
 static string FilterNodeSQL(const DuckLakeFilterNode &node, const DuckLakeTableEntry &table) {

@@ -595,6 +595,7 @@ void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeFileListEntry 
 		col_out.SetUInt("column_id", col.first);
 		SetOptionalString(col_out, "min_value", col.second.has_min, col.second.min);
 		SetOptionalString(col_out, "max_value", col.second.has_max, col.second.max);
+		SetOptionalBool(col_out, "contains_nan", col.second.has_contains_nan, col.second.contains_nan);
 	}
 }
 
@@ -628,6 +629,9 @@ DuckLakeFileListEntry DuckLakeRESTSerializer::ReadFileListEntry(RESTJsonIn in) {
 		auto max_val = col_in.TryGet("max_value");
 		stats.has_max = !max_val.IsNull();
 		stats.max = stats.has_max ? max_val.Str() : string();
+		auto contains_nan = col_in.TryGet("contains_nan");
+		stats.has_contains_nan = !contains_nan.IsNull();
+		stats.contains_nan = stats.has_contains_nan && contains_nan.Bool();
 		result.column_min_max[col_in.UInt("column_id")] = std::move(stats);
 	}
 	return result;

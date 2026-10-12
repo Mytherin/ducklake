@@ -65,6 +65,13 @@ SELECT json_array_length(response->'$.rows') FROM ducklake_rest_request('{rest_s
 ----
 4
 
+# a created entry is returned with its id under the reference of its request
+query II
+SELECT response->>'$.entry_ids[0].entry_reference', response->>'$.entry_ids[0].type'
+FROM ducklake_rest_request('{rest_server}', 'create_schema', '{"schema_path": ["s"], "entry_reference": 1234}')
+----
+1234	SCHEMA_ENTRY
+
 # errors
 query II
 SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'unknown_endpoint', '{}')

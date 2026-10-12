@@ -543,7 +543,18 @@ private:
 	map<idx_t, MappingIndex> name_map_ids;
 	//! The partitionings set by the client transaction, by their id in the client transaction
 	map<idx_t, idx_t> partition_ids;
+	//! The client references of the created entries, by the oid of the entry
+	map<idx_t, idx_t> entry_references;
+
+	void AddEntryReference(optional_ptr<CatalogEntry> entry, RESTJsonIn parameters);
 };
+
+void DuckLakeRESTCommit::AddEntryReference(optional_ptr<CatalogEntry> entry, RESTJsonIn parameters) {
+	auto reference = parameters.TryGet("entry_reference");
+	if (entry && !reference.IsNull()) {
+		entry_references[entry->oid] = reference.UInt();
+	}
+}
 
 DuckLakeSchemaEntry &DuckLakeRESTCommit::GetSchema(RESTJsonIn schema_path) {
 	vector<Identifier> path;
@@ -620,7 +631,7 @@ void DuckLakeRESTCommit::CreateSchema(RESTJsonIn parameters) {
 	info->SetQualifiedName(QualifiedName(std::move(path), Identifier()));
 	info->on_conflict =
 	    parameters.Bool("if_not_exists") ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
-	catalog.CreateSchema(catalog.GetCatalogTransaction(context), *info);
+	AddEntryReference(catalog.CreateSchema(catalog.GetCatalogTransaction(context), *info), parameters);
 }
 
 void DuckLakeRESTCommit::CreateTable(RESTJsonIn parameters) {
@@ -658,6 +669,7 @@ void DuckLakeRESTCommit::CreateTable(RESTJsonIn parameters) {
 	if (!entry) {
 		throw CatalogException("Table \"%s\" already exists", parameters.Str("table_name"));
 	}
+	AddEntryReference(entry, parameters);
 	auto table_id = entry->Cast<DuckLakeTableEntry>().GetTableId();
 	local_table_schemas[table_id] = schema.GetSchemaId();
 	RegisterPartition(entry->Cast<DuckLakeTableEntry>(), parameters);
@@ -684,14 +696,14 @@ void DuckLakeRESTCommit::CreateView(RESTJsonIn parameters) {
 	if (!comment.IsNull()) {
 		info->comment = Value(comment.Str());
 	}
-	schema.CreateView(catalog.GetCatalogTransaction(context), *info);
+	AddEntryReference(schema.CreateView(catalog.GetCatalogTransaction(context), *info), parameters);
 }
 
 void DuckLakeRESTCommit::CreateMacro(RESTJsonIn parameters) {
 	auto &schema = GetSchema(parameters.TryGet("schema_path"));
 	auto macro = DuckLakeRESTSerializer::ReadMacroInfo(parameters.Get("macro"));
 	auto info = CreateMacroInfoFromDucklake(context, macro, schema.name.GetIdentifierName());
-	schema.CreateFunction(catalog.GetCatalogTransaction(context), *info);
+	AddEntryReference(schema.CreateFunction(catalog.GetCatalogTransaction(context), *info), parameters);
 }
 
 void DuckLakeRESTCommit::Alter(RESTJsonIn parameters) {
@@ -989,6 +1001,17 @@ void DuckLakeRESTCommit::Run(RESTJsonIn input, RESTJsonOut output) {
 			table_id.SetInt("placeholder", entry.first.Int());
 		}
 		table_id.SetUInt("table_id", committed_table->second.index);
+	}
+	auto entry_ids = output.Arr("entry_ids");
+	for (auto &entry : transaction_ref->GetCommittedEntryOids()) {
+		auto reference = entry_references.find(entry.second);
+		if (reference == entry_references.end()) {
+			continue;
+		}
+		auto entry_id = entry_ids.AppendObj();
+		entry_id.SetUInt("entry_reference", reference->second);
+		entry_id.SetStr("type", EnumUtil::ToString(entry.first.first));
+		entry_id.SetUInt("id", entry.first.second);
 	}
 }
 

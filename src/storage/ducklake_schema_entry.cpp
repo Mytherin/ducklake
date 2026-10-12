@@ -119,7 +119,6 @@ DuckLakeSchemaEntry::CreateTableExtended(CatalogTransaction transaction, BoundCr
 	}
 	//! get a local table-id
 	auto table_id = TableIndex(duck_transaction.GetLocalCatalogId());
-	duck_transaction.GetMetadataManager().OnCreateTable(*this, base_info, table_id, table_uuid, table_data_path);
 	// generate field ids based on the column ids
 	idx_t column_id = 1;
 	auto field_data = DuckLakeFieldData::FromColumns(base_info.columns, column_id);
@@ -150,6 +149,7 @@ DuckLakeSchemaEntry::CreateTableExtended(CatalogTransaction transaction, BoundCr
 	}
 	DuckLakeUtil::ValidateNoInlinedSystemColumns(catalog.Cast<DuckLakeCatalog>(), transaction.GetContext(), schema_id,
 	                                             table_entry->GetColumns(), &table_entry->GetTableOptions());
+	duck_transaction.GetMetadataManager().OnCreateTable(*this, base_info, *table_entry);
 	auto result = table_entry.get();
 	duck_transaction.CreateEntry(std::move(table_entry));
 	return result;

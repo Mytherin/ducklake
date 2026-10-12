@@ -309,7 +309,8 @@ entirely if it does not understand one of its parts.
 
 `dynamic_filters` are filters whose value is only known while the scan runs (e.g. of a top-N): the server orders the
 files so that these filters can prune files early. For `runtime_filter_columns` the server returns the min/max
-statistics of the files in `column_min_max`, so the client can prune files at runtime.
+statistics of the files in `column_min_max` (`{"column_id", "min_value", "max_value", "contains_nan"}`), so the
+client can prune files at runtime.
 
 The extended file list (`"extended": true`) returns the ids of the data and delete files and the number of deleted
 rows of each file instead:
@@ -490,10 +491,12 @@ table, view, ...) created in the transaction, `-2` the second one, etc.
 | `requires_new_inlined_table` | Whether the commit inlines rows into a table that has no inlined data table yet.          |
 | `requests`                   | The changes: `[{"path": "<request>", "parameters": {...}}]`.                               |
 
-Response: the committed snapshot and the ids of the tables the transaction created:
+Response: the committed snapshot, the ids of the tables the transaction created, and the ids of the created entries
+that their requests gave an `entry_reference`:
 
 ```json
-{"snapshot_id": 4, "schema_version": 2, "table_ids": [{"placeholder": -1, "table_id": 7}]}
+{"snapshot_id": 4, "schema_version": 2, "table_ids": [{"placeholder": -1, "table_id": 7}],
+ "entry_ids": [{"entry_reference": 1234, "type": "TABLE_ENTRY", "id": 7}]}
 ```
 
 `snapshot_id` and `schema_version` are `null` if the requests did not create a snapshot (e.g. if they only set
@@ -501,6 +504,10 @@ options).
 
 Every request of a commit can also be sent on its own to the endpoint of its name (e.g. `POST /v1/create_table`), which
 commits a transaction with only that request, based on the latest snapshot.
+
+The `create_schema`, `create_table`, `create_view` and `create_macro` requests take an optional `entry_reference`: a
+number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can use it to
+keep track of the entries it created, e.g. to keep their oids stable.
 
 If the transaction conflicts with a transaction that committed after `snapshot_id` the server retries the commit
 when that is safe; otherwise it fails with a `409`.

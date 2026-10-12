@@ -269,6 +269,8 @@ public:
 	set<TableIndex> tables_changed_by_others;
 	//! The ids that the commit gave the tables and views the transaction created, by their transaction-local id
 	map<TableIndex, TableIndex> committed_tables;
+	//! The oids of the entries the commit created, by their committed id
+	ducklake_entry_oids_t committed_entry_oids;
 };
 
 } // namespace duckdb
