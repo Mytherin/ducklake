@@ -341,20 +341,18 @@ Response:
  "rows": [[0, 1], [1, 2]]}
 ```
 
-### `flushed_row_deletions`
+### `deleted_inlined_rows`
 
-Returns which of the rows that are flushed into a file were deleted, by their position in the flush order.
+Returns the deleted versions of the rows of an inlined data table that a flush writes, so that the client can write
+delete files for the flushed rows.
 
-| Parameter          | Description                                                                        |
-|--------------------|------------------------------------------------------------------------------------|
-| `snapshot_id`      | The snapshot of the flush.                                                         |
-| `table_id`         | The table.                                                                         |
-| `table_name`       | The inlined data table.                                                            |
-| `order_by`         | The sort order, as for `read_inlined_data`.                                        |
-| `partition_values` | The partition values of the file, if the table is partitioned.                     |
-| `offset`, `count`  | The range of positions (within the partition) of the rows of the file.             |
+| Parameter     | Description                         |
+|---------------|-------------------------------------|
+| `snapshot_id` | The snapshot of the flush.          |
+| `table_id`    | The table.                          |
+| `table_name`  | The inlined data table.             |
 
-Response: `{"deletions": [{"position": 3, "end_snapshot": 5}]}`
+Response: `{"rows": [{"row_id": 1, "begin_snapshot": 2, "end_snapshot": 5}]}`
 
 ### `inlined_file_deletions`
 

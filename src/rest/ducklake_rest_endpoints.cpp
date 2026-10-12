@@ -269,22 +269,17 @@ static void ReadInlinedDataEndpoint(DuckLakeRESTRequest &request, RESTJsonIn inp
 	request.connection.Rollback();
 }
 
-static void FlushedRowDeletionsEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
+static void DeletedInlinedRowsEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
 	auto snapshot = request.GetSnapshot(input);
 	auto table_name = input.Str("table_name");
 	auto &table = GetInlinedTableEntry(request, snapshot, TableIndex(input.UInt("table_id")), table_name);
 	AddFlushDeletes(request, input, table, table_name);
-	vector<Value> partition_values;
-	for (auto &value : input.TryGet("partition_values").Items()) {
-		partition_values.push_back(RESTJson::ValueFromJson(value));
-	}
-	auto deletions = request.GetMetadataManager().GetFlushedRowDeletions(
-	    table, table_name, GetFlushOrder(input), partition_values, input.UInt("offset"), input.UInt("count"), snapshot);
-	auto deletions_out = output.Arr("deletions");
-	for (auto &deletion : deletions) {
-		auto deletion_out = deletions_out.AppendObj();
-		deletion_out.SetUInt("position", deletion.position);
-		deletion_out.SetUInt("end_snapshot", deletion.end_snapshot);
+	auto rows_out = output.Arr("rows");
+	for (auto &row : request.GetMetadataManager().GetDeletedInlinedRowVersions(table, table_name, snapshot)) {
+		auto row_out = rows_out.AppendObj();
+		row_out.SetInt("row_id", row.first.first);
+		row_out.SetInt("begin_snapshot", row.first.second);
+		row_out.SetInt("end_snapshot", row.second);
 	}
 	request.connection.Rollback();
 }
@@ -1016,7 +1011,7 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTServer::GetEndpoints()
 	    {"snapshot_data", SnapshotDataEndpoint},
 	    {"select", SelectEndpoint},
 	    {"read_inlined_data", ReadInlinedDataEndpoint},
-	    {"flushed_row_deletions", FlushedRowDeletionsEndpoint},
+	    {"deleted_inlined_rows", DeletedInlinedRowsEndpoint},
 	    {"inlined_file_deletions", InlinedFileDeletionsEndpoint},
 	    {"table_schema_versions", TableSchemaVersionsEndpoint},
 	    {"list_snapshots", ListSnapshotsEndpoint},

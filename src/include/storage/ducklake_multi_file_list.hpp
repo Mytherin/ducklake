@@ -49,6 +49,8 @@ public:
 	}
 
 	bool CanUseGlobalStats() const;
+	//! Whether filters can prune files by their stats
+	bool SupportsFilterPushdown() const;
 	bool IsDeleteScan() const;
 	const DuckLakeDeleteScanEntry &GetDeleteScanEntry(idx_t file_idx);
 	static DuckLakeFileData GetDeleteData(const DuckLakeDataFile &file);
@@ -59,6 +61,7 @@ protected:
 	OpenFileInfo GetFile(idx_t i) const override;
 
 private:
+	void ApplyLocalChanges(DuckLakeTransaction &transaction) const;
 	void GetFilesForTable() const;
 	void GetTableInsertions() const;
 	void GetTableDeletions() const;
@@ -101,8 +104,6 @@ private:
 	//! A tree is not a promise that it prunes - that is decided when the SQL is generated.
 	unique_ptr<DuckLakeFilterNode> BuildFilterTree(ClientContext &context, MultiFilePushdownInfo &info,
 	                                               const Expression &expr, FilterTreeState &state) const;
-	//! Get the row_id_start for transaction-local inlined data.
-	idx_t GetTransactionLocalRowIdStart(idx_t transaction_row_start) const;
 
 private:
 	mutable mutex file_lock;

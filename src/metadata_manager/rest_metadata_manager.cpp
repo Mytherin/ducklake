@@ -213,7 +213,8 @@ map<TableIndex, idx_t> RESTMetadataManager::GetTableRecordCounts(DuckLakeSnapsho
 
 vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTableEntry &table,
                                                                     DuckLakeSnapshot snapshot,
-                                                                    const FilterPushdownInfo *filter_info) {
+                                                                    const FilterPushdownInfo *filter_info,
+                                                                    bool include_local_changes) {
 	vector<DuckLakeFileListEntry> result;
 	if (IsTransactionLocal(table.GetTableId())) {
 		return result;
@@ -226,8 +227,13 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 		DuckLakeRESTFilters::Write(request.Root().Obj("filters"), *filter_info, table);
 	}
 	auto response = Post("select", request);
+	// this transaction reads the inlined deletions it flushed from its delete files
+	bool deletions_flushed = include_local_changes && transaction.InlinedFileDeletionsFlushed(table.GetTableId());
 	for (auto &file : response->Root().Get("files").Items()) {
 		result.push_back(DuckLakeRESTSerializer::ReadFileListEntry(file));
+		if (deletions_flushed) {
+			result.back().inlined_file_deletions.clear();
+		}
 	}
 	CacheInlinedRows(snapshot, response->Root());
 	return result;
@@ -489,27 +495,19 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadAllInlinedDataForFlush(DuckLake
 	return ReadRows("read_inlined_data", request);
 }
 
-vector<DuckLakeFlushedRowDeletion>
-RESTMetadataManager::GetFlushedRowDeletions(DuckLakeTableEntry &table, const string &inlined_table_name,
-                                            const string &sort_order_sql, const vector<Value> &partition_values,
-                                            idx_t offset, idx_t count, DuckLakeSnapshot snapshot) {
+DuckLakeDeletedRowVersions RESTMetadataManager::GetDeletedInlinedRowVersions(DuckLakeTableEntry &table,
+                                                                             const string &inlined_table_name,
+                                                                             DuckLakeSnapshot snapshot) {
 	RESTJsonWriter request;
 	auto root = request.Root();
 	DuckLakeRESTSerializer::Write(root.Obj("snapshot"), snapshot);
 	root.SetUInt("table_id", table.GetTableId().index);
 	root.SetStr("table_name", inlined_table_name);
-	root.SetStr("order_by", sort_order_sql);
 	WriteTransactionDeletes(root, table, inlined_table_name);
-	auto values = root.Arr("partition_values");
-	for (auto &value : partition_values) {
-		values.AppendRaw(RESTJson::ValueToJson(*root.writer, value));
-	}
-	root.SetUInt("offset", offset);
-	root.SetUInt("count", count);
-	auto response = Post("flushed_row_deletions", request);
-	vector<DuckLakeFlushedRowDeletion> result;
-	for (auto &deletion : response->Root().Get("deletions").Items()) {
-		result.push_back({deletion.UInt("position"), deletion.UInt("end_snapshot")});
+	auto response = Post("deleted_inlined_rows", request);
+	DuckLakeDeletedRowVersions result;
+	for (auto &row : response->Root().Get("rows").Items()) {
+		result.emplace(make_pair(row.Int("row_id"), row.Int("begin_snapshot")), row.Int("end_snapshot"));
 	}
 	return result;
 }
@@ -767,7 +765,8 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetTableInsertions(DuckLakeTa
 
 vector<DuckLakeDeleteScanEntry> RESTMetadataManager::GetTableDeletions(DuckLakeTableEntry &table,
                                                                        DuckLakeSnapshot start_snapshot,
-                                                                       DuckLakeSnapshot snapshot) {
+                                                                       DuckLakeSnapshot snapshot,
+                                                                       bool include_local_changes) {
 	vector<DuckLakeDeleteScanEntry> result;
 	if (IsTransactionLocal(table.GetTableId())) {
 		return result;

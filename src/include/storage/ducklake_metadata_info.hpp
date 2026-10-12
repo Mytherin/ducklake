@@ -416,6 +416,8 @@ struct DuckLakeFileColumnStats {
 	string max;
 	bool has_min = false;
 	bool has_max = false;
+	bool contains_nan = false;
+	bool has_contains_nan = false;
 };
 
 struct DuckLakeFileListEntry {
@@ -494,11 +496,8 @@ struct DuckLakeInlinedFileDeletionEntry {
 	idx_t delete_file_begin_snapshot = 0;
 };
 
-//! A deleted inlined row, by its position in the order in which the inlined rows are flushed
-struct DuckLakeFlushedRowDeletion {
-	idx_t position;
-	idx_t end_snapshot;
-};
+//! End snapshots of deleted inlined row versions, keyed by row id and begin snapshot
+using DuckLakeDeletedRowVersions = map<pair<int64_t, int64_t>, int64_t>;
 
 struct DuckLakeFileForCleanup {
 	DataFileIndex id;

@@ -73,7 +73,8 @@ public:
 	vector<DuckLakeGlobalStatsInfo> GetGlobalTableStats(DuckLakeSnapshot snapshot) override;
 	map<TableIndex, idx_t> GetTableRecordCounts(DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeFileListEntry> GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
-	                                               const FilterPushdownInfo *filter_info = nullptr) override;
+	                                               const FilterPushdownInfo *filter_info = nullptr,
+	                                               bool include_local_changes = true) override;
 	vector<DuckLakeFileListExtendedEntry>
 	GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
 	                         const FilterPushdownInfo *filter_info = nullptr) override;
@@ -90,11 +91,8 @@ public:
 	unique_ptr<QueryResult> ReadAllInlinedDataForFlush(DuckLakeSnapshot snapshot, const string &inlined_table_name,
 	                                                   const DuckLakeTableEntry &table, const string &sort_order_sql,
 	                                                   const vector<string> &columns_to_read) override;
-	vector<DuckLakeFlushedRowDeletion> GetFlushedRowDeletions(DuckLakeTableEntry &table,
-	                                                          const string &inlined_table_name,
-	                                                          const string &sort_order_sql,
-	                                                          const vector<Value> &partition_values, idx_t offset,
-	                                                          idx_t count, DuckLakeSnapshot snapshot) override;
+	DuckLakeDeletedRowVersions GetDeletedInlinedRowVersions(DuckLakeTableEntry &table, const string &inlined_table_name,
+	                                                        DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeInlinedFileDeletionEntry> GetInlinedFileDeletionsForFlush(DuckLakeTableEntry &table,
 	                                                                         DuckLakeSnapshot snapshot) override;
 	bool IsColumnCreatedWithTable(const string &table_name, const string &column_name) override;
@@ -116,7 +114,8 @@ public:
 	vector<DuckLakeFileListEntry> GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
 	                                                 DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeDeleteScanEntry> GetTableDeletions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
-	                                                  DuckLakeSnapshot snapshot) override;
+	                                                  DuckLakeSnapshot snapshot,
+	                                                  bool include_local_changes = true) override;
 	void RemoveFilesScheduledForCleanup(const vector<DuckLakeFileForCleanup> &cleaned_up_files) override;
 	idx_t GetNetDataFileRowCount(TableIndex table_id, DuckLakeSnapshot snapshot) override;
 	optional_idx GetNetDataFileRowCountForStats(TableIndex table_id, DuckLakeSnapshot snapshot) override;

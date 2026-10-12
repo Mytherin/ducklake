@@ -54,6 +54,8 @@ enum class SnapshotBound { LOWER_BOUND, UPPER_BOUND };
 struct DuckLakeInlinedColNames {
 	//! Column name prefix reserved for DuckLake internal use
 	static constexpr const char *PREFIX = "_ducklake_";
+	//! Number of metadata columns an inlined data table adds
+	static constexpr idx_t COLUMN_COUNT = 3;
 
 	explicit DuckLakeInlinedColNames(bool prefixed_inlined_columns) {
 		if (prefixed_inlined_columns) {
@@ -275,9 +277,15 @@ public:
 	virtual idx_t MaxIdentifierLength() const {
 		return NumericLimits<idx_t>::Maximum();
 	}
+	//! Maximum number of columns of a table supported by this backend
+	virtual idx_t MaxColumnCount() const {
+		return NumericLimits<idx_t>::Maximum();
+	}
 
 	//! Check whether a table with the given columns can be inlined
 	bool CanInlineColumns(const ColumnList &columns);
+	//! Whether the inlined data table of a table with this many columns fits the backend
+	bool InlinedTableFits(idx_t column_count) const;
 	bool CanInlineColumns(const vector<DuckLakeColumnInfo> &columns);
 
 	virtual string GetColumnTypeInternal(const LogicalType &column_type);
@@ -360,11 +368,14 @@ public:
 	//! Get the record count of every table that has global stats
 	virtual map<TableIndex, idx_t> GetTableRecordCounts(DuckLakeSnapshot snapshot);
 	virtual vector<DuckLakeFileListEntry> GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
-	                                                       const FilterPushdownInfo *filter_info = nullptr);
+	                                                       const FilterPushdownInfo *filter_info = nullptr,
+	                                                       bool include_local_changes = true);
 	virtual vector<DuckLakeFileListEntry> GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
 	                                                         DuckLakeSnapshot snapshot);
-	virtual vector<DuckLakeDeleteScanEntry>
-	GetTableDeletions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot);
+	virtual vector<DuckLakeDeleteScanEntry> GetTableDeletions(DuckLakeTableEntry &table,
+	                                                          DuckLakeSnapshot start_snapshot,
+	                                                          DuckLakeSnapshot snapshot,
+	                                                          bool include_local_changes = true);
 	virtual vector<DuckLakeFileListExtendedEntry>
 	GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
 	                         const FilterPushdownInfo *filter_info = nullptr);
@@ -427,6 +438,11 @@ public:
 	static string WriteNewSortKeys(const vector<DuckLakeSortInfo> &existing_sorts,
 	                               const vector<DuckLakeSortInfo> &new_sorts);
 	static string WriteDroppedColumns(const vector<DuckLakeDroppedColumn> &dropped_columns);
+	//! Formats a column set as a SQL list of (table_id, column_id) rows
+	static string WriteColumnIdPairs(const map<TableIndex, set<FieldIndex>> &columns);
+	//! Rewrite the bounds of committed files and tables written while a widened column was FLOAT
+	static string WriteFloatWidenedStats(const map<TableIndex, set<FieldIndex>> &widened_columns,
+	                                     const map<TableIndex, set<FieldIndex>> &cleared_columns, idx_t next_file_id);
 	static string WriteExpiredColumnTags(const vector<DuckLakeDroppedColumn> &dropped_columns);
 	static string WriteNewColumns(const vector<DuckLakeNewColumn> &new_columns);
 	static string WriteNewTags(const vector<DuckLakeTagInfo> &new_tags);
@@ -469,7 +485,7 @@ public:
 	string WriteNewInlinedFileDeletesSqlBatch(const vector<DuckLakeInlinedFileDeletionInfo> &new_deletes);
 	//! Get the name of the inlined deletion table for a given table ID
 	virtual string GetInlinedDeletionTableName(TableIndex table_id, DuckLakeSnapshot snapshot,
-	                                           bool create_if_not_exists = false);
+	                                           bool create_if_not_exists = false, bool include_local_changes = true);
 	//! Probe for the physical inlined-deletion table without aborting the active metadata transaction.
 	virtual bool InlinedDeletionTableExists(const string &table_name);
 	virtual string WriteNewInlinedTables(DuckLakeSnapshot commit_snapshot, const vector<DuckLakeTableInfo> &tables);
@@ -484,6 +500,9 @@ public:
 	static string DropDataFiles(const set<DataFileIndex> &dropped_files);
 	//! Selects the given data files that are still in the metadata
 	static string GetExistingDataFilesSql(const set<DataFileIndex> &files);
+	//! Selects the given tables or views renamed after the snapshot
+	static string GetRenamedAfterSnapshotSql(const string &metadata_table_name, const string &id_name,
+	                                         const set<TableIndex> &ids);
 	//! Caller supplies one resolved path per overwritten file, in the same order.
 	static string DeleteOverwrittenDeleteFiles(const vector<DuckLakeOverwrittenDeleteFile> &overwritten_files,
 	                                           const vector<DuckLakePath> &resolved_paths);
@@ -509,6 +528,8 @@ public:
 	                                      const DuckLakeSnapshotCommit &commit_info);
 	static string UpdateGlobalTableStatsSql(const DuckLakeGlobalStatsInfo &stats, bool write_stats_exactness);
 	static string InsertTableColumnStatsSql(const DuckLakeGlobalStatsInfo &stats, bool write_stats_exactness);
+	//! Set the stored table sizes to the size of the live data files
+	static string RefreshTableSizesSql(const set<TableIndex> &table_ids);
 	static SnapshotChangeInfo
 	GetSnapshotAndStatsAndChanges(SnapshotAndStats &current_snapshot,
 	                              const std::function<unique_ptr<QueryResult>(string)> &executor,
@@ -534,10 +555,10 @@ public:
 	                                                           const DuckLakeTableEntry &table,
 	                                                           const string &sort_order_sql,
 	                                                           const vector<string> &columns_to_read);
-	//! The deleted rows among the inlined rows [offset, offset + count) of a partition, in the flush order
-	virtual vector<DuckLakeFlushedRowDeletion>
-	GetFlushedRowDeletions(DuckLakeTableEntry &table, const string &inlined_table_name, const string &sort_order_sql,
-	                       const vector<Value> &partition_values, idx_t offset, idx_t count, DuckLakeSnapshot snapshot);
+	//! The deleted versions of the inlined rows that a flush writes
+	virtual DuckLakeDeletedRowVersions GetDeletedInlinedRowVersions(DuckLakeTableEntry &table,
+	                                                                const string &inlined_table_name,
+	                                                                DuckLakeSnapshot snapshot);
 	//! The inlined deletions of rows of data files, which a flush writes to delete files
 	virtual vector<DuckLakeInlinedFileDeletionEntry> GetInlinedFileDeletionsForFlush(DuckLakeTableEntry &table,
 	                                                                                 DuckLakeSnapshot snapshot);
@@ -571,6 +592,8 @@ public:
 	virtual void MigrateV10(bool allow_failures = false);
 	//! Logs development migration failures during attach
 	virtual void MigrateV10Dev();
+	//! Whether the catalog already has every metadata table and column of v1.1-dev1
+	bool HasV1_1Dev1Additions();
 	//! Renames inlined metadata columns to the prefixed variants, skipping already renamed tables
 	virtual void MigrateInlinedColumnNames(bool probe_renamed);
 	//! Rewrites inlined tables whose columns were created with the storage types of an older DuckLake version
@@ -704,7 +727,8 @@ private:
 
 public:
 	//! Read inlined file deletions for regular table scans (no snapshot info per row)
-	map<idx_t, set<idx_t>> ReadInlinedFileDeletions(TableIndex table_id, DuckLakeSnapshot snapshot);
+	map<idx_t, set<idx_t>> ReadInlinedFileDeletions(TableIndex table_id, DuckLakeSnapshot snapshot,
+	                                                bool include_local_changes = true);
 	//! Clear inlined table caches (needed after rollback so retry re-creates the tables)
 	void ClearInlinedTableCaches();
 

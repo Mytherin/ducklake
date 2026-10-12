@@ -289,15 +289,20 @@ void PostgresMetadataManager::MigrateInlinedDataTypes() {
 				rewrite = false;
 				break;
 			}
-			DuckLakeColumnInfo column;
-			column.type = column_type->second;
-			auto storage_type_name = GetColumnType(column);
-			auto storage_type = UnboundType::TryParseAndDefaultBind(storage_type_name);
-			auto type = DuckLakeTypes::FromString(column.type);
+			auto type = DuckLakeTypes::FromString(column_type->second);
 			auto native_type = type.HasAlias() ? LogicalType(type.id()) : type;
 			// DuckLake 0.3 stored values with the native type of their DuckLake type, other columns are kept
 			auto &stored_type = probe->GetTypes()[i];
-			bool convert = stored_type != storage_type && stored_type == native_type;
+			string storage_type_name;
+			bool convert = false;
+			// nested columns are stored as VARCHAR in every version
+			if (!DuckLakeTypes::IsNested(type)) {
+				DuckLakeColumnInfo column;
+				column.type = column_type->second;
+				storage_type_name = GetColumnType(column);
+				auto storage_type = UnboundType::TryParseAndDefaultBind(storage_type_name);
+				convert = stored_type != storage_type && stored_type == native_type;
+			}
 			auto column_name = SQLIdentifier::ToString(name);
 			column_defs += StringUtil::Format("%s%s %s", column_defs.empty() ? "" : ", ", column_name,
 			                                  convert ? storage_type_name : stored_type.ToString());
@@ -327,6 +332,8 @@ unique_ptr<QueryResult> PostgresMetadataManager::Execute(DuckLakeSnapshot snapsh
 	auto &ducklake_catalog = transaction.GetCatalog();
 	SubstituteCatalogPlaceholders(query, SQLQuotedIdentifier::ToString(ducklake_catalog.MetadataSchemaName()));
 	auto catalog_literal = SQLString::ToString(ducklake_catalog.MetadataDatabaseName());
+	// casts of float bounds to text keep their exact value
+	query = "SET LOCAL extra_float_digits = 3;" + query;
 	auto result = transaction.GetConnection().Query(
 	    StringUtil::Format("CALL postgres_execute(%s, %s, prepare=FALSE)", catalog_literal, SQLString(query)));
 	return std::move(result);
