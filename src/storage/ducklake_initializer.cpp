@@ -19,6 +19,7 @@
 #include "metadata_manager/sqlite_metadata_manager.hpp"
 #include "metadata_manager/postgres_metadata_manager.hpp"
 #include "metadata_manager/quack_metadata_manager.hpp"
+#include "rest/ducklake_rest_server.hpp"
 
 namespace duckdb {
 
@@ -62,6 +63,10 @@ string DuckLakeInitializer::GetAttachOptions() {
 void DuckLakeInitializer::Initialize() {
 	auto &transaction = DuckLakeTransaction::Get(context, catalog);
 	if (transaction.GetMetadataManager().IsRemote()) {
+		if (!options.rest_local_path.empty() && !options.rest_server) {
+			options.rest_server = DuckLakeRESTServerRegistry::Get().GetLocalServer(context.db, options.rest_local_path,
+			                                                                       options.rest_local_attach_options);
+		}
 		// the metadata is served remotely - there is no metadata database to attach or migrate
 		LoadExistingDuckLake(transaction, true);
 		if (options.at_clause) {

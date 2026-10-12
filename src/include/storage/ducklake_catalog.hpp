@@ -172,6 +172,10 @@ public:
 	const string &MetadataType() const {
 		return metadata_type;
 	}
+	//! Whether the catalog attaches a metadata database, rather than reading its metadata from a REST server
+	bool OwnsMetadataDatabase() const {
+		return metadata_type != "rest";
+	}
 	bool IsInitialized() const {
 		return initialized;
 	}
@@ -351,6 +355,9 @@ public:
 
 	//! The client of the REST server that serves the metadata, for REST catalogs
 	DuckLakeRESTClient &GetRESTClient();
+	DuckLakeOptions &GetOptions() {
+		return options;
+	}
 
 	shared_ptr<const DuckLakeNameMap> TryGetMappingById(DuckLakeTransaction &transaction, MappingIndex mapping_id);
 	MappingIndex TryGetCompatibleNameMap(DuckLakeTransaction &transaction, const DuckLakeNameMap &name_map);

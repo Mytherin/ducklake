@@ -1,0 +1,19 @@
+{
+  "description": "Run DuckLake tests with every DuckLake served by a local DuckLake REST server.",
+  "autoloading": "none",
+  "statically_loaded_extensions": [
+    "core_functions",
+    "parquet",
+    "ducklake",
+    "icu",
+    "httpfs"
+  ],
+  "test_env": [
+    {
+      "env_name": "DUCKLAKE_CONNECTION",
+      "env_value": "rest:{TEST_DIR}/{BASE_TEST_NAME}.db"
+    }
+  ],
+  "skip_tests": [
+  ]
+}

@@ -139,7 +139,6 @@ private:
 	                         const string &table_name);
 
 private:
-	DuckLakeRESTClient &client;
 	//! The catalog changes of the transaction, in the order in which they were made
 	RESTJsonWriter catalog_requests;
 	RESTJsonOut catalog_change_requests;

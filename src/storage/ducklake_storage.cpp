@@ -7,6 +7,7 @@
 #include "storage/ducklake_catalog.hpp"
 #include "storage/ducklake_transaction_manager.hpp"
 #include "storage/ducklake_secret.hpp"
+#include "rest/ducklake_rest_server.hpp"
 
 namespace duckdb {
 
@@ -64,6 +65,34 @@ static void HandleDuckLakeOption(DuckLakeOptions &options, const string &option,
 	} else {
 		throw NotImplementedException("Unsupported option %s for DuckLake", option);
 	}
+}
+
+//! ducklake:rest:<path> with a path that is not a URL serves the DuckLake at the path over a local REST server
+static void ServeLocalDuckLakeOverREST(DuckLakeOptions &options, const AttachOptions &attach_options) {
+	if (!StringUtil::StartsWith(options.metadata_path, "rest:")) {
+		return;
+	}
+	auto path = options.metadata_path.substr(5);
+	if (StringUtil::StartsWith(path, "http://") || StringUtil::StartsWith(path, "https://")) {
+		return;
+	}
+	// the options that create and attach the DuckLake are passed on to the server
+	vector<string> server_options;
+	for (auto &entry : attach_options.options) {
+		auto option = StringUtil::Lower(entry.first);
+		if (option == "snapshot_version" || option == "snapshot_time" || option == "busy_timeout" ||
+		    option == "metadata_catalog") {
+			continue;
+		}
+		server_options.push_back(entry.first + " " + entry.second.ToSQLString());
+	}
+	// the metadata catalog of the served DuckLake gets the name the metadata catalog of this catalog would have
+	server_options.push_back("METADATA_CATALOG " + Value(options.metadata_database).ToSQLString());
+	if (options.hide_metadata_catalog) {
+		server_options.push_back("META_HIDDEN true");
+	}
+	options.rest_local_path = path;
+	options.rest_local_attach_options = StringUtil::Join(server_options, ", ");
 }
 
 static unique_ptr<Catalog> DuckLakeAttach(optional_ptr<StorageExtensionInfo> storage_info, ClientContext &context,
@@ -126,6 +155,7 @@ static unique_ptr<Catalog> DuckLakeAttach(optional_ptr<StorageExtensionInfo> sto
 		attach_options.access_mode = AccessMode::READ_ONLY;
 		db.SetReadOnlyDatabase();
 	}
+	ServeLocalDuckLakeOverREST(options, attach_options);
 	attach_options.options["busy_timeout"] = Value::INTEGER(options.busy_timeout);
 	return make_uniq<DuckLakeCatalog>(db, std::move(options));
 }

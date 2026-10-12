@@ -20,8 +20,7 @@
 namespace duckdb {
 
 RESTMetadataManager::RESTMetadataManager(DuckLakeTransaction &transaction)
-    : DuckLakeMetadataManager(transaction), client(transaction.GetCatalog().GetRESTClient()),
-      catalog_change_requests(catalog_requests.Root().Arr("requests")) {
+    : DuckLakeMetadataManager(transaction), catalog_change_requests(catalog_requests.Root().Arr("requests")) {
 }
 
 RESTMetadataManager::~RESTMetadataManager() {
@@ -36,7 +35,7 @@ static int64_t ToRequestId(idx_t id) {
 }
 
 unique_ptr<RESTJsonReader> RESTMetadataManager::Post(const string &endpoint, const RESTJsonWriter &request) {
-	return client.Post(endpoint, request);
+	return transaction.GetCatalog().GetRESTClient().Post(endpoint, request);
 }
 
 RESTJsonOut RESTMetadataManager::AddCommitRequest(const string &path) {
@@ -158,7 +157,7 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
                                                                     DuckLakeSnapshot snapshot,
                                                                     const FilterPushdownInfo *filter_info) {
 	vector<DuckLakeFileListEntry> result;
-	if (table.IsTransactionLocal()) {
+	if (IsTransactionLocal(table.GetTableId())) {
 		return result;
 	}
 	RESTJsonWriter request;
@@ -175,7 +174,7 @@ vector<DuckLakeFileListExtendedEntry>
 RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
                                               const FilterPushdownInfo *filter_info) {
 	vector<DuckLakeFileListExtendedEntry> result;
-	if (table.IsTransactionLocal()) {
+	if (IsTransactionLocal(table.GetTableId())) {
 		return result;
 	}
 	RESTJsonWriter request;
@@ -193,7 +192,7 @@ vector<DuckLakeCompactionFileEntry>
 RESTMetadataManager::GetFilesForCompaction(DuckLakeTableEntry &table, CompactionType type, double deletion_threshold,
                                            DuckLakeSnapshot snapshot, DuckLakeFileSizeOptions options) {
 	vector<DuckLakeCompactionFileEntry> result;
-	if (table.IsTransactionLocal()) {
+	if (IsTransactionLocal(table.GetTableId())) {
 		return result;
 	}
 	RESTJsonWriter request;
@@ -547,7 +546,7 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetTableInsertions(DuckLakeTa
                                                                       DuckLakeSnapshot start_snapshot,
                                                                       DuckLakeSnapshot snapshot) {
 	vector<DuckLakeFileListEntry> result;
-	if (table.IsTransactionLocal()) {
+	if (IsTransactionLocal(table.GetTableId())) {
 		return result;
 	}
 	auto response = GetTableChanges(table, start_snapshot, snapshot, "insertions");
@@ -561,7 +560,7 @@ vector<DuckLakeDeleteScanEntry> RESTMetadataManager::GetTableDeletions(DuckLakeT
                                                                        DuckLakeSnapshot start_snapshot,
                                                                        DuckLakeSnapshot snapshot) {
 	vector<DuckLakeDeleteScanEntry> result;
-	if (table.IsTransactionLocal()) {
+	if (IsTransactionLocal(table.GetTableId())) {
 		return result;
 	}
 	auto response = GetTableChanges(table, start_snapshot, snapshot, "deletions");
@@ -801,7 +800,8 @@ void RESTMetadataManager::AddDeletes(const TransactionChangeInformation &transac
 		WriteDroppedFiles(parameters, entry.first);
 	}
 	for (auto &table_id : transaction.GetTablesDeleteAttempted()) {
-		if (dropped_tables.find(table_id) != dropped_tables.end()) {
+		// deletes from tables created by the transaction cannot conflict with other transactions
+		if (dropped_tables.find(table_id) != dropped_tables.end() || IsTransactionLocal(table_id)) {
 			continue;
 		}
 		auto parameters = AddRequest(requests, "delete_data");

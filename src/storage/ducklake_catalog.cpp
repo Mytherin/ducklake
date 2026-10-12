@@ -1,5 +1,6 @@
 #include "storage/ducklake_catalog.hpp"
 #include "rest/ducklake_rest_client.hpp"
+#include "rest/ducklake_rest_server.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -336,7 +337,7 @@ DuckLakeCatalog::~DuckLakeCatalog() {
 DuckLakeRESTClient &DuckLakeCatalog::GetRESTClient() {
 	lock_guard<mutex> guard(rest_client_lock);
 	if (!rest_client) {
-		auto url = MetadataPath();
+		auto url = options.rest_server ? options.rest_server->ListenURI() : MetadataPath();
 		if (StringUtil::StartsWith(url, "rest:")) {
 			url = url.substr(5);
 		}
@@ -1109,7 +1110,7 @@ optional_ptr<BoundAtClause> DuckLakeCatalog::CatalogSnapshot() const {
 
 void DuckLakeCatalog::OnDetach(ClientContext &context) {
 	// the metadata database stays attached while another DuckLake uses it
-	if (!UnregisterCatalog()) {
+	if (!UnregisterCatalog() || !OwnsMetadataDatabase()) {
 		return;
 	}
 	auto &db_manager = DatabaseManager::Get(context);
@@ -1430,7 +1431,8 @@ void DuckLakeCatalog::RegisterCatalog() {
 			continue;
 		}
 		// only DuckLakes with the same metadata database share their metadata catalog
-		if (StringUtil::CIEquals(other.MetadataDatabaseName(), MetadataDatabaseName()) &&
+		if (OwnsMetadataDatabase() && other.OwnsMetadataDatabase() &&
+		    StringUtil::CIEquals(other.MetadataDatabaseName(), MetadataDatabaseName()) &&
 		    (other.MetadataType() != MetadataType() || other.MetadataPath() != MetadataPath())) {
 			throw BinderException(
 			    "Failed to attach database: metadata catalog \"%s\" is already used by database \"%s\"",
@@ -1451,7 +1453,8 @@ bool DuckLakeCatalog::UnregisterCatalog() {
 		auto &other = catalogs[i - 1].get();
 		if (&other == this) {
 			catalogs.erase_at(i - 1);
-		} else if (StringUtil::CIEquals(other.MetadataDatabaseName(), MetadataDatabaseName())) {
+		} else if (other.OwnsMetadataDatabase() &&
+		           StringUtil::CIEquals(other.MetadataDatabaseName(), MetadataDatabaseName())) {
 			metadata_catalog_unused = false;
 		}
 	}

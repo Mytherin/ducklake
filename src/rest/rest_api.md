@@ -40,6 +40,18 @@ ATTACH 'ducklake:rest:http://localhost:8181' AS lake;
 The client reads the data path and the options of the DuckLake from the server. Data files are read and written by the
 client directly, so the data path has to be accessible from both the client and the server.
 
+### Serving a local DuckLake
+
+```sql
+ATTACH 'ducklake:rest:metadata.ducklake' AS lake (DATA_PATH 'data/');
+```
+
+A `ducklake:rest:` path that is not an `http://` or `https://` URL attaches the DuckLake at that path as a hidden
+catalog of the same database, serves it over REST on a free local port, and connects to it through REST. The attach
+options are passed on to the served DuckLake, and its metadata catalog is attached under the name the metadata catalog
+of a regular DuckLake would get (e.g. `__ducklake_metadata_lake`). The server stops when the last catalog using it is
+detached. This makes it possible to use (and test) every DuckLake feature through the REST API.
+
 ## Conventions
 
 * All endpoints live under `/v1/<endpoint>`. Requests and responses are JSON objects. Every endpoint accepts `POST`
