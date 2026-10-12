@@ -31,6 +31,10 @@ public:
 		return base_url;
 	}
 
+	//! The schema version and data version (next file id) of the latest catalog and statistics the client loaded
+	atomic<idx_t> loaded_metadata_version {DConstants::INVALID_INDEX};
+	atomic<idx_t> loaded_data_version {DConstants::INVALID_INDEX};
+
 private:
 	unique_ptr<duckdb_httplib::Client> GetConnection();
 	void ReturnConnection(unique_ptr<duckdb_httplib::Client> connection);

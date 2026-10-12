@@ -4,6 +4,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
+#include "common/ducklake_types.hpp"
 #include "rest/ducklake_rest_catalog_changes.hpp"
 #include "rest/ducklake_rest_serialization.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
@@ -117,8 +118,29 @@ unique_ptr<RESTJsonReader> RESTMetadataManager::GetSnapshotData(optional_ptr<Duc
 }
 
 unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot() {
-	auto response = GetSnapshotData(nullptr, false, false);
-	return make_uniq<DuckLakeSnapshot>(DuckLakeRESTSerializer::ReadSnapshot(response->Root().Get("snapshot")));
+	// the catalog and statistics of a new snapshot come along, which saves a round-trip to load them
+	auto &client = transaction.GetCatalog().GetRESTClient();
+	RESTJsonWriter request;
+	auto root = request.Root();
+	root.SetUInt("cached_metadata_version", client.loaded_metadata_version);
+	root.SetUInt("cached_data_version", client.loaded_data_version);
+	auto response = Post("snapshot_data", request);
+	auto response_root = response->Root();
+	auto snapshot = DuckLakeRESTSerializer::ReadSnapshot(response_root.Get("snapshot"));
+	auto catalog = response_root.TryGet("catalog");
+	if (!catalog.IsNull()) {
+		prefetched_catalog = make_uniq<DuckLakeCatalogInfo>(DuckLakeRESTSerializer::ReadCatalogInfo(catalog));
+		prefetched_metadata_version = snapshot.schema_version;
+	}
+	auto stats = response_root.TryGet("stats");
+	if (!stats.IsNull()) {
+		auto &snapshot_stats = table_stats[snapshot.snapshot_id];
+		for (auto &table : stats.Items()) {
+			snapshot_stats.push_back(DuckLakeRESTSerializer::ReadGlobalStatsInfo(table));
+		}
+		client.loaded_data_version = snapshot.next_file_id;
+	}
+	return make_uniq<DuckLakeSnapshot>(snapshot);
 }
 
 unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot(BoundAtClause &at_clause, SnapshotBound bound) {
@@ -137,7 +159,16 @@ unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot(BoundAtClause &at_
 }
 
 DuckLakeCatalogInfo RESTMetadataManager::GetCatalogForSnapshot(DuckLakeSnapshot snapshot) {
+	auto &client = transaction.GetCatalog().GetRESTClient();
+	if (prefetched_catalog && prefetched_metadata_version == snapshot.schema_version) {
+		// the catalog only changes with the schema version
+		auto result = std::move(*prefetched_catalog);
+		prefetched_catalog.reset();
+		client.loaded_metadata_version = snapshot.schema_version;
+		return result;
+	}
 	auto response = GetSnapshotData(snapshot, true, false);
+	client.loaded_metadata_version = snapshot.schema_version;
 	return DuckLakeRESTSerializer::ReadCatalogInfo(response->Root().Get("catalog"));
 }
 
@@ -153,6 +184,7 @@ vector<DuckLakeGlobalStatsInfo> RESTMetadataManager::GetGlobalTableStats(DuckLak
 		result.push_back(DuckLakeRESTSerializer::ReadGlobalStatsInfo(stats));
 	}
 	table_stats[snapshot.snapshot_id] = result;
+	transaction.GetCatalog().GetRESTClient().loaded_data_version = snapshot.next_file_id;
 	return result;
 }
 
@@ -677,7 +709,10 @@ void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const Creat
 	parameters.SetStr("table_uuid", table_uuid);
 	parameters.SetStr("path", table_data_path);
 	auto columns = parameters.Arr("columns");
+	auto version = transaction.GetCatalog().GetDuckLakeVersion();
 	for (auto &column : info.columns.Logical()) {
+		// fail with the error of a commit to a metadata database, rather than on a type the server cannot parse
+		DuckLakeTypes::CheckSupportedType(column.GetType(), version);
 		DuckLakeRESTCatalogChanges::WriteColumn(columns.AppendObj(), column,
 		                                        info.FindNotNullConstraint(column.Logical()).IsValid());
 	}
@@ -733,7 +768,29 @@ static bool AltersView(const AlterInfo &info) {
 	}
 }
 
+//! The type an ALTER TABLE gives a column, if any
+static optional_ptr<const LogicalType> GetAlteredType(const AlterInfo &info) {
+	if (info.type != AlterType::ALTER_TABLE) {
+		return nullptr;
+	}
+	auto &alter = info.Cast<AlterTableInfo>();
+	switch (alter.alter_table_type) {
+	case AlterTableType::ADD_COLUMN:
+		return alter.Cast<AddColumnInfo>().new_column.GetType();
+	case AlterTableType::ADD_FIELD:
+		return alter.Cast<AddFieldInfo>().new_field.GetType();
+	case AlterTableType::ALTER_COLUMN_TYPE:
+		return alter.Cast<ChangeColumnTypeInfo>().target_type;
+	default:
+		return nullptr;
+	}
+}
+
 void RESTMetadataManager::OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) {
+	auto altered_type = GetAlteredType(info);
+	if (altered_type) {
+		DuckLakeTypes::CheckSupportedType(*altered_type, transaction.GetCatalog().GetDuckLakeVersion());
+	}
 	auto parameters = AddCommitRequest(AltersView(info) ? "alter_view" : "alter_table");
 	WriteSchemaPath(parameters, schema);
 	parameters.SetStr("name", info.GetQualifiedName().Name().GetIdentifierName());

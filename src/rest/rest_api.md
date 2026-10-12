@@ -197,6 +197,11 @@ start a transaction in a single round-trip.
 | `bound`           | `"upper"` (default) or `"lower"`: whether a timestamp finds the last snapshot before or the first snapshot after it. |
 | `include_catalog` | Whether to return the catalog (schemas, tables, views, macros, partitioning, sorting).   |
 | `include_stats`   | Whether to return the table statistics.                                                  |
+| `cached_metadata_version` | The schema version of the latest catalog the client has loaded. If the snapshot has a different schema version, its catalog is returned. |
+| `cached_data_version` | The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a different next file id, its statistics are returned. |
+
+Clients pass `cached_metadata_version` and `cached_data_version` when they start a transaction, so they get the
+latest snapshot and, if it changed since, its catalog and statistics in a single round-trip.
 
 Response:
 

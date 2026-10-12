@@ -83,6 +83,18 @@ static void SnapshotDataEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input,
 		snapshot = request.GetSnapshot(input);
 	}
 	DuckLakeRESTSerializer::Write(output.Obj("snapshot"), snapshot);
+	// clients that pass the versions they have loaded get the catalog and statistics if they changed
+	auto cached_metadata_version = input.TryGet("cached_metadata_version");
+	if (!cached_metadata_version.IsNull() && cached_metadata_version.UInt() != snapshot.schema_version) {
+		DuckLakeRESTSerializer::Write(output.Obj("catalog"), metadata_manager.GetCatalogForSnapshot(snapshot));
+	}
+	auto cached_data_version = input.TryGet("cached_data_version");
+	if (!cached_data_version.IsNull() && cached_data_version.UInt() != snapshot.next_file_id) {
+		auto stats = output.Arr("stats");
+		for (auto &table_stats : metadata_manager.GetGlobalTableStats(snapshot)) {
+			DuckLakeRESTSerializer::Write(stats.AppendObj(), table_stats);
+		}
+	}
 	if (input.Bool("include_catalog", false)) {
 		DuckLakeRESTSerializer::Write(output.Obj("catalog"), metadata_manager.GetCatalogForSnapshot(snapshot));
 	}
