@@ -148,6 +148,8 @@ private:
 	idx_t catalog_request_count = 0;
 	//! The parameters of the last catalog change, which OnEntryChanged completes
 	RESTJsonOut last_catalog_change;
+	//! The table statistics read by the transaction, by snapshot
+	unordered_map<idx_t, vector<DuckLakeGlobalStatsInfo>> table_stats;
 	//! The data files dropped by the transaction, by table
 	map<TableIndex, vector<DuckLakeFileListEntry>> dropped_files;
 };

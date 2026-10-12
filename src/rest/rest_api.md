@@ -179,7 +179,6 @@ start a transaction in a single round-trip.
 | `bound`           | `"upper"` (default) or `"lower"`: whether a timestamp finds the last snapshot before or the first snapshot after it. |
 | `include_catalog` | Whether to return the catalog (schemas, tables, views, macros, partitioning, sorting).   |
 | `include_stats`   | Whether to return the table statistics.                                                  |
-| `include_record_counts` | Whether to return the record counts of the tables (`record_counts`: `[{"table_id": 1, "record_count": 10}]`). |
 
 Response:
 

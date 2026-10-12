@@ -142,22 +142,26 @@ DuckLakeCatalogInfo RESTMetadataManager::GetCatalogForSnapshot(DuckLakeSnapshot 
 }
 
 vector<DuckLakeGlobalStatsInfo> RESTMetadataManager::GetGlobalTableStats(DuckLakeSnapshot snapshot) {
+	// table statistics are not versioned, a transaction keeps the statistics it read first
+	auto entry = table_stats.find(snapshot.snapshot_id);
+	if (entry != table_stats.end()) {
+		return entry->second;
+	}
 	auto response = GetSnapshotData(snapshot, false, true);
 	vector<DuckLakeGlobalStatsInfo> result;
 	for (auto &stats : response->Root().Get("stats").Items()) {
 		result.push_back(DuckLakeRESTSerializer::ReadGlobalStatsInfo(stats));
 	}
+	table_stats[snapshot.snapshot_id] = result;
 	return result;
 }
 
 map<TableIndex, idx_t> RESTMetadataManager::GetTableRecordCounts(DuckLakeSnapshot snapshot) {
-	RESTJsonWriter request;
-	DuckLakeRESTSerializer::Write(request.Root().Obj("snapshot"), snapshot);
-	request.Root().SetBool("include_record_counts", true);
-	auto response = Post("snapshot_data", request);
 	map<TableIndex, idx_t> result;
-	for (auto &entry : response->Root().Get("record_counts").Items()) {
-		result.emplace(TableIndex(entry.UInt("table_id")), entry.UInt("record_count"));
+	for (auto &stats : GetGlobalTableStats(snapshot)) {
+		if (!stats.record_count_unknown) {
+			result.emplace(stats.table_id, stats.record_count);
+		}
 	}
 	return result;
 }
@@ -970,9 +974,13 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 		}
 	}
 	if (transaction_snapshot.snapshot_id != DConstants::INVALID_INDEX) {
-		root.SetUInt("snapshot_id", transaction_snapshot.snapshot_id);
+		DuckLakeRESTSerializer::Write(root.Obj("snapshot"), transaction_snapshot);
 	}
 	DuckLakeRESTSerializer::Write(root.Obj("commit_info"), flush_transaction.GetCommitInfo());
+	auto retry = root.Obj("retry");
+	retry.SetUInt("max_retry_count", retry_config.max_retry_count);
+	retry.SetUInt("retry_wait_ms", retry_config.retry_wait_ms);
+	retry.SetDouble("retry_backoff", retry_config.retry_backoff);
 	root.SetBool("requires_new_inlined_table", flush_transaction.GetRequiresNewInlinedTable());
 	auto response = Post("commit_transaction", commit_request);
 	auto response_root = response->Root();

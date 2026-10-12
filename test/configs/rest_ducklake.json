@@ -15,5 +15,54 @@
     }
   ],
   "skip_tests": [
+    {
+      "reason": "Tests the migration of metadata that the test writes to the metadata catalog directly",
+      "paths": [
+        "test/sql/migration/stale_version_after_migration.test",
+        "test/sql/migration/v01_partitioned.test"
+      ]
+    },
+    {
+      "reason": "Inspects the SQL queries that are issued to the metadata catalog",
+      "paths": [
+        "test/sql/stats/topn_file_pruning.test",
+        "test/sql/metadata/metadata_query_budget.test"
+      ]
+    },
+    {
+      "reason": "Snapshots that are expired in a transaction are expired when the transaction commits",
+      "paths": [
+        "test/sql/transaction/expire_cleanup_same_transaction.test"
+      ]
+    },
+    {
+      "reason": "Depends on the location of the metadata database",
+      "paths": [
+        "test/sql/general/default_path.test",
+        "test/sql/general/metadata_parameters.test",
+        "test/sql/general/missing_parquet.test",
+        "test/sql/remove_orphans/metadata_in_data_path.test",
+        "test/sql/issues/issue_1332.test"
+      ]
+    },
+    {
+      "reason": "The served DuckLake is attached to the same database, so its tables show up in suggestions for misspelled names",
+      "paths": [
+        "test/sql/add_files/add_file_specific_schema.test",
+        "test/sql/compaction/merge_adjacent_options.test"
+      ]
+    },
+    {
+      "reason": "The served DuckLake adds to the object cache of the database",
+      "paths": [
+        "test/sql/issues/issue_852_cache_growth.test"
+      ]
+    },
+    {
+      "reason": "Depends on the timing of concurrent commits",
+      "paths": [
+        "test/sql/retry/commit_failure.test"
+      ]
+    }
   ]
 }

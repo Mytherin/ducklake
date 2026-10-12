@@ -14,6 +14,7 @@
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
+#include "common/ducklake_util.hpp"
 #include "storage/ducklake_catalog.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
 #include "storage/ducklake_schema_entry.hpp"
@@ -89,14 +90,6 @@ static void SnapshotDataEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input,
 		auto stats = output.Arr("stats");
 		for (auto &table_stats : metadata_manager.GetGlobalTableStats(snapshot)) {
 			DuckLakeRESTSerializer::Write(stats.AppendObj(), table_stats);
-		}
-	}
-	if (input.Bool("include_record_counts", false)) {
-		auto record_counts = output.Arr("record_counts");
-		for (auto &entry : metadata_manager.GetTableRecordCounts(snapshot)) {
-			auto count = record_counts.AppendObj();
-			count.SetUInt("table_id", entry.first.index);
-			count.SetUInt("record_count", entry.second);
 		}
 	}
 }
@@ -857,10 +850,18 @@ void DuckLakeRESTCommit::ApplyRequest(const string &path, RESTJsonIn parameters)
 }
 
 void DuckLakeRESTCommit::Run(RESTJsonIn input, RESTJsonOut output) {
-	auto snapshot_id = input.TryGet("snapshot_id");
-	if (!snapshot_id.IsNull()) {
+	if (input.Has("snapshot") || input.Has("snapshot_id")) {
 		// conflicts are detected against the snapshot the client transaction started from
-		transaction.SetSnapshot(request.GetSnapshotById(snapshot_id.UInt()));
+		transaction.SetSnapshot(request.GetSnapshot(input));
+	}
+	auto retry = input.TryGet("retry");
+	if (!retry.IsNull()) {
+		DuckLakeUtil::SetExtensionSetting(context, "ducklake_max_retry_count",
+		                                  Value::UBIGINT(retry.UInt("max_retry_count")));
+		DuckLakeUtil::SetExtensionSetting(context, "ducklake_retry_wait_ms",
+		                                  Value::UBIGINT(retry.UInt("retry_wait_ms")));
+		DuckLakeUtil::SetExtensionSetting(context, "ducklake_retry_backoff",
+		                                  Value::DOUBLE(retry.Get("retry_backoff").Double()));
 	}
 	auto commit_info = input.TryGet("commit_info");
 	if (!commit_info.IsNull()) {
