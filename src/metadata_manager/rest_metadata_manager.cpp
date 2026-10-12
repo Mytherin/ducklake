@@ -6,6 +6,7 @@
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 #include "common/ducklake_types.hpp"
 #include "rest/ducklake_rest_catalog_changes.hpp"
+#include "rest/ducklake_rest_filters.hpp"
 #include "rest/ducklake_rest_serialization.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
@@ -217,7 +218,7 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 	DuckLakeRESTSerializer::Write(request.Root().Obj("snapshot"), snapshot);
 	request.Root().SetUInt("table_id", table.GetTableId().index);
 	if (filter_info) {
-		DuckLakeRESTSerializer::WriteFilters(request.Root().Obj("filters"), *filter_info);
+		DuckLakeRESTFilters::Write(request.Root().Obj("filters"), *filter_info, table);
 	}
 	auto response = Post("select", request);
 	for (auto &file : response->Root().Get("files").Items()) {
@@ -238,7 +239,7 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 	request.Root().SetUInt("table_id", table.GetTableId().index);
 	request.Root().SetBool("extended", true);
 	if (filter_info) {
-		DuckLakeRESTSerializer::WriteFilters(request.Root().Obj("filters"), *filter_info);
+		DuckLakeRESTFilters::Write(request.Root().Obj("filters"), *filter_info, table);
 	}
 	auto response = Post("select", request);
 	for (auto &file : response->Root().Get("files").Items()) {

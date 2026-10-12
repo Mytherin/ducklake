@@ -14,8 +14,6 @@
 #include "storage/ducklake_metadata_info.hpp"
 
 namespace duckdb {
-class ClientContext;
-struct FilterPushdownInfo;
 
 //! Conversion of the DuckLake metadata structures to and from their REST API JSON representation
 struct DuckLakeRESTSerializer {
@@ -76,10 +74,6 @@ struct DuckLakeRESTSerializer {
 
 	static void Write(RESTJsonOut out, const DuckLakeSnapshotInfo &snapshot);
 	static DuckLakeSnapshotInfo ReadSnapshotInfo(RESTJsonIn in);
-
-	//! Filters that cannot be serialized are left out, they are only used to prune files
-	static void WriteFilters(RESTJsonOut out, const FilterPushdownInfo &filters);
-	static unique_ptr<FilterPushdownInfo> ReadFilters(ClientContext &context, RESTJsonIn in);
 
 	static void Write(RESTJsonOut out, const DuckLakeSnapshotCommit &commit);
 	static DuckLakeSnapshotCommit ReadSnapshotCommit(RESTJsonIn in);

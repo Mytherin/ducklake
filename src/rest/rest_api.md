@@ -279,20 +279,23 @@ Response:
 
 The rows of a table that are inlined in the catalog are read with `read_inlined_data`.
 
-Filters are optional: a server may ignore them, and a client applies them to the scanned rows regardless. They are
-DuckDB table filters on single columns or trees of them:
+Filters are optional: a server may ignore them, and a client applies them to the scanned rows regardless.
 
 ```json
-{"column_filters": [{"column_id": 1, "type": {"id": "INTEGER"}, "filter": "<base64>"}],
- "filter_trees": [{"type": "or", "children": [{"type": "column_filter", "column_filter": {...}}, ...]}],
+{"expressions": ["i >= 150", "s = 'a' OR st.a IN (1, 2)"],
  "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "INTEGER"}}],
  "runtime_filter_columns": [1]}
 ```
 
-`filter` is a DuckDB `TableFilter` in the DuckDB binary serialization format, base64 encoded. `dynamic_filters` are
-filters whose value is only known while the scan runs (e.g. of a top-N): the server orders the files so that these
-filters can prune files early. For `runtime_filter_columns` the server returns the min/max statistics of the files in
-`column_min_max`, so the client can prune files at runtime.
+`expressions` are SQL expressions that all hold for the rows of the scan. They refer to the columns of the table by
+name, and to the fields of structs by their path (`st.a`). The server prunes files on the statistics of their columns
+with the parts of the expressions it understands: comparisons of a column with a constant, `IN` lists of constants,
+`IS [NOT] NULL`, and `AND` / `OR` combinations of those. The server ignores the other parts, and leaves out an `OR`
+entirely if it does not understand one of its parts.
+
+`dynamic_filters` are filters whose value is only known while the scan runs (e.g. of a top-N): the server orders the
+files so that these filters can prune files early. For `runtime_filter_columns` the server returns the min/max
+statistics of the files in `column_min_max`, so the client can prune files at runtime.
 
 The extended file list (`"extended": true`) returns the ids of the data and delete files and the number of deleted
 rows of each file instead:

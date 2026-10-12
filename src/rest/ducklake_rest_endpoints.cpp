@@ -1,5 +1,6 @@
 #include "rest/ducklake_rest_server.hpp"
 #include "rest/ducklake_rest_catalog_changes.hpp"
+#include "rest/ducklake_rest_filters.hpp"
 #include "rest/ducklake_rest_serialization.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
@@ -152,7 +153,7 @@ static void SelectEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJ
 	unique_ptr<FilterPushdownInfo> filters;
 	auto filters_in = input.TryGet("filters");
 	if (!filters_in.IsNull()) {
-		filters = DuckLakeRESTSerializer::ReadFilters(*request.connection.context, filters_in);
+		filters = DuckLakeRESTFilters::Read(*request.connection.context, filters_in, table);
 	}
 	auto files_out = output.Arr("files");
 	if (input.Bool("extended", false)) {
