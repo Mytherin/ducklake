@@ -30,7 +30,16 @@ ErrorData DuckLakeTransactionManager::CommitTransaction(ClientContext &context, 
 	try {
 		ducklake_transaction.Commit();
 	} catch (std::exception &ex) {
-		return ErrorData(ex);
+		ErrorData error(ex);
+		// a failed commit is not rolled back by the caller - roll back here, the transaction can hold connections
+		// that keep the database alive
+		try {
+			ducklake_transaction.Rollback();
+		} catch (std::exception &) { // NOLINT
+		}
+		lock_guard<mutex> l(transaction_lock);
+		transactions.erase(transaction);
+		return error;
 	}
 	lock_guard<mutex> l(transaction_lock);
 	transactions.erase(transaction);
