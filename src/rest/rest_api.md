@@ -223,6 +223,7 @@ delete files and inlined deletions.
 | `snapshot_id` | The snapshot to scan.                                                                 |
 | `table_id`    | The table to scan.                                                                    |
 | `extended`    | Return the extended file list used to plan deletes and updates (see below).          |
+| `filters`     | Optional filters to prune files with, see below.                                      |
 
 Response:
 
@@ -241,6 +242,21 @@ Response:
 ```
 
 The rows of a table that are inlined in the catalog are read with `read_inlined_data`.
+
+Filters are optional: a server may ignore them, and a client applies them to the scanned rows regardless. They are
+DuckDB table filters on single columns or trees of them:
+
+```json
+{"column_filters": [{"column_id": 1, "type": {"id": "INTEGER"}, "filter": "<base64>"}],
+ "filter_trees": [{"type": "or", "children": [{"type": "column_filter", "column_filter": {...}}, ...]}],
+ "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "INTEGER"}}],
+ "runtime_filter_columns": [1]}
+```
+
+`filter` is a DuckDB `TableFilter` in the DuckDB binary serialization format, base64 encoded. `dynamic_filters` are
+filters whose value is only known while the scan runs (e.g. of a top-N): the server orders the files so that these
+filters can prune files early. For `runtime_filter_columns` the server returns the min/max statistics of the files in
+`column_min_max`, so the client can prune files at runtime.
 
 The extended file list (`"extended": true`) returns the ids of the data and delete files and the number of deleted
 rows of each file instead:
@@ -388,13 +404,6 @@ Response:
 
 These endpoints change the catalog directly, outside of a transaction.
 
-### `set_option`
-
-Sets or resets a DuckLake option (`ducklake_metadata`). Options apply immediately, outside of any transaction.
-
-Request: `{"option": {"key": "data_inlining_row_limit", "value": "10", "schema_id": null, "table_id": 1}, "reset": false}`.
-Response (for resets): `{"reset": true}` if the option was set.
-
 ### `expire_snapshots`
 
 Expires snapshots: removes them, together with the catalog entries and files that are only visible in them. The data
@@ -529,6 +538,15 @@ Expressions are SQL expressions.
 | `reset_options`      | `options`: `["<option>"]`                                                      |
 | `set_comment`        | `entry_type` (`TABLE_ENTRY` / `VIEW_ENTRY`), `comment`                         |
 | `set_column_comment` | `entry_type`, `column_name`, `comment`                                         |
+
+#### `set_option`
+
+Sets or resets a DuckLake option (`ducklake_metadata`).
+
+| Parameter | Description                                                                                       |
+|-----------|---------------------------------------------------------------------------------------------------|
+| `option`  | `{"key": "data_inlining_row_limit", "value": "10", "schema_id": null, "table_id": 1}`. `table_id` can be a placeholder. |
+| `reset`   | Reset the option instead of setting it.                                                           |
 
 #### `create_name_map`
 

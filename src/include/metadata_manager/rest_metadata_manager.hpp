@@ -39,6 +39,9 @@ public:
 	bool CanSkipSnapshotFetch(const TransactionChangeInformation &changes) const override {
 		return true;
 	}
+	bool HasPendingChanges() const override {
+		return catalog_request_count > 0;
+	}
 	void FlushChangesServerSide(DuckLakeTransaction &transaction, DuckLakeSnapshot transaction_snapshot,
 	                            const TransactionChangeInformation &transaction_changes,
 	                            const DuckLakeRetryConfig &retry_config) override;
@@ -142,6 +145,7 @@ private:
 	//! The catalog changes of the transaction, in the order in which they were made
 	RESTJsonWriter catalog_requests;
 	RESTJsonOut catalog_change_requests;
+	idx_t catalog_request_count = 0;
 	//! The data files dropped by the transaction, by table
 	map<TableIndex, vector<DuckLakeFileListEntry>> dropped_files;
 };

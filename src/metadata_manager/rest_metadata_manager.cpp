@@ -39,6 +39,7 @@ unique_ptr<RESTJsonReader> RESTMetadataManager::Post(const string &endpoint, con
 }
 
 RESTJsonOut RESTMetadataManager::AddCommitRequest(const string &path) {
+	catalog_request_count++;
 	auto request = catalog_change_requests.AppendObj();
 	request.SetStr("path", path);
 	return request.Obj("parameters");
@@ -163,6 +164,9 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 	RESTJsonWriter request;
 	request.Root().SetUInt("snapshot_id", snapshot.snapshot_id);
 	request.Root().SetUInt("table_id", table.GetTableId().index);
+	if (filter_info) {
+		DuckLakeRESTSerializer::WriteFilters(request.Root().Obj("filters"), *filter_info);
+	}
 	auto response = Post("select", request);
 	for (auto &file : response->Root().Get("files").Items()) {
 		result.push_back(DuckLakeRESTSerializer::ReadFileListEntry(file));
@@ -181,6 +185,9 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 	request.Root().SetUInt("snapshot_id", snapshot.snapshot_id);
 	request.Root().SetUInt("table_id", table.GetTableId().index);
 	request.Root().SetBool("extended", true);
+	if (filter_info) {
+		DuckLakeRESTSerializer::WriteFilters(request.Root().Obj("filters"), *filter_info);
+	}
 	auto response = Post("select", request);
 	for (auto &file : response->Root().Get("files").Items()) {
 		result.push_back(DuckLakeRESTSerializer::ReadFileListExtendedEntry(file));
@@ -494,18 +501,27 @@ vector<string> RESTMetadataManager::GetKnownFilePaths() {
 	return result;
 }
 
+static void WriteConfigOption(RESTJsonOut out, const DuckLakeConfigOption &option) {
+	out.SetStr("key", option.option.key);
+	out.SetStr("value", option.option.value);
+	if (option.schema_id.IsValid()) {
+		out.SetUInt("schema_id", option.schema_id.index);
+	}
+	if (option.table_id.IsValid()) {
+		out.SetInt("table_id", ToRequestId(option.table_id.index));
+	}
+}
+
 void RESTMetadataManager::SetConfigOption(const DuckLakeConfigOption &option) {
-	RESTJsonWriter request;
-	DuckLakeRESTSerializer::Write(request.Root().Obj("option"), option);
-	Post("set_option", request);
+	auto parameters = AddCommitRequest("set_option");
+	WriteConfigOption(parameters.Obj("option"), option);
 }
 
 bool RESTMetadataManager::ResetConfigOption(const DuckLakeConfigOption &option) {
-	RESTJsonWriter request;
-	DuckLakeRESTSerializer::Write(request.Root().Obj("option"), option);
-	request.Root().SetBool("reset", true);
-	auto response = Post("set_option", request);
-	return response->Root().Bool("reset", false);
+	auto parameters = AddCommitRequest("set_option");
+	WriteConfigOption(parameters.Obj("option"), option);
+	parameters.SetBool("reset", true);
+	return true;
 }
 
 vector<DuckLakeTableSizeInfo> RESTMetadataManager::GetTableSizes(DuckLakeSnapshot snapshot) {
@@ -914,7 +930,8 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 	auto response_root = response->Root();
 	auto snapshot_id = response_root.TryGet("snapshot_id");
 	if (snapshot_id.IsNull()) {
-		flush_transaction.ApplyServerSideCommit(flush_transaction.GetCatalogVersion());
+		// nothing was written that creates a snapshot (e.g. only options were set)
+		flush_transaction.ApplyServerSideCommit(transaction_snapshot.schema_version);
 		return;
 	}
 	flush_transaction.GetCatalog().SetCommittedSnapshotId(snapshot_id.UInt());

@@ -2145,6 +2145,15 @@ vector<DuckLakeFileListEntry> DuckLakeMetadataManager::GetFilesForTable(DuckLake
 				runtime_filter_stats_columns.push_back(col_filter.column_field_index);
 			}
 		}
+		for (auto &dynamic_filter : filter_info->dynamic_filters) {
+			dynamic_filter_columns.push_back(dynamic_filter);
+		}
+		for (auto column_field_index : filter_info->runtime_filter_columns) {
+			if (std::find(runtime_filter_stats_columns.begin(), runtime_filter_stats_columns.end(),
+			              column_field_index) == runtime_filter_stats_columns.end()) {
+				runtime_filter_stats_columns.push_back(column_field_index);
+			}
+		}
 	}
 
 	auto query = GenerateFileListQuery(table, filter_info, dynamic_filter_columns, runtime_filter_stats_columns);

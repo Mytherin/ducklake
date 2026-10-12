@@ -1109,11 +1109,20 @@ optional_ptr<BoundAtClause> DuckLakeCatalog::CatalogSnapshot() const {
 }
 
 void DuckLakeCatalog::OnDetach(ClientContext &context) {
+	auto &db_manager = DatabaseManager::Get(context);
+	if (options.rest_server) {
+		auto server = std::move(options.rest_server);
+		if (server.use_count() == 1) {
+			// the last user of a local REST server detaches the DuckLake it serves
+			auto served_catalog = server->CatalogName();
+			server.reset();
+			db_manager.DetachDatabase(context, Identifier(served_catalog), OnEntryNotFound::RETURN_NULL);
+		}
+	}
 	// the metadata database stays attached while another DuckLake uses it
 	if (!UnregisterCatalog() || !OwnsMetadataDatabase()) {
 		return;
 	}
-	auto &db_manager = DatabaseManager::Get(context);
 	db_manager.DetachDatabase(context, Identifier(MetadataDatabaseName()), OnEntryNotFound::RETURN_NULL);
 }
 

@@ -105,14 +105,19 @@ static void SelectEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJ
 	auto snapshot = request.GetSnapshot(input);
 	auto &table = GetTableEntry(request, snapshot, TableIndex(input.UInt("table_id")));
 	auto &metadata_manager = request.GetMetadataManager();
+	unique_ptr<FilterPushdownInfo> filters;
+	auto filters_in = input.TryGet("filters");
+	if (!filters_in.IsNull()) {
+		filters = DuckLakeRESTSerializer::ReadFilters(*request.connection.context, filters_in);
+	}
 	auto files_out = output.Arr("files");
 	if (input.Bool("extended", false)) {
-		for (auto &file : metadata_manager.GetExtendedFilesForTable(table, snapshot)) {
+		for (auto &file : metadata_manager.GetExtendedFilesForTable(table, snapshot, filters.get())) {
 			DuckLakeRESTSerializer::Write(files_out.AppendObj(), file);
 		}
 		return;
 	}
-	for (auto &file : metadata_manager.GetFilesForTable(table, snapshot)) {
+	for (auto &file : metadata_manager.GetFilesForTable(table, snapshot, filters.get())) {
 		DuckLakeRESTSerializer::Write(files_out.AppendObj(), file);
 	}
 }
@@ -352,21 +357,6 @@ static void FilesForCompactionEndpoint(DuckLakeRESTRequest &request, RESTJsonIn 
 	}
 }
 
-static void SetOptionEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
-	auto option = DuckLakeRESTSerializer::ReadConfigOption(input.Get("option"));
-	auto &metadata_manager = request.GetMetadataManager();
-	if (input.Bool("reset", false)) {
-		auto reset = metadata_manager.ResetConfigOption(option);
-		if (reset) {
-			request.catalog->ResetConfigOption(option);
-		}
-		output.SetBool("reset", reset);
-		return;
-	}
-	metadata_manager.SetConfigOption(option);
-	request.catalog->SetConfigOption(option);
-}
-
 static void TableSizesEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
 	auto tables = output.Arr("tables");
 	for (auto &table : request.GetMetadataManager().GetTableSizes(request.GetSnapshot(input))) {
@@ -432,6 +422,7 @@ private:
 	void FlushInlinedData(RESTJsonIn parameters);
 	void Compact(RESTJsonIn parameters);
 	void CreateNameMap(RESTJsonIn parameters);
+	void SetOption(RESTJsonIn parameters);
 	void RemapNameMap(DuckLakeDataFile &file);
 
 	DuckLakeSchemaEntry &GetSchema(RESTJsonIn schema_path);
@@ -679,6 +670,26 @@ void DuckLakeRESTCommit::CreateNameMap(RESTJsonIn parameters) {
 	name_map_ids[client_id] = transaction.AddNameMap(DuckLakeNameMap::FromColumnMapping(std::move(mapping)));
 }
 
+void DuckLakeRESTCommit::SetOption(RESTJsonIn parameters) {
+	auto option_in = parameters.Get("option");
+	DuckLakeConfigOption option;
+	option.option.key = option_in.Str("key");
+	option.option.value = option_in.Str("value", string());
+	auto schema_id = option_in.TryGet("schema_id");
+	if (!schema_id.IsNull()) {
+		option.schema_id = SchemaIndex(schema_id.UInt());
+	}
+	auto table_id = option_in.TryGet("table_id");
+	if (!table_id.IsNull()) {
+		option.table_id = GetTable(GetTableId(table_id)).GetTableId();
+	}
+	if (parameters.Bool("reset", false)) {
+		transaction.ResetConfigOption(option);
+	} else {
+		transaction.SetConfigOption(option);
+	}
+}
+
 void DuckLakeRESTCommit::RemapNameMap(DuckLakeDataFile &file) {
 	if (!file.mapping_id.IsValid()) {
 		return;
@@ -787,6 +798,8 @@ void DuckLakeRESTCommit::ApplyRequest(const string &path, RESTJsonIn parameters)
 		Compact(parameters);
 	} else if (path == "create_name_map") {
 		CreateNameMap(parameters);
+	} else if (path == "set_option") {
+		SetOption(parameters);
 	} else {
 		throw NotImplementedException("Unsupported request \"%s\" in commit_transaction", path);
 	}
@@ -842,7 +855,6 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTServer::GetEndpoints()
 	    {"remove_cleaned_up_files", RemoveCleanedUpFilesEndpoint},
 	    {"known_files", KnownFilesEndpoint},
 	    {"files_for_compaction", FilesForCompactionEndpoint},
-	    {"set_option", SetOptionEndpoint},
 	    {"table_sizes", TableSizesEndpoint},
 	    {"column_mappings", ColumnMappingsEndpoint},
 	    {"table_changes", TableChangesEndpoint},

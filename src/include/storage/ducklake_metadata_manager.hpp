@@ -156,11 +156,21 @@ struct DuckLakeFilterTree {
 	}
 };
 
+struct DuckLakeFileListDynamicFilter {
+	idx_t column_field_index;
+	ExpressionType comparison_type;
+	LogicalType column_type;
+};
+
 struct FilterPushdownInfo {
 	unordered_map<idx_t, ColumnFilterInfo> column_filters;
 	//! Filter trees, which must hold alongside the single-column filters above. Usually cross-column -
 	//! a single-column tree is only kept when it expresses something the per-column filters cannot.
 	vector<DuckLakeFilterTree> filter_trees;
+	//! Columns whose file min/max statistics are returned with the files, for filters evaluated at runtime
+	vector<idx_t> runtime_filter_columns;
+	//! Dynamic filters whose state is not available, the files are ordered to make them prune early
+	vector<DuckLakeFileListDynamicFilter> dynamic_filters;
 
 	FilterPushdownInfo() = default;
 
@@ -176,14 +186,10 @@ struct FilterPushdownInfo {
 		for (const auto &tree : filter_trees) {
 			result->filter_trees.push_back(tree.Copy());
 		}
+		result->runtime_filter_columns = runtime_filter_columns;
+		result->dynamic_filters = dynamic_filters;
 		return result;
 	}
-};
-
-struct DuckLakeFileListDynamicFilter {
-	idx_t column_field_index;
-	ExpressionType comparison_type;
-	LogicalType column_type;
 };
 
 //! The DuckLake metadata manger is the communication layer between the system and the metadata catalog
@@ -212,6 +218,10 @@ public:
 	}
 	//! Whether the metadata is served remotely (e.g. over REST) rather than stored in an attached database
 	virtual bool IsRemote() const {
+		return false;
+	}
+	//! Whether the backend has changes of the transaction that are only written when the transaction commits
+	virtual bool HasPendingChanges() const {
 		return false;
 	}
 	//! Invoked when the transaction creates a schema or table, for backends that replay catalog changes on commit

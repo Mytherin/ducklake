@@ -228,7 +228,7 @@ shared_ptr<DuckLakeRESTServer> DuckLakeRESTServerRegistry::GetLocalServer(const 
 			return server;
 		}
 	}
-	auto catalog_name = "__ducklake_rest_" + to_string(local_servers.size());
+	auto catalog_name = "__ducklake_rest_" + to_string(local_server_count++);
 	Connection con(*db);
 	auto query =
 	    StringUtil::Format("ATTACH %s AS %s (HIDDEN true", SQLString("ducklake:" + path), SQLIdentifier(catalog_name));

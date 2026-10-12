@@ -59,6 +59,9 @@ public:
 	const string &ListenURI() const {
 		return listen_uri;
 	}
+	const string &CatalogName() const {
+		return catalog_name;
+	}
 
 	//! Handles a request for an endpoint, returns the HTTP status code
 	int32_t HandleRequest(const string &endpoint, const string &body, string &response);
@@ -91,6 +94,7 @@ private:
 	mutex lock;
 	unordered_map<string, unique_ptr<DuckLakeRESTServer>> servers;
 	unordered_map<string, weak_ptr<DuckLakeRESTServer>> local_servers;
+	idx_t local_server_count = 0;
 };
 
 struct DuckLakeRESTServeFunction : public TableFunction {
