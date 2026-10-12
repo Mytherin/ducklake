@@ -1481,9 +1481,11 @@ void DuckLakeTransaction::RunCommitLoop(DuckLakeSnapshot transaction_snapshot,
 	};
 	context.set_catalog_version = [&](idx_t schema_version) {
 		catalog_version = schema_version;
+		committed_snapshot.schema_version = schema_version;
 	};
 	context.set_committed_snapshot_id = [&](idx_t snapshot_id) {
 		ducklake_catalog.SetCommittedSnapshotId(snapshot_id);
+		committed_snapshot.snapshot_id = snapshot_id;
 	};
 	context.set_table_options = [&](const vector<DuckLakeConfigOption> &options) {
 		for (auto &option : options) {
@@ -1606,6 +1608,15 @@ DuckLakeSnapshot DuckLakeTransaction::GetSnapshot() {
 		snapshot = metadata_manager->GetSnapshot();
 	}
 	return *snapshot;
+}
+
+void DuckLakeTransaction::SetSnapshot(DuckLakeSnapshot new_snapshot) {
+	lock_guard<mutex> guard(snapshot_lock);
+	snapshot = make_uniq<DuckLakeSnapshot>(new_snapshot);
+}
+
+DuckLakeSnapshot DuckLakeTransaction::GetCommittedSnapshot() const {
+	return committed_snapshot;
 }
 
 DuckLakeSnapshot DuckLakeTransaction::GetSnapshot(optional_ptr<BoundAtClause> at_clause, SnapshotBound bound) {
@@ -2157,6 +2168,14 @@ optional_ptr<CatalogEntry> DuckLakeTransaction::GetLocalEntryById(TableIndex tab
 		auto entry = schema_entry.second->GetEntryById(table_id);
 		if (entry) {
 			return entry;
+		}
+		// entries created by the transaction are not in the id map
+		for (auto &local_entry : schema_entry.second->GetEntries()) {
+			auto &catalog_entry = *local_entry.second;
+			if (catalog_entry.type == CatalogType::TABLE_ENTRY &&
+			    catalog_entry.Cast<DuckLakeTableEntry>().GetTableId() == table_id) {
+				return catalog_entry;
+			}
 		}
 	}
 	return nullptr;

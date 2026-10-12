@@ -40,6 +40,7 @@ struct TransactionChangeInformation;
 class BoundAtClause;
 class SQLStatement;
 class FileSystem;
+struct CreateTableInfo;
 
 struct SnapshotAndStats;
 struct FlushedInlinedTableInfo;
@@ -206,6 +207,16 @@ public:
 	virtual bool CommitsEachStatement() const {
 		return false;
 	}
+	//! Whether the metadata is served remotely (e.g. over REST) rather than stored in an attached database
+	virtual bool IsRemote() const {
+		return false;
+	}
+	//! Invoked when the transaction creates a schema or table, for backends that replay catalog changes on commit
+	virtual void OnCreateSchema(DuckLakeSchemaEntry &schema) {
+	}
+	virtual void OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info, TableIndex table_id,
+	                           const string &table_uuid, const string &table_data_path) {
+	}
 	//! Probe the metadata server for optional capabilities, for now we only check for server-side retries
 	virtual void ProbeServerCapabilities() {
 	}
@@ -336,9 +347,9 @@ public:
 	                                                                  DuckLakeFileSizeOptions options);
 	virtual idx_t GetBeginSnapshotForTable(TableIndex table_id);
 	virtual idx_t GetBeginSnapshotForSchemaVersion(TableIndex table_id, idx_t schema_version);
-	DuckLakeTableSchemaVersions GetTableSchemaVersions(TableIndex table_id, DuckLakeSnapshot snapshot);
+	virtual DuckLakeTableSchemaVersions GetTableSchemaVersions(TableIndex table_id, DuckLakeSnapshot snapshot);
 	virtual idx_t GetNetDataFileRowCount(TableIndex table_id, DuckLakeSnapshot snapshot);
-	optional_idx GetNetDataFileRowCountForStats(TableIndex table_id, DuckLakeSnapshot snapshot);
+	virtual optional_idx GetNetDataFileRowCountForStats(TableIndex table_id, DuckLakeSnapshot snapshot);
 	virtual idx_t GetNetInlinedRowCount(const string &inlined_table_name, DuckLakeSnapshot snapshot);
 	//! SQL builders for stats-refresh metadata lookups; caller substitutes placeholders + executes.
 	//! With require_exact, the count is NULL if any visible file is only partially visible to the snapshot.
@@ -352,7 +363,7 @@ public:
 	static string GetInlinedTableColumnsSql(optional_idx table_id = optional_idx());
 	//! The inserts of the given rows, in batches
 	static string InsertValuesSql(const string &table_name, const vector<string> &values);
-	unordered_set<string> GetInlinedTableNames(TableIndex table_id);
+	virtual unordered_set<string> GetInlinedTableNames(TableIndex table_id);
 	virtual vector<DuckLakeFileForCleanup> GetOldFilesForCleanup(const string &filter);
 	virtual vector<DuckLakeFileForCleanup> GetOrphanFilesForCleanup(const string &filter);
 	virtual vector<DuckLakeFileForCleanup> GetFilesForCleanup(const string &filter, CleanupType type);

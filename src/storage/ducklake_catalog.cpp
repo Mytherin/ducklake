@@ -407,6 +407,7 @@ optional_ptr<CatalogEntry> DuckLakeCatalog::CreateSchema(CatalogTransaction tran
 	                                                   std::move(schema_data_path), parent);
 	auto result = schema_entry.get();
 	duck_transaction.CreateEntry(std::move(schema_entry));
+	duck_transaction.GetMetadataManager().OnCreateSchema(*result);
 	return result;
 }
 

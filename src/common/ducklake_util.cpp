@@ -84,6 +84,15 @@ ParsedCatalogEntry DuckLakeUtil::ParseCatalogEntry(const string &input) {
 	return result_data;
 }
 
+string DuckLakeUtil::UnquoteSQLString(const string &str) {
+	idx_t pos = 0;
+	string result;
+	if (StringUtil::TryParseQuotedString(str, pos, result, '\'') && pos == str.size()) {
+		return result;
+	}
+	return str;
+}
+
 string DuckLakeUtil::StatsToString(const string &text) {
 	if (text.find('\0') != string::npos) {
 		return "NULL";

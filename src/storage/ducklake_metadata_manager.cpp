@@ -18,6 +18,7 @@
 #include "duckdb/main/appender.hpp"
 #include "metadata_manager/postgres_metadata_manager.hpp"
 #include "metadata_manager/quack_metadata_manager.hpp"
+#include "metadata_manager/rest_metadata_manager.hpp"
 #include "metadata_manager/sqlite_metadata_manager.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
@@ -48,9 +49,13 @@ DuckLakeMetadataManager::~DuckLakeMetadataManager() {
 }
 
 unordered_map<string /* name */, DuckLakeMetadataManager::create_t> DuckLakeMetadataManager::metadata_managers = {
-    {"postgres", PostgresMetadataManager::Create}, {"postgres_scanner", PostgresMetadataManager::Create},
-    {"quack", QuackMetadataManager::Create},       {"quack_scanner", QuackMetadataManager::Create},
-    {"sqlite", SQLiteMetadataManager::Create},     {"sqlite_scanner", SQLiteMetadataManager::Create}};
+    {"postgres", PostgresMetadataManager::Create},
+    {"postgres_scanner", PostgresMetadataManager::Create},
+    {"quack", QuackMetadataManager::Create},
+    {"quack_scanner", QuackMetadataManager::Create},
+    {"rest", RESTMetadataManager::Create},
+    {"sqlite", SQLiteMetadataManager::Create},
+    {"sqlite_scanner", SQLiteMetadataManager::Create}};
 
 mutex DuckLakeMetadataManager::metadata_managers_lock;
 
@@ -3952,15 +3957,6 @@ static void AppendStringOrNull(Appender &appender, bool is_valid, const string &
 	}
 }
 
-static string UnquoteSQLString(const string &str) {
-	idx_t pos = 0;
-	string result;
-	if (StringUtil::TryParseQuotedString(str, pos, result, '\'') && pos == str.size()) {
-		return result;
-	}
-	return str;
-}
-
 static void AppendFileStats(Appender &appender, const DuckLakeColumnStats &stats) {
 	appender.Append<int64_t>(static_cast<int64_t>(stats.column_size_bytes));
 	if (stats.has_null_count && stats.has_num_values && stats.null_count <= stats.num_values) {
@@ -3979,7 +3975,7 @@ static void AppendFileStats(Appender &appender, const DuckLakeColumnStats &stats
 	}
 	string extra_stats;
 	bool has_extra_stats = stats.extra_stats && stats.extra_stats->TrySerialize(extra_stats);
-	AppendStringOrNull(appender, has_extra_stats, UnquoteSQLString(extra_stats));
+	AppendStringOrNull(appender, has_extra_stats, DuckLakeUtil::UnquoteSQLString(extra_stats));
 }
 
 // Optimized version using DuckDB Appender API for much faster inserts

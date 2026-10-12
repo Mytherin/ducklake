@@ -199,6 +199,10 @@ public:
 	void PinSchemaCacheEntry(shared_ptr<DuckLakeSchemaCacheEntry> entry);
 
 	DuckLakeSnapshot GetSnapshot();
+	//! Pins the snapshot that the transaction operates on
+	void SetSnapshot(DuckLakeSnapshot new_snapshot);
+	//! The snapshot written by the commit of this transaction, invalid if it did not write one
+	DuckLakeSnapshot GetCommittedSnapshot() const;
 	DuckLakeSnapshot GetSnapshot(optional_ptr<BoundAtClause> at_clause,
 	                             SnapshotBound bound = SnapshotBound::UPPER_BOUND);
 
@@ -371,6 +375,8 @@ private:
 	//! The snapshot of the transaction (latest snapshot in DuckLake)
 	mutex snapshot_lock;
 	unique_ptr<DuckLakeSnapshot> snapshot;
+	//! The snapshot written by the commit of this transaction
+	DuckLakeSnapshot committed_snapshot;
 	idx_t local_catalog_id;
 	//! Set when this transaction inlines into a table that does not yet have an inlined-data table
 	atomic<bool> requires_new_inlined_table {false};

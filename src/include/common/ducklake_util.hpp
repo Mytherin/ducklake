@@ -47,6 +47,8 @@ public:
 	static string ToQuotedList(const vector<string> &input, char list_separator = ',');
 	static vector<string> ParseQuotedList(const string &input, char list_separator = ',');
 	static string StatsToString(const string &text);
+	//! Strips the quotes of a SQL string literal, returns the input if it is not one
+	static string UnquoteSQLString(const string &str);
 	static string ValueToSQL(DuckLakeMetadataManager &metadata_manager, ClientContext &context, const Value &val);
 
 	static ParsedCatalogEntry ParseCatalogEntry(const string &input);

@@ -61,6 +61,14 @@ string DuckLakeInitializer::GetAttachOptions() {
 
 void DuckLakeInitializer::Initialize() {
 	auto &transaction = DuckLakeTransaction::Get(context, catalog);
+	if (transaction.GetMetadataManager().IsRemote()) {
+		// the metadata is served remotely - there is no metadata database to attach or migrate
+		LoadExistingDuckLake(transaction, true);
+		if (options.at_clause) {
+			transaction.GetSnapshot();
+		}
+		return;
+	}
 	// attach the metadata database
 	AttachMetadata(transaction);
 	// explicitly load all secrets - work-around to secret initialization bug
@@ -362,6 +370,10 @@ void DuckLakeInitializer::SetVersionedMetadataManager(DuckLakeTransaction &trans
 		return;
 	}
 	auto &current = transaction.GetMetadataManager();
+	if (current.IsRemote()) {
+		// the server takes care of the metadata format
+		return;
+	}
 	unique_ptr<DuckLakeMetadataManager> new_manager;
 	if (version == DuckLakeVersion::V1_1_DEV_1) {
 		if (dynamic_cast<QuackMetadataManager *>(&current)) {
