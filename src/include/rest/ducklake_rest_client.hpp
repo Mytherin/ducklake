@@ -18,7 +18,7 @@ class Client;
 
 namespace duckdb {
 
-//! Sends requests to a DuckLake REST server
+//! Sends requests to a DuckLake REST server, the connections to the server are pooled
 class DuckLakeRESTClient {
 public:
 	explicit DuckLakeRESTClient(string base_url);
@@ -32,9 +32,13 @@ public:
 	}
 
 private:
+	unique_ptr<duckdb_httplib::Client> GetConnection();
+	void ReturnConnection(unique_ptr<duckdb_httplib::Client> connection);
+
+private:
 	string base_url;
 	mutex lock;
-	unique_ptr<duckdb_httplib::Client> client;
+	vector<unique_ptr<duckdb_httplib::Client>> idle_connections;
 };
 
 } // namespace duckdb

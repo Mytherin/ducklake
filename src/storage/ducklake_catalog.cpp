@@ -1,4 +1,5 @@
 #include "storage/ducklake_catalog.hpp"
+#include "rest/ducklake_rest_client.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -330,6 +331,18 @@ DuckLakeCatalog::DuckLakeCatalog(AttachedDatabase &db_p, DuckLakeOptions options
 
 DuckLakeCatalog::~DuckLakeCatalog() {
 	UnregisterCatalog();
+}
+
+DuckLakeRESTClient &DuckLakeCatalog::GetRESTClient() {
+	lock_guard<mutex> guard(rest_client_lock);
+	if (!rest_client) {
+		auto url = MetadataPath();
+		if (StringUtil::StartsWith(url, "rest:")) {
+			url = url.substr(5);
+		}
+		rest_client = make_shared_ptr<DuckLakeRESTClient>(std::move(url));
+	}
+	return *rest_client;
 }
 
 void DuckLakeCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {

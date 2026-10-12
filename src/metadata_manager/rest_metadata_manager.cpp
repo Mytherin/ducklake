@@ -19,16 +19,8 @@
 
 namespace duckdb {
 
-static string GetBaseURL(DuckLakeTransaction &transaction) {
-	auto path = transaction.GetCatalog().MetadataPath();
-	if (StringUtil::StartsWith(path, "rest:")) {
-		path = path.substr(5);
-	}
-	return path;
-}
-
 RESTMetadataManager::RESTMetadataManager(DuckLakeTransaction &transaction)
-    : DuckLakeMetadataManager(transaction), client(GetBaseURL(transaction)),
+    : DuckLakeMetadataManager(transaction), client(transaction.GetCatalog().GetRESTClient()),
       commit_requests(commit_request.Root().Arr("requests")) {
 }
 

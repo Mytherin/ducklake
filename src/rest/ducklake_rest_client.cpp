@@ -9,23 +9,41 @@ namespace duckdb {
 
 DuckLakeRESTClient::DuckLakeRESTClient(string base_url_p) : base_url(std::move(base_url_p)) {
 	StringUtil::RTrim(base_url, "/");
-	client = make_uniq<duckdb_httplib::Client>(base_url);
-	client->set_keep_alive(true);
-	client->set_read_timeout(300, 0);
-	client->set_write_timeout(300, 0);
 }
 
 DuckLakeRESTClient::~DuckLakeRESTClient() {
 }
 
+unique_ptr<duckdb_httplib::Client> DuckLakeRESTClient::GetConnection() {
+	{
+		lock_guard<mutex> guard(lock);
+		if (!idle_connections.empty()) {
+			auto connection = std::move(idle_connections.back());
+			idle_connections.pop_back();
+			return connection;
+		}
+	}
+	auto connection = make_uniq<duckdb_httplib::Client>(base_url);
+	connection->set_keep_alive(true);
+	connection->set_read_timeout(300, 0);
+	connection->set_write_timeout(300, 0);
+	return connection;
+}
+
+void DuckLakeRESTClient::ReturnConnection(unique_ptr<duckdb_httplib::Client> connection) {
+	lock_guard<mutex> guard(lock);
+	idle_connections.push_back(std::move(connection));
+}
+
 unique_ptr<RESTJsonReader> DuckLakeRESTClient::Post(const string &endpoint, const RESTJsonWriter &request) {
 	auto body = request.ToString();
-	lock_guard<mutex> guard(lock);
-	auto result = client->Post("/v1/" + endpoint, body, "application/json");
+	auto connection = GetConnection();
+	auto result = connection->Post("/v1/" + endpoint, body, "application/json");
 	if (!result) {
 		throw IOException("Failed to send DuckLake REST request \"%s\" to %s: %s", endpoint, base_url,
 		                  duckdb_httplib::to_string(result.error()));
 	}
+	ReturnConnection(std::move(connection));
 	auto response = make_uniq<RESTJsonReader>(result->body);
 	if (result->status != 200) {
 		auto error = response->Root().TryGet("error");

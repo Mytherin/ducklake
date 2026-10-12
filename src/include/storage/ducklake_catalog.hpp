@@ -29,6 +29,7 @@
 #include <mutex>
 
 namespace duckdb {
+class DuckLakeRESTClient;
 struct CreateMacroInfo;
 struct DuckLakeMacroInfo;
 struct DuckLakeGlobalStatsInfo;
@@ -348,6 +349,9 @@ public:
 		return metadata_query_lock;
 	}
 
+	//! The client of the REST server that serves the metadata, for REST catalogs
+	DuckLakeRESTClient &GetRESTClient();
+
 	shared_ptr<const DuckLakeNameMap> TryGetMappingById(DuckLakeTransaction &transaction, MappingIndex mapping_id);
 	MappingIndex TryGetCompatibleNameMap(DuckLakeTransaction &transaction, const DuckLakeNameMap &name_map);
 	idx_t GetBeginSnapshotForTable(TableIndex table_id, DuckLakeTransaction &transaction);
@@ -422,6 +426,8 @@ private:
 	atomic<idx_t> last_uncommitted_catalog_version;
 	//! The metadata server type
 	string metadata_type;
+	mutex rest_client_lock;
+	shared_ptr<DuckLakeRESTClient> rest_client;
 	//! The resolved DuckLake spec version of the attached catalog
 	DuckLakeVersion ducklake_version = DuckLakeVersion::V1_0;
 	//! A per-instance identifier used to scope ObjectCache keys.

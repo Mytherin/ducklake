@@ -102,7 +102,7 @@ private:
 	                         const string &table_name);
 
 private:
-	DuckLakeRESTClient client;
+	DuckLakeRESTClient &client;
 	//! The requests that make up the commit of the transaction
 	RESTJsonWriter commit_request;
 	RESTJsonOut commit_requests;
