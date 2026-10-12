@@ -57,6 +57,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	DuckLakeRESTStopFunction rest_stop;
 	loader.RegisterFunction(rest_stop);
 
+	DuckLakeRESTRequestFunction rest_request;
+	loader.RegisterFunction(rest_request);
+
 	DuckLakeSnapshotsFunction snapshots;
 	loader.RegisterFunction(snapshots);
 

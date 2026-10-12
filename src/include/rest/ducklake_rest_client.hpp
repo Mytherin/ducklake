@@ -27,6 +27,8 @@ public:
 
 	//! Sends the request to an endpoint, rethrows the error reported by the server
 	unique_ptr<RESTJsonReader> Post(const string &endpoint, const RESTJsonWriter &request);
+	//! Sends a request body to an endpoint, returns the status code and the body of the response
+	int32_t PostRaw(const string &endpoint, const string &body, string &response);
 
 	const string &BaseURL() const {
 		return base_url;

@@ -2244,6 +2244,7 @@ void DuckLakeTransactionState::Commit(DuckLakeSnapshot transaction_snapshot,
 			flushed_inlined = !flushed_inlined_tables.empty();
 			context.flush_cache_if_pending();
 			context.commit_connection();
+			committed_tables = commit_state.committed_tables;
 			break;
 		} catch (std::exception &ex) {
 			ErrorData error(ex);

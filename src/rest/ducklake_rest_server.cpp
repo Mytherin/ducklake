@@ -12,6 +12,8 @@
 #include "storage/ducklake_catalog.hpp"
 #include "storage/ducklake_transaction.hpp"
 
+#include "rest/ducklake_rest_client.hpp"
+
 #include "httplib.hpp"
 
 namespace duckdb {
@@ -89,6 +91,12 @@ int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &
 	try {
 		auto &endpoints = GetEndpoints();
 		auto entry = endpoints.find(endpoint);
+		string request_body = body.empty() ? "{}" : body;
+		if (entry == endpoints.end() && IsCommitRequest(endpoint)) {
+			// a request of a commit on its own commits a transaction with only this request
+			request_body = "{\"requests\": [{\"path\": \"" + endpoint + "\", \"parameters\": " + request_body + "}]}";
+			entry = endpoints.find("commit_transaction");
+		}
 		if (entry == endpoints.end()) {
 			throw InvalidInputException("Unknown DuckLake REST endpoint \"%s\"", endpoint);
 		}
@@ -96,7 +104,7 @@ int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &
 		if (!database) {
 			throw ConnectionException("The database served by the DuckLake REST server was closed");
 		}
-		RESTJsonReader input(body.empty() ? "{}" : body);
+		RESTJsonReader input(request_body);
 		RESTJsonWriter output;
 		DuckLakeRESTRequest request(*database, catalog_name);
 		try {
@@ -344,6 +352,26 @@ static unique_ptr<FunctionData> DuckLakeRESTStopBind(ClientContext &context, Tab
 	return std::move(result);
 }
 
+static unique_ptr<FunctionData> DuckLakeRESTRequestBind(ClientContext &context, TableFunctionBindInput &input,
+                                                        vector<LogicalType> &return_types, vector<Identifier> &names) {
+	for (auto &value : input.inputs) {
+		if (value.IsNull()) {
+			throw BinderException("ducklake_rest_request: the arguments cannot be NULL");
+		}
+	}
+	auto token = GetNamedParameter(input, "token");
+	DuckLakeRESTClient client(StringValue::Get(input.inputs[0]), token.IsNull() ? string() : StringValue::Get(token));
+	string response;
+	auto status = client.PostRaw(StringValue::Get(input.inputs[1]), StringValue::Get(input.inputs[2]), response);
+	names.emplace_back("status");
+	return_types.emplace_back(LogicalType::INTEGER);
+	names.emplace_back("response");
+	return_types.emplace_back(LogicalType::JSON());
+	auto result = make_uniq<MetadataBindData>();
+	result->rows.push_back({Value::INTEGER(status), Value(response)});
+	return std::move(result);
+}
+
 static void DuckLakeRESTExecute(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
 	auto &data = data_p.bind_data->Cast<MetadataBindData>();
 	auto &state = data_p.global_state->Cast<DuckLakeRunOnceState>();
@@ -360,6 +388,17 @@ DuckLakeRESTServeFunction::DuckLakeRESTServeFunction()
 		    .Add("wait", LogicalType::BOOLEAN)
 		    .Add("token", LogicalType::VARCHAR);
 	});
+}
+
+DuckLakeRESTRequestFunction::DuckLakeRESTRequestFunction()
+    : TableFunction("ducklake_rest_request",
+                    FunctionSignature()
+                        .AddPositionalOnly("listen_uri", LogicalType::VARCHAR)
+                        .AddPositionalOnly("endpoint", LogicalType::VARCHAR)
+                        .AddPositionalOnly("body", LogicalType::VARCHAR),
+                    DuckLakeRESTExecute, DuckLakeRESTRequestBind, DuckLakeRunOnceState::Init) {
+	GetSignature().WithTypedKwargs("options",
+	                               [&](TypedKwargs &options) { options.Add("token", LogicalType::VARCHAR); });
 }
 
 DuckLakeRESTStopFunction::DuckLakeRESTStopFunction()

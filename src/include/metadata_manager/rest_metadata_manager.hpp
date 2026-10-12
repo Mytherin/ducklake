@@ -150,6 +150,7 @@ private:
 	idx_t catalog_request_count = 0;
 	//! The parameters of the last catalog change, which OnEntryChanged completes
 	RESTJsonOut last_catalog_change;
+	mutex cache_lock;
 	//! The catalog of a snapshot that the transaction loaded, which came along with the snapshot
 	unique_ptr<DuckLakeCatalogInfo> prefetched_catalog;
 	idx_t prefetched_metadata_version = DConstants::INVALID_INDEX;

@@ -32,6 +32,13 @@ SELECT listen_uri FROM ducklake_rest_serve('ducklake:metadata.ducklake', port :=
 The function returns the `listen_uri` of the server. Starting a server on a port that is in use by another server of
 the same process replaces that server. `ducklake_rest_stop(listen_uri)` stops a server.
 
+`ducklake_rest_request(listen_uri, endpoint, body)` sends a request to a server and returns the status code and the
+JSON response, which is useful to explore the API:
+
+```sql
+SELECT response FROM ducklake_rest_request('http://localhost:8181', 'snapshot_data', '{}');
+```
+
 ### Connecting to a server
 
 ```sql
@@ -468,8 +475,17 @@ table, view, ...) created in the transaction, `-2` the second one, etc.
 | `requires_new_inlined_table` | Whether the commit inlines rows into a table that has no inlined data table yet.          |
 | `requests`                   | The changes: `[{"path": "<request>", "parameters": {...}}]`.                               |
 
-Response: the committed snapshot, `{"snapshot_id": 4, "schema_version": 2}`. Both are `null` if the requests did not
-change anything.
+Response: the committed snapshot and the ids of the tables the transaction created:
+
+```json
+{"snapshot_id": 4, "schema_version": 2, "table_ids": [{"placeholder": -1, "table_id": 7}]}
+```
+
+`snapshot_id` and `schema_version` are `null` if the requests did not create a snapshot (e.g. if they only set
+options).
+
+Every request of a commit can also be sent on its own to the endpoint of its name (e.g. `POST /v1/create_table`), which
+commits a transaction with only that request, based on the latest snapshot.
 
 If the transaction conflicts with a transaction that committed after `snapshot_id` the server retries the commit
 when that is safe; otherwise it fails with a `409`.

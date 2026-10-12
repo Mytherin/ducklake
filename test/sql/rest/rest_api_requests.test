@@ -1,0 +1,76 @@
+# name: test/sql/rest/rest_api_requests.test
+# description: Send requests to the DuckLake REST API directly
+# group: [rest]
+
+require json
+
+include test/template/rest_setup.test_template
+
+# a commit request can be sent on its own
+query I
+SELECT response->>'$.table_ids[0].table_id' FROM ducklake_rest_request('{rest_server}', 'create_table',
+'{"schema_path": ["main"], "table_name": "t", "columns": [{"column_name": "i", "column_type": "INTEGER"}, {"column_name": "s", "column_type": "VARCHAR"}]}')
+----
+1
+
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'insert_rows',
+'{"table_id": 1, "column_types": [{"id": "INTEGER"}, {"id": "VARCHAR"}], "rows": [[1, "one"], [2, null]], "column_stats": []}')
+----
+200
+
+# several requests in one transaction, the created table is referred to with a placeholder
+query II
+SELECT response->>'$.snapshot_id', response->>'$.table_ids[0].placeholder' FROM ducklake_rest_request('{rest_server}', 'commit_transaction',
+'{"requests": [
+  {"path": "create_table", "parameters": {"table_id": -1, "schema_path": ["main"], "table_name": "t2", "columns": [{"column_name": "j", "column_type": "BIGINT", "default": "42"}]}},
+  {"path": "insert_rows", "parameters": {"table_id": -1, "column_types": [{"id": "BIGINT"}], "rows": [[100]], "column_stats": []}}
+]}')
+----
+3	-1
+
+statement ok
+ATTACH 'ducklake:rest:{rest_server}' AS dl
+
+query II
+FROM dl.t ORDER BY i
+----
+1	one
+2	NULL
+
+query I
+FROM dl.t2
+----
+100
+
+query I
+SELECT response->>'$.snapshot.snapshot_id' FROM ducklake_rest_request('{rest_server}', 'snapshot_data', '{}')
+----
+3
+
+query I
+SELECT json_array_length(response->'$.rows') FROM ducklake_rest_request('{rest_server}', 'ducklake_table', '{"table_name": "ducklake_snapshot"}')
+----
+4
+
+# errors
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'unknown_endpoint', '{}')
+----
+400	Invalid Input
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'select', '{"table_id": 1000}')
+----
+404	Catalog
+
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'create_table',
+'{"schema_path": ["main"], "table_name": "t", "columns": [{"column_name": "i", "column_type": "INTEGER"}]}')
+----
+404
+
+statement ok
+DETACH dl
+
+include test/template/rest_teardown.test_template

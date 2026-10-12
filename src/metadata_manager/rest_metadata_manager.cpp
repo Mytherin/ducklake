@@ -127,6 +127,7 @@ unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot() {
 	auto response = Post("snapshot_data", request);
 	auto response_root = response->Root();
 	auto snapshot = DuckLakeRESTSerializer::ReadSnapshot(response_root.Get("snapshot"));
+	lock_guard<mutex> guard(cache_lock);
 	auto catalog = response_root.TryGet("catalog");
 	if (!catalog.IsNull()) {
 		prefetched_catalog = make_uniq<DuckLakeCatalogInfo>(DuckLakeRESTSerializer::ReadCatalogInfo(catalog));
@@ -160,12 +161,15 @@ unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot(BoundAtClause &at_
 
 DuckLakeCatalogInfo RESTMetadataManager::GetCatalogForSnapshot(DuckLakeSnapshot snapshot) {
 	auto &client = transaction.GetCatalog().GetRESTClient();
-	if (prefetched_catalog && prefetched_metadata_version == snapshot.schema_version) {
-		// the catalog only changes with the schema version
-		auto result = std::move(*prefetched_catalog);
-		prefetched_catalog.reset();
-		client.loaded_metadata_version = snapshot.schema_version;
-		return result;
+	{
+		lock_guard<mutex> guard(cache_lock);
+		if (prefetched_catalog && prefetched_metadata_version == snapshot.schema_version) {
+			// the catalog only changes with the schema version
+			auto result = std::move(*prefetched_catalog);
+			prefetched_catalog.reset();
+			client.loaded_metadata_version = snapshot.schema_version;
+			return result;
+		}
 	}
 	auto response = GetSnapshotData(snapshot, true, false);
 	client.loaded_metadata_version = snapshot.schema_version;
@@ -174,16 +178,20 @@ DuckLakeCatalogInfo RESTMetadataManager::GetCatalogForSnapshot(DuckLakeSnapshot 
 
 vector<DuckLakeGlobalStatsInfo> RESTMetadataManager::GetGlobalTableStats(DuckLakeSnapshot snapshot) {
 	// table statistics are not versioned, a transaction keeps the statistics it read first
-	auto entry = table_stats.find(snapshot.snapshot_id);
-	if (entry != table_stats.end()) {
-		return entry->second;
+	{
+		lock_guard<mutex> guard(cache_lock);
+		auto entry = table_stats.find(snapshot.snapshot_id);
+		if (entry != table_stats.end()) {
+			return entry->second;
+		}
 	}
 	auto response = GetSnapshotData(snapshot, false, true);
 	vector<DuckLakeGlobalStatsInfo> result;
 	for (auto &stats : response->Root().Get("stats").Items()) {
 		result.push_back(DuckLakeRESTSerializer::ReadGlobalStatsInfo(stats));
 	}
-	table_stats[snapshot.snapshot_id] = result;
+	lock_guard<mutex> guard(cache_lock);
+	table_stats.emplace(snapshot.snapshot_id, result);
 	transaction.GetCatalog().GetRESTClient().loaded_data_version = snapshot.next_file_id;
 	return result;
 }

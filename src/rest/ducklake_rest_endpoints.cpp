@@ -475,6 +475,8 @@ private:
 	map<int64_t, TableIndex> placeholder_ids;
 	//! The schemas of the tables created by the transaction
 	map<TableIndex, SchemaIndex> local_table_schemas;
+	//! The tables created by the requests with their placeholder ids, in the order they were created
+	vector<pair<RESTJsonIn, TableIndex>> created_tables;
 	//! The name maps of the client transaction, by their id in the client transaction
 	map<idx_t, MappingIndex> name_map_ids;
 	//! The partitionings set by the client transaction, by their id in the client transaction
@@ -601,6 +603,7 @@ void DuckLakeRESTCommit::CreateTable(RESTJsonIn parameters) {
 	if (!placeholder.IsNull()) {
 		placeholder_ids[placeholder.Int()] = table_id;
 	}
+	created_tables.emplace_back(placeholder, table_id);
 }
 
 void DuckLakeRESTCommit::CreateView(RESTJsonIn parameters) {
@@ -909,11 +912,35 @@ void DuckLakeRESTCommit::Run(RESTJsonIn input, RESTJsonOut output) {
 		output.SetUInt("snapshot_id", committed.snapshot_id);
 		output.SetUInt("schema_version", committed.schema_version);
 	}
+	auto &committed_tables = transaction_ref->GetCommittedTableIds();
+	auto table_ids = output.Arr("table_ids");
+	for (auto &entry : created_tables) {
+		auto committed_table = committed_tables.find(entry.second);
+		if (committed_table == committed_tables.end()) {
+			// the table was dropped again
+			continue;
+		}
+		auto table_id = table_ids.AppendObj();
+		if (entry.first.IsNull()) {
+			table_id.SetNull("placeholder");
+		} else {
+			table_id.SetInt("placeholder", entry.first.Int());
+		}
+		table_id.SetUInt("table_id", committed_table->second.index);
+	}
 }
 
 static void CommitTransactionEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
 	DuckLakeRESTCommit commit(request);
 	commit.Run(input, output);
+}
+
+bool DuckLakeRESTServer::IsCommitRequest(const string &path) {
+	static const unordered_set<string> requests = {
+	    "create_schema", "create_table",       "create_view", "create_macro",    "alter_table", "alter_view",
+	    "drop_schema",   "drop_table",         "drop_view",   "drop_macro",      "insert_rows", "insert_files",
+	    "delete_data",   "flush_inlined_data", "compact",     "create_name_map", "set_option"};
+	return requests.find(path) != requests.end();
 }
 
 const unordered_map<string, rest_endpoint_t> &DuckLakeRESTServer::GetEndpoints() {

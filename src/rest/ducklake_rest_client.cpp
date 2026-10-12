@@ -36,6 +36,22 @@ void DuckLakeRESTClient::ReturnConnection(unique_ptr<duckdb_httplib::Client> con
 	idle_connections.push_back(std::move(connection));
 }
 
+int32_t DuckLakeRESTClient::PostRaw(const string &endpoint, const string &body, string &response) {
+	auto connection = GetConnection();
+	duckdb_httplib::Headers headers;
+	if (!token.empty()) {
+		headers.emplace("Authorization", "Bearer " + token);
+	}
+	auto result = connection->Post("/v1/" + endpoint, headers, body, "application/json");
+	if (!result) {
+		throw IOException("Failed to send DuckLake REST request \"%s\" to %s: %s", endpoint, base_url,
+		                  duckdb_httplib::to_string(result.error()));
+	}
+	ReturnConnection(std::move(connection));
+	response = result->body;
+	return result->status;
+}
+
 unique_ptr<RESTJsonReader> DuckLakeRESTClient::Post(const string &endpoint, const RESTJsonWriter &request) {
 	auto body = request.ToString();
 	auto connection = GetConnection();

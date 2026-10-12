@@ -72,6 +72,8 @@ public:
 	int32_t HandleRequest(const string &endpoint, const string &body, string &response);
 
 	static const unordered_map<string, rest_endpoint_t> &GetEndpoints();
+	//! Whether a path is a request of commit_transaction, which can also be sent on its own
+	static bool IsCommitRequest(const string &path);
 
 private:
 	weak_ptr<DatabaseInstance> db;
@@ -109,6 +111,11 @@ struct DuckLakeRESTServeFunction : public TableFunction {
 
 struct DuckLakeRESTStopFunction : public TableFunction {
 	DuckLakeRESTStopFunction();
+};
+
+//! Sends a request to a DuckLake REST server, e.g. to explore the API
+struct DuckLakeRESTRequestFunction : public TableFunction {
+	DuckLakeRESTRequestFunction();
 };
 
 } // namespace duckdb

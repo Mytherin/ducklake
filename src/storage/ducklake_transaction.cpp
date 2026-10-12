@@ -1621,6 +1621,10 @@ DuckLakeSnapshot DuckLakeTransaction::GetCommittedSnapshot() const {
 	return committed_snapshot;
 }
 
+const map<TableIndex, TableIndex> &DuckLakeTransaction::GetCommittedTableIds() const {
+	return state->committed_tables;
+}
+
 DuckLakeSnapshot DuckLakeTransaction::GetSnapshot(optional_ptr<BoundAtClause> at_clause, SnapshotBound bound) {
 	if (!at_clause) {
 		// no AT-clause - get the latest snapshot
