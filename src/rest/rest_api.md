@@ -687,3 +687,30 @@ A delete file replaces the previous delete file of its data file:
  "overwritten_delete_file_path": "/data/main/t/d0.parquet", "begin_snapshot": null, "max_snapshot": null,
  "source": "regular"}
 ```
+
+## Reference Implementation
+
+The server (`src/rest/ducklake_rest_server.cpp`, `src/rest/ducklake_rest_endpoints.cpp`) serves a DuckLake catalog
+that is attached to DuckDB, with any metadata backend. Every request runs in a DuckLake transaction of its own:
+
+* Read endpoints call the SQL metadata manager of the served catalog.
+* `commit_transaction` pins its transaction to the snapshot of the client, replays the requests through the DuckLake
+  catalog (catalog changes) and transaction (data changes), and commits it. Commits therefore get the same conflict
+  detection, retries, id assignment and statistics maintenance as regular DuckLake commits.
+
+The client (`RESTMetadataManager`, `src/metadata_manager/rest_metadata_manager.cpp`) records the catalog changes of a
+transaction as requests while they are made, and sends them together with the data changes of the transaction when it
+commits. Data files are written and read by the client.
+
+The JSON conversions of the metadata structures are in `src/rest/ducklake_rest_serialization.cpp`, those of catalog
+changes in `src/rest/ducklake_rest_catalog_changes.cpp`.
+
+### Testing
+
+* `test/sql/rest/` tests the API, with a server that `test/template/rest_setup.test_template` starts in a database of
+  its own and `test/template/rest_teardown.test_template` stops.
+* `test/configs/rest.json` runs the DuckDB tests on a DuckLake that is served over REST (like
+  `test/configs/attach_ducklake.json`):
+  `build/release/test/unittest --test-config test/configs/rest.json --test-dir duckdb`
+* `test/configs/rest_ducklake.json` runs the DuckLake tests with every DuckLake served over REST:
+  `build/release/test/unittest --test-config test/configs/rest_ducklake.json "test/sql/*"`
