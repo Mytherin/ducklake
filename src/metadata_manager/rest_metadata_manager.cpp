@@ -712,6 +712,7 @@ void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const Creat
 	auto version = transaction.GetCatalog().GetDuckLakeVersion();
 	for (auto &column : info.columns.Logical()) {
 		// fail with the error of a commit to a metadata database, rather than on a type the server cannot parse
+		DuckLakeTypes::ToString(column.GetType());
 		DuckLakeTypes::CheckSupportedType(column.GetType(), version);
 		DuckLakeRESTCatalogChanges::WriteColumn(columns.AppendObj(), column,
 		                                        info.FindNotNullConstraint(column.Logical()).IsValid());
@@ -789,6 +790,7 @@ static optional_ptr<const LogicalType> GetAlteredType(const AlterInfo &info) {
 void RESTMetadataManager::OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) {
 	auto altered_type = GetAlteredType(info);
 	if (altered_type) {
+		DuckLakeTypes::ToString(*altered_type);
 		DuckLakeTypes::CheckSupportedType(*altered_type, transaction.GetCatalog().GetDuckLakeVersion());
 	}
 	auto parameters = AddCommitRequest(AltersView(info) ? "alter_view" : "alter_table");

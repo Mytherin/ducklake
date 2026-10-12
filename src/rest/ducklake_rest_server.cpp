@@ -295,6 +295,11 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	string attach_options = options_val.IsNull() ? string() : StringValue::Get(options_val);
 	bool wait = !wait_val.IsNull() && BooleanValue::Get(wait_val);
 
+	auto &registry = DuckLakeRESTServerRegistry::Get();
+	if (port != 0) {
+		// a server that is already listening on this address is replaced - it has to release its DuckLake first
+		registry.Stop(StringUtil::Format("http://%s:%llu", host, port));
+	}
 	unique_ptr<DuckLakeRESTServer> server;
 	if (StringUtil::StartsWith(target_str, "ducklake:")) {
 		const string catalog_name = "ducklake_rest";
@@ -310,7 +315,6 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	if (!token_val.IsNull()) {
 		server->SetToken(StringValue::Get(token_val));
 	}
-	auto &registry = DuckLakeRESTServerRegistry::Get();
 	auto listen_uri = registry.Start(std::move(server), host, port);
 	if (wait) {
 		auto running = registry.GetServer(listen_uri);
