@@ -29,6 +29,8 @@
 #include <mutex>
 
 namespace duckdb {
+struct CreateMacroInfo;
+struct DuckLakeMacroInfo;
 struct DuckLakeGlobalStatsInfo;
 class DuckLakeCatalog;
 class ColumnList;
@@ -133,6 +135,10 @@ private:
 };
 
 enum class InlinedDeletionCacheResult { EXISTS, DOES_NOT_EXIST, UNKNOWN };
+
+//! The CREATE MACRO info of a macro stored in DuckLake
+unique_ptr<CreateMacroInfo> CreateMacroInfoFromDucklake(ClientContext &context, DuckLakeMacroInfo &macro,
+                                                        string schema_name);
 
 class DuckLakeCatalog : public Catalog {
 public:

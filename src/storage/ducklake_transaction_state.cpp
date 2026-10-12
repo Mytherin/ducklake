@@ -437,14 +437,9 @@ static string MacroParameterTypeToString(const LogicalType &type) {
 	return ducklake_type.ToString();
 }
 
-void GetNewMacroInfo(DuckLakeCommitState &commit_state, reference<CatalogEntry> entry, NewMacroInfo &result) {
+DuckLakeMacroInfo DuckLakeTransactionState::GetMacroInfo(const MacroCatalogEntry &macro_entry) {
 	DuckLakeMacroInfo new_macro_info;
-	auto &macro_entry = entry.get().Cast<MacroCatalogEntry>();
-	auto &ducklake_schema = macro_entry.schema.Cast<DuckLakeSchemaEntry>();
-
-	new_macro_info.macro_id = MacroIndex(commit_state.commit_snapshot.next_catalog_id++);
 	new_macro_info.macro_name = macro_entry.name.GetIdentifierName();
-	new_macro_info.schema_id = commit_state.GetSchemaId(ducklake_schema);
 	// Let's do the implementations
 	for (const auto &impl : macro_entry.macros) {
 		DuckLakeMacroImplementation macro_impl;
@@ -488,6 +483,15 @@ void GetNewMacroInfo(DuckLakeCommitState &commit_state, reference<CatalogEntry> 
 		}
 		new_macro_info.implementations.push_back(std::move(macro_impl));
 	}
+	return new_macro_info;
+}
+
+void GetNewMacroInfo(DuckLakeCommitState &commit_state, reference<CatalogEntry> entry, NewMacroInfo &result) {
+	auto &macro_entry = entry.get().Cast<MacroCatalogEntry>();
+	auto &ducklake_schema = macro_entry.schema.Cast<DuckLakeSchemaEntry>();
+	auto new_macro_info = DuckLakeTransactionState::GetMacroInfo(macro_entry);
+	new_macro_info.macro_id = MacroIndex(commit_state.commit_snapshot.next_catalog_id++);
+	new_macro_info.schema_id = commit_state.GetSchemaId(ducklake_schema);
 	result.new_macros.push_back(std::move(new_macro_info));
 }
 

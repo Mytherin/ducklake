@@ -4,7 +4,14 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
+#include "rest/ducklake_rest_catalog_changes.hpp"
 #include "rest/ducklake_rest_serialization.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
+#include "storage/ducklake_transaction_changes.hpp"
+#include "storage/ducklake_transaction_state.hpp"
+#include "storage/ducklake_view_entry.hpp"
 #include "storage/ducklake_catalog.hpp"
 #include "storage/ducklake_schema_entry.hpp"
 #include "storage/ducklake_table_entry.hpp"
@@ -143,6 +150,18 @@ vector<DuckLakeGlobalStatsInfo> RESTMetadataManager::GetGlobalTableStats(DuckLak
 	return result;
 }
 
+map<TableIndex, idx_t> RESTMetadataManager::GetTableRecordCounts(DuckLakeSnapshot snapshot) {
+	RESTJsonWriter request;
+	request.Root().SetUInt("snapshot_id", snapshot.snapshot_id);
+	request.Root().SetBool("include_record_counts", true);
+	auto response = Post("snapshot_data", request);
+	map<TableIndex, idx_t> result;
+	for (auto &entry : response->Root().Get("record_counts").Items()) {
+		result.emplace(TableIndex(entry.UInt("table_id")), entry.UInt("record_count"));
+	}
+	return result;
+}
+
 vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTableEntry &table,
                                                                     DuckLakeSnapshot snapshot,
                                                                     const FilterPushdownInfo *filter_info) {
@@ -158,6 +177,39 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 		result.push_back(DuckLakeRESTSerializer::ReadFileListEntry(file));
 	}
 	return result;
+}
+
+vector<DuckLakeFileListExtendedEntry>
+RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
+                                              const FilterPushdownInfo *filter_info) {
+	vector<DuckLakeFileListExtendedEntry> result;
+	if (table.IsTransactionLocal()) {
+		return result;
+	}
+	RESTJsonWriter request;
+	request.Root().SetUInt("snapshot_id", snapshot.snapshot_id);
+	request.Root().SetUInt("table_id", table.GetTableId().index);
+	request.Root().SetBool("extended", true);
+	auto response = Post("select", request);
+	for (auto &file : response->Root().Get("files").Items()) {
+		result.push_back(DuckLakeRESTSerializer::ReadFileListExtendedEntry(file));
+	}
+	return result;
+}
+
+idx_t RESTMetadataManager::GetNextColumnId(TableIndex table_id) {
+	RESTJsonWriter request;
+	request.Root().SetUInt("table_id", table_id.index);
+	auto response = Post("next_column_id", request);
+	return response->Root().UInt("next_column_id");
+}
+
+bool RESTMetadataManager::IsColumnCreatedWithTable(const string &table_name, const string &column_name) {
+	RESTJsonWriter request;
+	request.Root().SetStr("table_name", table_name);
+	request.Root().SetStr("column_name", column_name);
+	auto response = Post("column_created_with_table", request);
+	return response->Root().Get("created_with_table").Bool();
 }
 
 unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedData(DuckLakeSnapshot snapshot,
@@ -321,16 +373,8 @@ void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const Creat
 	parameters.SetStr("path", table_data_path);
 	auto columns = parameters.Arr("columns");
 	for (auto &column : info.columns.Logical()) {
-		auto column_out = columns.AppendObj();
-		column_out.SetStr("column_name", column.GetName().GetIdentifierName());
-		column_out.SetStr("column_type", column.GetType().ToString());
-		if (column.HasDefaultValue()) {
-			column_out.SetStr("default", column.DefaultValue().ToString());
-		}
-		if (!column.Comment().IsNull()) {
-			column_out.SetStr("comment", column.Comment().ToString());
-		}
-		column_out.SetBool("not_null", info.FindNotNullConstraint(column.Logical()).IsValid());
+		DuckLakeRESTCatalogChanges::WriteColumn(columns.AppendObj(), column,
+		                                        info.FindNotNullConstraint(column.Logical()).IsValid());
 	}
 	auto partitioned_by = parameters.Arr("partitioned_by");
 	for (auto &key : info.partition_keys) {
@@ -347,6 +391,84 @@ void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const Creat
 	if (!info.comment.IsNull()) {
 		parameters.SetStr("comment", info.comment.ToString());
 	}
+}
+
+void RESTMetadataManager::OnCreateView(DuckLakeViewEntry &view) {
+	auto parameters = AddCommitRequest("create_view");
+	WriteSchemaPath(parameters, view.ParentSchema().Cast<DuckLakeSchemaEntry>());
+	parameters.SetStr("view_name", view.name.GetIdentifierName());
+	parameters.SetStr("view_uuid", view.GetViewUUID());
+	parameters.SetStr("dialect", "duckdb");
+	parameters.SetStr("sql", view.GetQuerySQL());
+	auto aliases = parameters.Arr("column_aliases");
+	for (auto &alias : view.aliases) {
+		aliases.AppendStr(alias.GetIdentifierName());
+	}
+	if (!view.comment.IsNull()) {
+		parameters.SetStr("comment", view.comment.ToString());
+	}
+}
+
+void RESTMetadataManager::OnCreateMacro(MacroCatalogEntry &macro) {
+	auto parameters = AddCommitRequest("create_macro");
+	WriteSchemaPath(parameters, macro.schema.Cast<DuckLakeSchemaEntry>());
+	DuckLakeRESTSerializer::Write(parameters.Obj("macro"), DuckLakeTransactionState::GetMacroInfo(macro));
+}
+
+static bool AltersView(const AlterInfo &info) {
+	switch (info.type) {
+	case AlterType::ALTER_VIEW:
+		return true;
+	case AlterType::SET_COMMENT:
+		return info.Cast<SetCommentInfo>().entry_catalog_type == CatalogType::VIEW_ENTRY;
+	case AlterType::SET_COLUMN_COMMENT:
+		return info.Cast<SetColumnCommentInfo>().catalog_entry_type == CatalogType::VIEW_ENTRY;
+	default:
+		return false;
+	}
+}
+
+void RESTMetadataManager::OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) {
+	auto parameters = AddCommitRequest(AltersView(info) ? "alter_view" : "alter_table");
+	WriteSchemaPath(parameters, schema);
+	parameters.SetStr("name", info.GetQualifiedName().Name().GetIdentifierName());
+	DuckLakeRESTCatalogChanges::WriteAlter(parameters.Obj("alter"), info);
+}
+
+void RESTMetadataManager::OnDropEntry(CatalogEntry &entry) {
+	switch (entry.type) {
+	case CatalogType::SCHEMA_ENTRY: {
+		auto parameters = AddCommitRequest("drop_schema");
+		WriteSchemaPath(parameters, entry.Cast<DuckLakeSchemaEntry>());
+		return;
+	}
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY:
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+		break;
+	default:
+		throw InternalException("Unsupported catalog entry type for DROP");
+	}
+	string path = entry.type == CatalogType::TABLE_ENTRY  ? "drop_table"
+	              : entry.type == CatalogType::VIEW_ENTRY ? "drop_view"
+	                                                      : "drop_macro";
+	auto parameters = AddCommitRequest(path);
+	WriteSchemaPath(parameters, entry.ParentSchema().Cast<DuckLakeSchemaEntry>());
+	parameters.SetStr("name", entry.name.GetIdentifierName());
+	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
+		parameters.SetStr("macro_type", entry.type == CatalogType::MACRO_ENTRY ? "scalar" : "table");
+	}
+}
+
+void RESTMetadataManager::OnDropFile(TableIndex table_id, DataFileIndex data_file_id, const string &path,
+                                     idx_t row_count, idx_t file_size_bytes) {
+	DuckLakeFileListEntry file;
+	file.file_id = data_file_id;
+	file.file.path = path;
+	file.file.file_size_bytes = file_size_bytes;
+	file.max_row_count = row_count;
+	dropped_files[table_id].push_back(std::move(file));
 }
 
 //===--------------------------------------------------------------------===//
@@ -381,8 +503,20 @@ static void WriteInlinedRows(RESTJsonOut parameters, const DuckLakeInlinedData &
 	}
 }
 
-void RESTMetadataManager::AddDataChanges() {
+static void WriteRowIds(RESTJsonOut out, const string &key, const set<idx_t> &row_ids) {
+	auto row_ids_out = out.Arr(key);
+	for (auto row_id : row_ids) {
+		row_ids_out.AppendUInt(row_id);
+	}
+}
+
+void RESTMetadataManager::AddDataChanges(const TransactionChangeInformation &transaction_changes) {
+	auto &dropped_tables = transaction_changes.dropped_tables;
+	set<TableIndex> tables_with_deletes;
 	for (auto &entry : transaction.GetLocalChanges().Changes()) {
+		if (dropped_tables.find(entry.first) != dropped_tables.end()) {
+			continue;
+		}
 		auto table_id = ToRequestId(entry.first.index);
 		auto &changes = entry.second;
 		if (!changes.new_data_files.empty()) {
@@ -398,10 +532,69 @@ void RESTMetadataManager::AddDataChanges() {
 			parameters.SetInt("table_id", table_id);
 			WriteInlinedRows(parameters, *changes.new_inlined_data);
 		}
-		if (!changes.new_delete_files.empty() || !changes.new_inlined_data_deletes.empty() ||
-		    changes.new_inlined_file_deletes || !changes.compactions.empty()) {
-			throw NotImplementedException("DuckLake REST catalogs do not support deletes yet");
+		if (!changes.compactions.empty()) {
+			throw NotImplementedException("DuckLake REST catalogs do not support compaction yet");
 		}
+		if (changes.new_delete_files.empty() && changes.new_inlined_data_deletes.empty() &&
+		    !changes.new_inlined_file_deletes) {
+			continue;
+		}
+		tables_with_deletes.insert(entry.first);
+		auto parameters = AddCommitRequest("delete_data");
+		parameters.SetInt("table_id", table_id);
+		auto delete_files = parameters.Arr("delete_files");
+		for (auto &file_entry : changes.new_delete_files) {
+			for (auto &delete_file : file_entry.second) {
+				DuckLakeRESTSerializer::Write(delete_files.AppendObj(), delete_file);
+			}
+		}
+		auto inlined_deletes = parameters.Arr("inlined_deletes");
+		for (auto &inlined_entry : changes.new_inlined_data_deletes) {
+			auto deletes = inlined_deletes.AppendObj();
+			deletes.SetStr("table_name", inlined_entry.first);
+			WriteRowIds(deletes, "row_ids", inlined_entry.second->rows);
+		}
+		auto file_row_deletes = parameters.Arr("file_row_deletes");
+		if (changes.new_inlined_file_deletes) {
+			for (auto &file_entry : changes.new_inlined_file_deletes->file_deletes) {
+				auto deletes = file_row_deletes.AppendObj();
+				deletes.SetUInt("data_file_id", file_entry.first);
+				WriteRowIds(deletes, "row_ids", file_entry.second);
+			}
+		}
+		WriteDroppedFiles(parameters, entry.first);
+	}
+	for (auto &entry : dropped_files) {
+		if (tables_with_deletes.find(entry.first) != tables_with_deletes.end() ||
+		    dropped_tables.find(entry.first) != dropped_tables.end()) {
+			continue;
+		}
+		auto parameters = AddCommitRequest("delete_data");
+		parameters.SetInt("table_id", ToRequestId(entry.first.index));
+		WriteDroppedFiles(parameters, entry.first);
+	}
+	for (auto &table_id : transaction.GetTablesDeleteAttempted()) {
+		if (dropped_tables.find(table_id) != dropped_tables.end()) {
+			continue;
+		}
+		auto parameters = AddCommitRequest("delete_data");
+		parameters.SetInt("table_id", ToRequestId(table_id.index));
+		parameters.SetBool("delete_attempted", true);
+	}
+}
+
+void RESTMetadataManager::WriteDroppedFiles(RESTJsonOut parameters, TableIndex table_id) {
+	auto files = parameters.Arr("dropped_files");
+	auto entry = dropped_files.find(table_id);
+	if (entry == dropped_files.end()) {
+		return;
+	}
+	for (auto &file : entry->second) {
+		auto file_out = files.AppendObj();
+		file_out.SetUInt("data_file_id", file.file_id.index);
+		file_out.SetStr("path", file.file.path);
+		file_out.SetUInt("record_count", file.max_row_count.GetIndex());
+		file_out.SetUInt("file_size_bytes", file.file.file_size_bytes);
 	}
 }
 
@@ -409,7 +602,12 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
                                                  DuckLakeSnapshot transaction_snapshot,
                                                  const TransactionChangeInformation &transaction_changes,
                                                  const DuckLakeRetryConfig &retry_config) {
-	AddDataChanges();
+	if (!flush_transaction.GetFlushedInlinedTables().empty() ||
+	    !flush_transaction.GetFlushedInlinedFileDeletions().empty() ||
+	    !flush_transaction.GetNewNameMaps().name_maps.empty()) {
+		throw NotImplementedException("DuckLake REST catalogs do not support flushing inlined data or name maps yet");
+	}
+	AddDataChanges(transaction_changes);
 	auto root = commit_request.Root();
 	if (transaction_snapshot.snapshot_id != DConstants::INVALID_INDEX) {
 		root.SetUInt("snapshot_id", transaction_snapshot.snapshot_id);

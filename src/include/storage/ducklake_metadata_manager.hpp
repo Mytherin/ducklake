@@ -41,6 +41,9 @@ class BoundAtClause;
 class SQLStatement;
 class FileSystem;
 struct CreateTableInfo;
+struct AlterInfo;
+class DuckLakeViewEntry;
+class MacroCatalogEntry;
 
 struct SnapshotAndStats;
 struct FlushedInlinedTableInfo;
@@ -216,6 +219,17 @@ public:
 	}
 	virtual void OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info, TableIndex table_id,
 	                           const string &table_uuid, const string &table_data_path) {
+	}
+	virtual void OnCreateView(DuckLakeViewEntry &view) {
+	}
+	virtual void OnCreateMacro(MacroCatalogEntry &macro) {
+	}
+	virtual void OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) {
+	}
+	virtual void OnDropEntry(CatalogEntry &entry) {
+	}
+	virtual void OnDropFile(TableIndex table_id, DataFileIndex data_file_id, const string &path, idx_t row_count,
+	                        idx_t file_size_bytes) {
 	}
 	//! Probe the metadata server for optional capabilities, for now we only check for server-side retries
 	virtual void ProbeServerCapabilities() {

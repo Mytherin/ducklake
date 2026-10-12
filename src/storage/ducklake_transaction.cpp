@@ -1854,10 +1854,11 @@ void DuckLakeTransaction::DropTableMacro(DuckLakeTableMacroEntry &macro) {
 void DuckLakeTransaction::DropFile(TableIndex table_id, DataFileIndex data_file_id, string path, idx_t row_count,
                                    idx_t file_size_bytes) {
 	state->tables_deleted_from.insert(table_id);
-	auto inserted = state->dropped_files.emplace(std::move(path), data_file_id);
+	auto inserted = state->dropped_files.emplace(path, data_file_id);
 	if (!inserted.second) {
 		return;
 	}
+	metadata_manager->OnDropFile(table_id, data_file_id, path, row_count, file_size_bytes);
 	auto &stats = state->dropped_file_stats[table_id];
 	stats.row_count += row_count;
 	stats.file_size_bytes += file_size_bytes;
@@ -1897,6 +1898,7 @@ bool DuckLakeTransaction::FileIsDropped(const string &path) const {
 
 void DuckLakeTransaction::DropEntry(CatalogEntry &entry) {
 	catalog_version = ducklake_catalog.GetNewUncommittedCatalogVersion();
+	metadata_manager->OnDropEntry(entry);
 	switch (entry.type) {
 	case CatalogType::TABLE_ENTRY:
 		DropTable(entry.Cast<DuckLakeTableEntry>());

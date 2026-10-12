@@ -60,8 +60,14 @@ public:
 	unique_ptr<DuckLakeSnapshot> GetSnapshot(BoundAtClause &at_clause, SnapshotBound bound) override;
 	DuckLakeCatalogInfo GetCatalogForSnapshot(DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeGlobalStatsInfo> GetGlobalTableStats(DuckLakeSnapshot snapshot) override;
+	map<TableIndex, idx_t> GetTableRecordCounts(DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeFileListEntry> GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
 	                                               const FilterPushdownInfo *filter_info = nullptr) override;
+	vector<DuckLakeFileListExtendedEntry>
+	GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
+	                         const FilterPushdownInfo *filter_info = nullptr) override;
+	idx_t GetNextColumnId(TableIndex table_id) override;
+	bool IsColumnCreatedWithTable(const string &table_name, const string &column_name) override;
 	unique_ptr<QueryResult> ReadInlinedData(DuckLakeSnapshot snapshot, const string &inlined_table_name,
 	                                        const vector<string> &columns_to_read) override;
 	idx_t GetBeginSnapshotForTable(TableIndex table_id) override;
@@ -76,6 +82,12 @@ public:
 	void OnCreateSchema(DuckLakeSchemaEntry &schema) override;
 	void OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info, TableIndex table_id,
 	                   const string &table_uuid, const string &table_data_path) override;
+	void OnCreateView(DuckLakeViewEntry &view) override;
+	void OnCreateMacro(MacroCatalogEntry &macro) override;
+	void OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) override;
+	void OnDropEntry(CatalogEntry &entry) override;
+	void OnDropFile(TableIndex table_id, DataFileIndex data_file_id, const string &path, idx_t row_count,
+	                idx_t file_size_bytes) override;
 
 private:
 	//! Sends a request to the server, the request is not part of the commit of the transaction
@@ -84,7 +96,8 @@ private:
 	RESTJsonOut AddCommitRequest(const string &path);
 	unique_ptr<RESTJsonReader> GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot, bool include_catalog,
 	                                           bool include_stats);
-	void AddDataChanges();
+	void AddDataChanges(const TransactionChangeInformation &changes);
+	void WriteDroppedFiles(RESTJsonOut parameters, TableIndex table_id);
 	optional_idx GetRowCount(DuckLakeSnapshot snapshot, const string &count, TableIndex table_id,
 	                         const string &table_name);
 
@@ -93,6 +106,8 @@ private:
 	//! The requests that make up the commit of the transaction
 	RESTJsonWriter commit_request;
 	RESTJsonOut commit_requests;
+	//! The data files dropped by the transaction, by table
+	map<TableIndex, vector<DuckLakeFileListEntry>> dropped_files;
 };
 
 } // namespace duckdb

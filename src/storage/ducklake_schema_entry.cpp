@@ -216,6 +216,7 @@ optional_ptr<CatalogEntry> DuckLakeSchemaEntry::CreateFunction(CatalogTransactio
 	auto &duck_transaction = transaction.transaction->Cast<DuckLakeTransaction>();
 	auto result = macro_entry.get();
 	duck_transaction.CreateEntry(std::move(macro_entry));
+	duck_transaction.GetMetadataManager().OnCreateMacro(result->Cast<MacroCatalogEntry>());
 	return result;
 }
 
@@ -280,6 +281,7 @@ optional_ptr<CatalogEntry> DuckLakeSchemaEntry::CreateView(CatalogTransaction tr
 	                                               query_sql, LocalChangeType::CREATED);
 	auto result = view_entry.get();
 	duck_transaction.CreateEntry(std::move(view_entry));
+	duck_transaction.GetMetadataManager().OnCreateView(*result);
 	return result;
 }
 
@@ -349,6 +351,8 @@ void ApplySetColumnCommentToView(DuckLakeTransaction &transaction, CatalogTransa
 void DuckLakeSchemaEntry::Alter(CatalogTransaction catalog_transaction, AlterInfo &info) {
 	auto &context = catalog_transaction.GetContext();
 	auto &transaction = DuckLakeTransaction::Get(context, catalog);
+	// recorded before the alter is applied, applying it can move expressions out of the info
+	transaction.GetMetadataManager().OnAlterEntry(*this, info);
 	switch (info.type) {
 	case AlterType::ALTER_TABLE: {
 		auto &alter = info.Cast<AlterTableInfo>();

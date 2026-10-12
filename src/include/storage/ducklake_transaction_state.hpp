@@ -13,6 +13,7 @@
 
 namespace duckdb {
 struct DuckLakeAddedFields;
+class MacroCatalogEntry;
 
 struct DuckLakeColumnSchemaEntry {
 	FieldIndex field_index;
@@ -217,6 +218,8 @@ public:
 	                                       TableIndex table_id, optional_idx row_id_start);
 
 	static void DropEmptySupersededInlinedTables(const DuckLakeCommitContext &context);
+	//! The definition of a macro, without its ids
+	static DuckLakeMacroInfo GetMacroInfo(const MacroCatalogEntry &macro_entry);
 
 	void CleanupFiles();
 

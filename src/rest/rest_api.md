@@ -122,6 +122,7 @@ start a transaction in a single round-trip.
 | `bound`           | `"upper"` (default) or `"lower"`: whether a timestamp finds the last snapshot before or the first snapshot after it. |
 | `include_catalog` | Whether to return the catalog (schemas, tables, views, macros, partitioning, sorting).   |
 | `include_stats`   | Whether to return the table statistics.                                                  |
+| `include_record_counts` | Whether to return the record counts of the tables (`record_counts`: `[{"table_id": 1, "record_count": 10}]`). |
 
 Response:
 
@@ -163,10 +164,11 @@ Response:
 Plans a scan of a table: returns the data files of the table that are visible in a snapshot, together with their
 delete files and inlined deletions.
 
-| Parameter     | Description                         |
-|---------------|-------------------------------------|
-| `snapshot_id` | The snapshot to scan.               |
-| `table_id`    | The table to scan.                  |
+| Parameter     | Description                                                                           |
+|---------------|---------------------------------------------------------------------------------------|
+| `snapshot_id` | The snapshot to scan.                                                                 |
+| `table_id`    | The table to scan.                                                                    |
+| `extended`    | Return the extended file list used to plan deletes and updates (see below).          |
 
 Response:
 
@@ -185,6 +187,15 @@ Response:
 ```
 
 The rows of a table that are inlined in the catalog are read with `read_inlined_data`.
+
+The extended file list (`"extended": true`) returns the ids of the data and delete files and the number of deleted
+rows of each file instead:
+
+```json
+{"files": [{"file_id": 1, "delete_file_id": 2, "file": {...}, "delete_file": {...}, "row_id_start": 0,
+            "snapshot_id": 2, "delete_file_begin_snapshot": 3, "record_count": 100, "delete_count": 10,
+            "mapping_id": null, "data_type": "data_file"}]}
+```
 
 ### `read_inlined_data`
 
@@ -233,6 +244,15 @@ Response: `{"row_count": 42}`
 Returns the names of all inlined data tables of a table (of any schema version).
 
 Request: `{"table_id": 1}`, response: `{"table_names": ["ducklake_inlined_data_1_1"]}`
+
+### `next_column_id`
+
+Returns the next free column (field) id of a table. Request: `{"table_id": 1}`, response: `{"next_column_id": 4}`
+
+### `column_created_with_table`
+
+Returns whether a column was created together with its table (rather than added later).
+Request: `{"table_name": "t", "column_name": "i"}`, response: `{"created_with_table": true}`
 
 ### `list_snapshots`
 
@@ -293,6 +313,70 @@ when that is safe; otherwise it fails with a `409`.
 Columns get the field ids `1..n` in the order of the columns (nested fields are numbered depth-first), as in
 `CREATE TABLE`.
 
+Requests that refer to existing entries identify them by `schema_path` and `name`. They are applied in order, so a
+name always refers to the entry as it is at that point of the transaction.
+
+#### `drop_schema`, `drop_table`, `drop_view`, `drop_macro`
+
+| Parameter     | Description                                                                    |
+|---------------|--------------------------------------------------------------------------------|
+| `schema_path` | The schema of the entry (for `drop_schema`: the path of the schema itself).    |
+| `name`        | The name of the entry.                                                         |
+| `macro_type`  | For `drop_macro`: `"scalar"` (default) or `"table"`.                           |
+
+Schemas have to be empty when they are dropped.
+
+#### `create_view`
+
+| Parameter        | Description                                          |
+|------------------|------------------------------------------------------|
+| `schema_path`    | The schema of the view.                              |
+| `view_name`      | The name of the view.                                |
+| `view_uuid`      | Optional, the uuid of the view.                      |
+| `dialect`        | The SQL dialect of the view, only `duckdb` for now.  |
+| `sql`            | The query of the view.                               |
+| `column_aliases` | Optional, the names of the columns of the view.      |
+| `comment`        | Optional, the comment of the view.                   |
+
+#### `create_macro`
+
+| Parameter     | Description                                                                                  |
+|---------------|----------------------------------------------------------------------------------------------|
+| `schema_path` | The schema of the macro.                                                                     |
+| `macro`       | The macro, in the format of the `macros` of the [catalog](#snapshot_data) (without ids).      |
+
+#### `alter_table`, `alter_view`
+
+| Parameter     | Description                                 |
+|---------------|---------------------------------------------|
+| `schema_path` | The schema of the table or view.            |
+| `name`        | The name of the table or view.              |
+| `alter`       | The change, one of the alterations below.   |
+
+Columns are referred to by name; nested fields by their path from the top-level column, e.g. `["s", "a"]`.
+Expressions are SQL expressions.
+
+| `type`               | Fields                                                                         |
+|----------------------|--------------------------------------------------------------------------------|
+| `rename_table`       | `new_name`                                                                     |
+| `rename_view`        | `new_name`                                                                     |
+| `rename_column`      | `old_name`, `new_name`                                                         |
+| `rename_field`       | `column_path`, `new_name`                                                      |
+| `add_column`         | `column` (as in `create_table`), `if_not_exists`                               |
+| `add_field`          | `column_path` (of the parent), `field` (as in `create_table`), `if_not_exists` |
+| `remove_column`      | `column_name`, `if_exists`, `cascade`                                          |
+| `remove_field`       | `column_path`, `if_exists`, `cascade`                                          |
+| `change_column_type` | `column_path`, `column_type`, `expression` (optional, the `USING` expression)  |
+| `set_default`        | `column_path`, `expression` (absent to drop the default)                       |
+| `set_not_null`       | `column_path`                                                                  |
+| `drop_not_null`      | `column_path`                                                                  |
+| `set_partitioned_by` | `partitioned_by`: the partition keys (empty to reset the partitioning)         |
+| `set_sorted_by`      | `sorted_by`: the sort keys, e.g. `["j DESC NULLS LAST"]` (empty to reset)      |
+| `set_options`        | `options`: `{"<option>": "<expression>"}`                                      |
+| `reset_options`      | `options`: `["<option>"]`                                                      |
+| `set_comment`        | `entry_type` (`TABLE_ENTRY` / `VIEW_ENTRY`), `comment`                         |
+| `set_column_comment` | `entry_type`, `column_name`, `comment`                                         |
+
 #### `insert_rows`
 
 Inserts rows that are inlined in the catalog.
@@ -332,4 +416,27 @@ so the server does not need to read them.
 {"column_id": 1, "type": {"id": "INTEGER"}, "min_value": "1", "max_value": "2", "null_count": 0,
  "value_count": 2, "column_size_bytes": 10, "contains_nan": null, "any_valid": true, "bounds_unknown": false,
  "min_is_exact": true, "max_is_exact": true, "extra_stats": null}
+```
+
+#### `delete_data`
+
+Deletes rows from a table.
+
+| Parameter          | Description                                                                                  |
+|--------------------|----------------------------------------------------------------------------------------------|
+| `table_id`         | The table.                                                                                   |
+| `delete_files`     | Delete files written by the client, see below.                                               |
+| `inlined_deletes`  | Deletes of inlined rows: `[{"table_name": "<inlined data table>", "row_ids": [1, 2]}]`.      |
+| `file_row_deletes` | Deletes of rows of data files that are inlined in the catalog: `[{"data_file_id": 1, "row_ids": [0, 5]}]`. `row_ids` are the positions of the rows in the file. |
+| `dropped_files`    | Data files that are deleted entirely: `[{"data_file_id": 1, "path": "...", "record_count": 10, "file_size_bytes": 100}]`. |
+| `delete_attempted` | Whether a delete was evaluated against the table, even if it did not delete any rows. This makes the commit conflict with concurrent inserts. |
+
+A delete file replaces the previous delete file of its data file:
+
+```json
+{"data_file_id": 1, "data_file_path": "/data/main/t/f1.parquet", "path": "/data/main/t/d1.parquet",
+ "format": "parquet", "delete_count": 10, "file_size_bytes": 300, "footer_size": 100, "row_group_count": 1,
+ "encryption_key": "", "overwrites_existing_delete": true, "overwritten_delete_file_id": 3,
+ "overwritten_delete_file_path": "/data/main/t/d0.parquet", "begin_snapshot": null, "max_snapshot": null,
+ "source": "regular"}
 ```

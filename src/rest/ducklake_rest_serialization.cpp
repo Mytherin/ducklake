@@ -632,6 +632,44 @@ DuckLakeFileListEntry DuckLakeRESTSerializer::ReadFileListEntry(RESTJsonIn in) {
 	return result;
 }
 
+void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeFileListExtendedEntry &entry) {
+	SetIndex(out, "file_id", entry.file_id);
+	SetIndex(out, "delete_file_id", entry.delete_file_id);
+	Write(out.Obj("file"), entry.file);
+	if (!entry.delete_file.path.empty()) {
+		Write(out.Obj("delete_file"), entry.delete_file);
+	}
+	out.SetOpt("row_id_start", entry.row_id_start);
+	out.SetOpt("snapshot_id", entry.snapshot_id);
+	out.SetOpt("delete_file_begin_snapshot", entry.delete_file_begin_snapshot);
+	out.SetUInt("record_count", entry.row_count);
+	out.SetUInt("delete_count", entry.delete_count);
+	SetIndex(out, "mapping_id", entry.mapping_id);
+	out.SetStr("data_type", DataTypeToString(entry.data_type));
+}
+
+DuckLakeFileListExtendedEntry DuckLakeRESTSerializer::ReadFileListExtendedEntry(RESTJsonIn in) {
+	DuckLakeFileListExtendedEntry result;
+	result.file_id = GetIndex<DataFileIndex>(in, "file_id");
+	result.delete_file_id = GetIndex<DataFileIndex>(in, "delete_file_id");
+	result.file = ReadFileData(in.Get("file"));
+	auto delete_file = in.TryGet("delete_file");
+	if (!delete_file.IsNull()) {
+		result.delete_file = ReadFileData(delete_file);
+	}
+	result.row_id_start = in.Opt("row_id_start");
+	result.snapshot_id = in.Opt("snapshot_id");
+	result.delete_file_begin_snapshot = in.Opt("delete_file_begin_snapshot");
+	result.row_count = in.UInt("record_count");
+	result.delete_count = in.UInt("delete_count", 0);
+	result.mapping_id = GetIndex<MappingIndex>(in, "mapping_id");
+	auto data_type = in.TryGet("data_type");
+	if (!data_type.IsNull()) {
+		result.data_type = DataTypeFromString(data_type.Str());
+	}
+	return result;
+}
+
 void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeDeleteFile &file) {
 	SetIndex(out, "data_file_id", file.data_file_id);
 	out.SetStr("data_file_path", file.data_file_path);
