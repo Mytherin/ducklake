@@ -11,6 +11,8 @@
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
@@ -55,6 +57,43 @@ static void WriteQueryResult(RESTJsonOut out, QueryResult &result) {
 			}
 		}
 	}
+}
+
+//! The name of an inlined data or deletion table of a request, which ends up in metadata queries
+static string GetInlinedTableName(RESTJsonIn input, const string &key = "table_name") {
+	auto name = input.Str(key);
+	bool valid = StringUtil::StartsWith(name, "ducklake_inlined_");
+	for (auto c : name) {
+		valid = valid && (StringUtil::CharacterIsAlphaNumeric(c) || c == '_');
+	}
+	if (!valid) {
+		throw InvalidInputException("\"%s\" is not the name of an inlined data table", name);
+	}
+	return name;
+}
+
+static bool IsColumnName(const ParsedExpression &expression) {
+	return expression.GetExpressionClass() == ExpressionClass::COLUMN_REF &&
+	       !expression.Cast<ColumnRefExpression>().IsQualified();
+}
+
+//! The columns to read of a request, which can only be column names, optionally cast to the type to read them as
+static vector<string> GetColumnsToRead(RESTJsonIn input) {
+	vector<string> columns;
+	for (auto &column : input.Get("columns").Items()) {
+		auto expressions = Parser::GetBuiltinParser().ParseExpressionList(column.Str());
+		bool valid = expressions.size() == 1;
+		if (valid && expressions[0]->GetExpressionClass() == ExpressionClass::CAST) {
+			valid = IsColumnName(expressions[0]->Cast<CastExpression>().Child());
+		} else if (valid) {
+			valid = IsColumnName(*expressions[0]);
+		}
+		if (!valid) {
+			throw InvalidInputException("\"%s\" is not a column name", column.Str());
+		}
+		columns.push_back(expressions[0]->ToString());
+	}
+	return columns;
 }
 
 //===--------------------------------------------------------------------===//
@@ -172,11 +211,8 @@ static string GetFlushOrder(RESTJsonIn input) {
 
 static void ReadInlinedDataEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
 	auto snapshot = request.GetSnapshot(input);
-	auto table_name = input.Str("table_name");
-	vector<string> columns;
-	for (auto &column : input.Get("columns").Items()) {
-		columns.push_back(column.Str());
-	}
+	auto table_name = GetInlinedTableName(input);
+	auto columns = GetColumnsToRead(input);
 	auto &metadata_manager = request.GetMetadataManager();
 	auto mode = input.Str("mode", "scan");
 	unique_ptr<QueryResult> result;
@@ -261,7 +297,7 @@ static void RowCountEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RES
 	auto snapshot = request.GetSnapshot(input);
 	auto count = input.Str("count");
 	if (count == "inlined") {
-		output.SetUInt("row_count", metadata_manager.GetNetInlinedRowCount(input.Str("table_name"), snapshot));
+		output.SetUInt("row_count", metadata_manager.GetNetInlinedRowCount(GetInlinedTableName(input), snapshot));
 		return;
 	}
 	auto table_id = TableIndex(input.UInt("table_id"));
@@ -681,7 +717,7 @@ void DuckLakeRESTCommit::DeleteData(RESTJsonIn parameters) {
 		for (auto &row_id : deletes.Get("row_ids").Items()) {
 			row_ids.insert(row_id.UInt());
 		}
-		transaction.AddNewInlinedDeletes(table_id, deletes.Str("table_name"), std::move(row_ids));
+		transaction.AddNewInlinedDeletes(table_id, GetInlinedTableName(deletes), std::move(row_ids));
 	}
 	for (auto &deletes : parameters.TryGet("file_row_deletes").Items()) {
 		set<idx_t> row_ids;
@@ -702,7 +738,7 @@ void DuckLakeRESTCommit::DeleteData(RESTJsonIn parameters) {
 void DuckLakeRESTCommit::FlushInlinedData(RESTJsonIn parameters) {
 	for (auto &inlined_table_in : parameters.TryGet("inlined_tables").Items()) {
 		DuckLakeInlinedTableInfo inlined_table;
-		inlined_table.table_name = inlined_table_in.Str("table_name");
+		inlined_table.table_name = GetInlinedTableName(inlined_table_in);
 		inlined_table.schema_version = inlined_table_in.UInt("schema_version");
 		transaction.MarkInlinedDataForDeletion(std::move(inlined_table), inlined_table_in.UInt("flush_snapshot_id"));
 	}

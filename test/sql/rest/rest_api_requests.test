@@ -70,6 +70,19 @@ SELECT status FROM ducklake_rest_request('{rest_server}', 'create_table',
 ----
 404
 
+# names in requests cannot inject SQL into the queries of the server
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
+'{"table_name": "ducklake_snapshot; DROP TABLE ducklake_table", "columns": ["i"]}')
+----
+400
+
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
+'{"table_name": "ducklake_inlined_data_1_1", "columns": ["(SELECT 42)"]}')
+----
+400
+
 statement ok
 DETACH dl
 

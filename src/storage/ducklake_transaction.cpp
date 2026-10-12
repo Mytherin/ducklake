@@ -705,11 +705,12 @@ void DuckLakeTransaction::Commit() {
 	try {
 		if (ChangesMade()) {
 			FlushChanges();
+		} else if (!state->flushed_inlined_tables.empty()) {
+			// flushes of only empty inlined tables drop the superseded tables
+			GetConnection().Commit();
+			DropEmptySupersededInlinedTablesClientSide();
 		} else if (connection) {
 			connection->Commit();
-			if (!state->flushed_inlined_tables.empty()) {
-				DropEmptySupersededInlinedTablesClientSide();
-			}
 		}
 	} catch (...) {
 		// a failed commit never reaches Rollback - the transaction manager only reports the error
