@@ -65,6 +65,15 @@ struct DuckLakeRESTSerializer {
 	static void Write(RESTJsonOut out, const DuckLakeCompactionEntry &entry);
 	static DuckLakeCompactionEntry ReadCompactionEntry(RESTJsonIn in);
 
+	static void Write(RESTJsonOut out, const DuckLakeDeleteScanEntry &entry);
+	static DuckLakeDeleteScanEntry ReadDeleteScanEntry(RESTJsonIn in);
+	static void Write(RESTJsonOut out, const DuckLakeTableSizeInfo &table_size);
+	static DuckLakeTableSizeInfo ReadTableSizeInfo(RESTJsonIn in);
+	static void Write(RESTJsonOut out, const DuckLakeColumnMappingInfo &mapping);
+	static DuckLakeColumnMappingInfo ReadColumnMappingInfo(RESTJsonIn in);
+	static void Write(RESTJsonOut out, const DuckLakeConfigOption &option);
+	static DuckLakeConfigOption ReadConfigOption(RESTJsonIn in);
+
 	static void Write(RESTJsonOut out, const DuckLakeSnapshotInfo &snapshot);
 	static DuckLakeSnapshotInfo ReadSnapshotInfo(RESTJsonIn in);
 

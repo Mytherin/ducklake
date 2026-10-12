@@ -64,6 +64,8 @@ have additional fields:
 {"id": "ARRAY", "child": {"id": "DOUBLE"}, "size": 3}
 {"id": "MAP", "key": {"id": "VARCHAR"}, "value": {"id": "BIGINT"}}
 {"id": "STRUCT", "children": [{"name": "a", "type": {"id": "INTEGER"}}]}
+{"id": "GEOMETRY", "crs": "EPSG:4326"}
+{"id": "VARCHAR", "alias": "JSON"}
 ```
 
 Column types in table definitions use the type names of the DuckLake specification (e.g. `int32`, `varchar`), as they
@@ -83,6 +85,8 @@ Values whose type is known from the context (e.g. the rows of a table) are encod
 | `STRUCT`                         | JSON object with a field per child                              |
 | `LIST`, `ARRAY`                  | JSON array                                                      |
 | `MAP`                            | JSON array of `{"key": ..., "value": ...}` objects              |
+| `INTERVAL`                       | `{"months": 1, "days": 2, "micros": 3}`                         |
+| `VARIANT`                        | the value the variant holds, as a value without a known type (see below) |
 | everything else                  | the string representation of the value, e.g. `"2025-01-01"`    |
 
 Values without a known type (e.g. tags) are `null`, a JSON string for `VARCHAR` values, or an object
@@ -95,6 +99,44 @@ Values without a known type (e.g. tags) are `null`, a JSON string for `VARCHAR` 
 ```
 
 ## Read Endpoints
+
+### `table_sizes`
+
+Returns the storage used by each table at a snapshot. Request: `{"snapshot_id": 3}`, response:
+`{"tables": [{"schema_id": 0, "table_id": 1, "table_name": "t", "table_uuid": "...", "file_size_bytes": 100,
+"delete_file_size_bytes": 0, "file_count": 1, "delete_file_count": 0}]}`
+
+### `column_mappings`
+
+Returns the name maps (`ducklake_column_mapping` / `ducklake_name_mapping`) of files that were added with
+`ducklake_add_data_files`, starting from a mapping id. Request: `{"start_from": 5}`, response:
+
+```json
+{"mappings": [{"table_id": 1, "mapping_id": 5, "type": "map_by_name",
+               "columns": [{"column_id": 0, "source_name": "j", "target_field_id": 1, "hive_partition": false,
+                            "parent_column": null}]}]}
+```
+
+### `table_changes`
+
+Returns the files that hold the changes of a table between two snapshots, for change data feeds.
+
+| Parameter           | Description                                                                         |
+|---------------------|-------------------------------------------------------------------------------------|
+| `table_id`          | The table.                                                                          |
+| `start_snapshot_id` | The first snapshot of the range.                                                    |
+| `snapshot_id`       | The last snapshot of the range.                                                     |
+| `changes`           | `"insertions"`: the files with inserted rows, in the format of `select`. `"deletions"`: the files with deleted rows (below). |
+
+Deletions:
+
+```json
+{"files": [{"file": {...}, "delete_file": {...}, "previous_delete_file": {...}, "record_count": 10,
+            "row_id_start": 0, "mapping_id": null, "snapshot_id": 3, "file_deleted": false, "start_snapshot": 2,
+            "end_snapshot": 4, "file_id": 1, "inlined_file_deletions": [{"row_id": 3, "snapshot_id": 3}]}]}
+```
+
+Inlined changes are read with `read_inlined_data` in `insertions` / `deletions` mode.
 
 ### `config`
 
@@ -334,6 +376,13 @@ Response:
 
 These endpoints change the catalog directly, outside of a transaction.
 
+### `set_option`
+
+Sets or resets a DuckLake option (`ducklake_metadata`). Options apply immediately, outside of any transaction.
+
+Request: `{"option": {"key": "data_inlining_row_limit", "value": "10", "schema_id": null, "table_id": 1}, "reset": false}`.
+Response (for resets): `{"reset": true}` if the option was set.
+
 ### `expire_snapshots`
 
 Expires snapshots: removes them, together with the catalog entries and files that are only visible in them. The data
@@ -468,6 +517,16 @@ Expressions are SQL expressions.
 | `reset_options`      | `options`: `["<option>"]`                                                      |
 | `set_comment`        | `entry_type` (`TABLE_ENTRY` / `VIEW_ENTRY`), `comment`                         |
 | `set_column_comment` | `entry_type`, `column_name`, `comment`                                         |
+
+#### `create_name_map`
+
+Registers a name map for files that are inserted later in the transaction (see `column_mappings` for the format).
+`mapping.mapping_id` is an id of the client, which files of the transaction refer to with their `mapping_id`.
+
+| Parameter  | Description            |
+|------------|------------------------|
+| `table_id` | The table.             |
+| `mapping`  | The name map.          |
 
 #### `insert_rows`
 

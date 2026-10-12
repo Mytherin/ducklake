@@ -869,6 +869,127 @@ DuckLakeCompactionEntry DuckLakeRESTSerializer::ReadCompactionEntry(RESTJsonIn i
 	return result;
 }
 
+void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeDeleteScanEntry &entry) {
+	Write(out.Obj("file"), entry.file);
+	if (!entry.delete_file.path.empty()) {
+		Write(out.Obj("delete_file"), entry.delete_file);
+	}
+	if (!entry.previous_delete_file.path.empty()) {
+		Write(out.Obj("previous_delete_file"), entry.previous_delete_file);
+	}
+	out.SetUInt("record_count", entry.row_count);
+	out.SetOpt("row_id_start", entry.row_id_start);
+	SetIndex(out, "mapping_id", entry.mapping_id);
+	out.SetOpt("snapshot_id", entry.snapshot_id);
+	out.SetBool("file_deleted", entry.file_deleted);
+	out.SetOpt("start_snapshot", entry.start_snapshot);
+	out.SetOpt("end_snapshot", entry.end_snapshot);
+	SetIndex(out, "file_id", entry.file_id);
+	auto deletions = out.Arr("inlined_file_deletions");
+	for (auto &deletion : entry.inlined_file_deletions) {
+		auto deletion_out = deletions.AppendObj();
+		deletion_out.SetUInt("row_id", deletion.first);
+		deletion_out.SetUInt("snapshot_id", deletion.second);
+	}
+}
+
+DuckLakeDeleteScanEntry DuckLakeRESTSerializer::ReadDeleteScanEntry(RESTJsonIn in) {
+	DuckLakeDeleteScanEntry result;
+	result.file = ReadFileData(in.Get("file"));
+	auto delete_file = in.TryGet("delete_file");
+	if (!delete_file.IsNull()) {
+		result.delete_file = ReadFileData(delete_file);
+	}
+	auto previous_delete_file = in.TryGet("previous_delete_file");
+	if (!previous_delete_file.IsNull()) {
+		result.previous_delete_file = ReadFileData(previous_delete_file);
+	}
+	result.row_count = in.UInt("record_count");
+	result.row_id_start = in.Opt("row_id_start");
+	result.mapping_id = GetIndex<MappingIndex>(in, "mapping_id");
+	result.snapshot_id = in.Opt("snapshot_id");
+	result.file_deleted = in.Bool("file_deleted", false);
+	result.start_snapshot = in.Opt("start_snapshot");
+	result.end_snapshot = in.Opt("end_snapshot");
+	result.file_id = GetIndex<DataFileIndex>(in, "file_id");
+	for (auto &deletion : in.TryGet("inlined_file_deletions").Items()) {
+		result.inlined_file_deletions[deletion.UInt("row_id")] = deletion.UInt("snapshot_id");
+	}
+	return result;
+}
+
+void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeTableSizeInfo &table_size) {
+	SetIndex(out, "schema_id", table_size.schema_id);
+	SetIndex(out, "table_id", table_size.table_id);
+	out.SetStr("table_name", table_size.table_name);
+	out.SetStr("table_uuid", table_size.table_uuid);
+	out.SetUInt("file_size_bytes", table_size.file_size_bytes);
+	out.SetUInt("delete_file_size_bytes", table_size.delete_file_size_bytes);
+	out.SetUInt("file_count", table_size.file_count);
+	out.SetUInt("delete_file_count", table_size.delete_file_count);
+}
+
+DuckLakeTableSizeInfo DuckLakeRESTSerializer::ReadTableSizeInfo(RESTJsonIn in) {
+	DuckLakeTableSizeInfo result;
+	result.schema_id = GetIndex<SchemaIndex>(in, "schema_id");
+	result.table_id = GetIndex<TableIndex>(in, "table_id");
+	result.table_name = in.Str("table_name");
+	result.table_uuid = in.Str("table_uuid", string());
+	result.file_size_bytes = in.UInt("file_size_bytes", 0);
+	result.delete_file_size_bytes = in.UInt("delete_file_size_bytes", 0);
+	result.file_count = in.UInt("file_count", 0);
+	result.delete_file_count = in.UInt("delete_file_count", 0);
+	return result;
+}
+
+void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeColumnMappingInfo &mapping) {
+	SetIndex(out, "table_id", mapping.table_id);
+	SetIndex(out, "mapping_id", mapping.mapping_id);
+	out.SetStr("type", mapping.map_type);
+	auto columns = out.Arr("columns");
+	for (auto &column : mapping.map_columns) {
+		auto column_out = columns.AppendObj();
+		column_out.SetUInt("column_id", column.column_id);
+		column_out.SetStr("source_name", column.source_name);
+		SetIndex(column_out, "target_field_id", column.target_field_id);
+		column_out.SetBool("hive_partition", column.hive_partition);
+		column_out.SetOpt("parent_column", column.parent_column);
+	}
+}
+
+DuckLakeColumnMappingInfo DuckLakeRESTSerializer::ReadColumnMappingInfo(RESTJsonIn in) {
+	DuckLakeColumnMappingInfo result;
+	result.table_id = GetIndex<TableIndex>(in, "table_id");
+	result.mapping_id = GetIndex<MappingIndex>(in, "mapping_id");
+	result.map_type = in.Str("type", "map_by_name");
+	for (auto &column_in : in.TryGet("columns").Items()) {
+		DuckLakeNameMapColumnInfo column;
+		column.column_id = column_in.UInt("column_id");
+		column.source_name = column_in.Str("source_name");
+		column.target_field_id = GetIndex<FieldIndex>(column_in, "target_field_id");
+		column.hive_partition = column_in.Bool("hive_partition", false);
+		column.parent_column = column_in.Opt("parent_column");
+		result.map_columns.push_back(std::move(column));
+	}
+	return result;
+}
+
+void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeConfigOption &option) {
+	out.SetStr("key", option.option.key);
+	out.SetStr("value", option.option.value);
+	SetIndex(out, "schema_id", option.schema_id);
+	SetIndex(out, "table_id", option.table_id);
+}
+
+DuckLakeConfigOption DuckLakeRESTSerializer::ReadConfigOption(RESTJsonIn in) {
+	DuckLakeConfigOption result;
+	result.option.key = in.Str("key");
+	result.option.value = in.Str("value", string());
+	result.schema_id = GetIndex<SchemaIndex>(in, "schema_id");
+	result.table_id = GetIndex<TableIndex>(in, "table_id");
+	return result;
+}
+
 void DuckLakeRESTSerializer::Write(RESTJsonOut out, const DuckLakeSnapshotInfo &snapshot) {
 	out.SetUInt("snapshot_id", snapshot.id);
 	out.SetStr("snapshot_time", Value::TIMESTAMPTZ(snapshot.time).ToString());

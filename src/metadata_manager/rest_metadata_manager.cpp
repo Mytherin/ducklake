@@ -495,6 +495,82 @@ vector<string> RESTMetadataManager::GetKnownFilePaths() {
 	return result;
 }
 
+void RESTMetadataManager::SetConfigOption(const DuckLakeConfigOption &option) {
+	RESTJsonWriter request;
+	DuckLakeRESTSerializer::Write(request.Root().Obj("option"), option);
+	Post("set_option", request);
+}
+
+bool RESTMetadataManager::ResetConfigOption(const DuckLakeConfigOption &option) {
+	RESTJsonWriter request;
+	DuckLakeRESTSerializer::Write(request.Root().Obj("option"), option);
+	request.Root().SetBool("reset", true);
+	auto response = Post("set_option", request);
+	return response->Root().Bool("reset", false);
+}
+
+vector<DuckLakeTableSizeInfo> RESTMetadataManager::GetTableSizes(DuckLakeSnapshot snapshot) {
+	RESTJsonWriter request;
+	request.Root().SetUInt("snapshot_id", snapshot.snapshot_id);
+	auto response = Post("table_sizes", request);
+	vector<DuckLakeTableSizeInfo> result;
+	for (auto &table : response->Root().Get("tables").Items()) {
+		result.push_back(DuckLakeRESTSerializer::ReadTableSizeInfo(table));
+	}
+	return result;
+}
+
+vector<DuckLakeColumnMappingInfo> RESTMetadataManager::GetColumnMappings(optional_idx start_from) {
+	RESTJsonWriter request;
+	request.Root().SetOpt("start_from", start_from);
+	auto response = Post("column_mappings", request);
+	vector<DuckLakeColumnMappingInfo> result;
+	for (auto &mapping : response->Root().Get("mappings").Items()) {
+		result.push_back(DuckLakeRESTSerializer::ReadColumnMappingInfo(mapping));
+	}
+	return result;
+}
+
+unique_ptr<RESTJsonReader> RESTMetadataManager::GetTableChanges(DuckLakeTableEntry &table,
+                                                                DuckLakeSnapshot start_snapshot,
+                                                                DuckLakeSnapshot snapshot, const string &changes) {
+	RESTJsonWriter request;
+	auto root = request.Root();
+	root.SetUInt("table_id", table.GetTableId().index);
+	root.SetUInt("start_snapshot_id", start_snapshot.snapshot_id);
+	root.SetUInt("snapshot_id", snapshot.snapshot_id);
+	root.SetStr("changes", changes);
+	return Post("table_changes", request);
+}
+
+vector<DuckLakeFileListEntry> RESTMetadataManager::GetTableInsertions(DuckLakeTableEntry &table,
+                                                                      DuckLakeSnapshot start_snapshot,
+                                                                      DuckLakeSnapshot snapshot) {
+	vector<DuckLakeFileListEntry> result;
+	if (table.IsTransactionLocal()) {
+		return result;
+	}
+	auto response = GetTableChanges(table, start_snapshot, snapshot, "insertions");
+	for (auto &file : response->Root().Get("files").Items()) {
+		result.push_back(DuckLakeRESTSerializer::ReadFileListEntry(file));
+	}
+	return result;
+}
+
+vector<DuckLakeDeleteScanEntry> RESTMetadataManager::GetTableDeletions(DuckLakeTableEntry &table,
+                                                                       DuckLakeSnapshot start_snapshot,
+                                                                       DuckLakeSnapshot snapshot) {
+	vector<DuckLakeDeleteScanEntry> result;
+	if (table.IsTransactionLocal()) {
+		return result;
+	}
+	auto response = GetTableChanges(table, start_snapshot, snapshot, "deletions");
+	for (auto &file : response->Root().Get("files").Items()) {
+		result.push_back(DuckLakeRESTSerializer::ReadDeleteScanEntry(file));
+	}
+	return result;
+}
+
 void RESTMetadataManager::RemoveFilesScheduledForCleanup(const vector<DuckLakeFileForCleanup> &cleaned_up_files) {
 	RESTJsonWriter request;
 	auto file_ids = request.Root().Arr("data_file_ids");
@@ -766,6 +842,20 @@ void RESTMetadataManager::AddInserts(const TransactionChangeInformation &transac
 	}
 }
 
+void RESTMetadataManager::AddNameMaps(RESTJsonOut requests) {
+	for (auto &entry : transaction.GetNewNameMaps().name_maps) {
+		auto &name_map = *entry.second;
+		auto parameters = AddRequest(requests, "create_name_map");
+		parameters.SetInt("table_id", ToRequestId(name_map.table_id.index));
+		DuckLakeColumnMappingInfo mapping;
+		mapping.table_id = name_map.table_id;
+		mapping.mapping_id = name_map.id;
+		mapping.map_type = "map_by_name";
+		mapping.map_columns = name_map.FlattenColumns();
+		DuckLakeRESTSerializer::Write(parameters.Obj("mapping"), mapping);
+	}
+}
+
 void RESTMetadataManager::WriteDroppedFiles(RESTJsonOut parameters, TableIndex table_id) {
 	auto files = parameters.Arr("dropped_files");
 	auto entry = dropped_files.find(table_id);
@@ -785,9 +875,6 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
                                                  DuckLakeSnapshot transaction_snapshot,
                                                  const TransactionChangeInformation &transaction_changes,
                                                  const DuckLakeRetryConfig &retry_config) {
-	if (!flush_transaction.GetNewNameMaps().name_maps.empty()) {
-		throw NotImplementedException("DuckLake REST catalogs do not support name maps yet");
-	}
 	RESTJsonWriter commit_request;
 	auto root = commit_request.Root();
 	auto requests = root.Arr("requests");
@@ -798,6 +885,7 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 		requests.AppendRaw(commit_request.writer.CreateCopy(request.val));
 	}
 	// inserts go last, they are in the format of the tables at the end of the transaction
+	AddNameMaps(requests);
 	AddInserts(transaction_changes, requests);
 	auto &flushed_tables = flush_transaction.GetFlushedInlinedTables();
 	auto &flushed_file_deletions = flush_transaction.GetFlushedInlinedFileDeletions();

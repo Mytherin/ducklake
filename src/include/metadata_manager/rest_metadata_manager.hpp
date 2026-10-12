@@ -96,6 +96,14 @@ public:
 	void DeleteSnapshots(const vector<DuckLakeSnapshotInfo> &snapshots) override;
 	vector<DuckLakeFileForCleanup> GetOldFilesForCleanup(const string &older_than) override;
 	vector<string> GetKnownFilePaths() override;
+	void SetConfigOption(const DuckLakeConfigOption &option) override;
+	bool ResetConfigOption(const DuckLakeConfigOption &option) override;
+	vector<DuckLakeTableSizeInfo> GetTableSizes(DuckLakeSnapshot snapshot) override;
+	vector<DuckLakeColumnMappingInfo> GetColumnMappings(optional_idx start_from) override;
+	vector<DuckLakeFileListEntry> GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
+	                                                 DuckLakeSnapshot snapshot) override;
+	vector<DuckLakeDeleteScanEntry> GetTableDeletions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
+	                                                  DuckLakeSnapshot snapshot) override;
 	void RemoveFilesScheduledForCleanup(const vector<DuckLakeFileForCleanup> &cleaned_up_files) override;
 	idx_t GetNetDataFileRowCount(TableIndex table_id, DuckLakeSnapshot snapshot) override;
 	optional_idx GetNetDataFileRowCountForStats(TableIndex table_id, DuckLakeSnapshot snapshot) override;
@@ -123,6 +131,9 @@ private:
 	                                           bool include_stats);
 	void AddDeletes(const TransactionChangeInformation &changes, RESTJsonOut requests);
 	void AddInserts(const TransactionChangeInformation &changes, RESTJsonOut requests);
+	void AddNameMaps(RESTJsonOut requests);
+	unique_ptr<RESTJsonReader> GetTableChanges(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
+	                                           DuckLakeSnapshot snapshot, const string &changes);
 	void WriteDroppedFiles(RESTJsonOut parameters, TableIndex table_id);
 	optional_idx GetRowCount(DuckLakeSnapshot snapshot, const string &count, TableIndex table_id,
 	                         const string &table_name);

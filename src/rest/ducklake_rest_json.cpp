@@ -3,6 +3,10 @@
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/types/geometry_crs.hpp"
+#include "duckdb/common/types/variant.hpp"
+#include "duckdb/common/types/vector.hpp"
+#include "duckdb/function/scalar/variant_utils.hpp"
 
 #include <cmath>
 
@@ -286,7 +290,15 @@ JSONMutableValue RESTJson::TypeToJson(JSONWriter &writer, const LogicalType &typ
 	auto result = writer.CreateObject();
 	RESTJsonOut out(writer, result);
 	out.SetStr("id", EnumUtil::ToString(type.id()));
+	if (type.HasAlias()) {
+		out.SetStr("alias", type.GetAlias());
+	}
 	switch (type.id()) {
+	case LogicalTypeId::GEOMETRY:
+		if (GeoType::HasCRS(type)) {
+			out.SetStr("crs", GeoType::GetCRS(type).GetDefinition());
+		}
+		break;
 	case LogicalTypeId::DECIMAL:
 		out.SetUInt("width", DecimalType::GetWidth(type));
 		out.SetUInt("scale", DecimalType::GetScale(type));
@@ -317,27 +329,40 @@ JSONMutableValue RESTJson::TypeToJson(JSONWriter &writer, const LogicalType &typ
 	return result;
 }
 
-LogicalType RESTJson::TypeFromJson(RESTJsonIn json) {
+static LogicalType TypeFromJsonInternal(RESTJsonIn json) {
 	auto id = EnumUtil::FromString<LogicalTypeId>(json.Str("id"));
 	switch (id) {
+	case LogicalTypeId::VARIANT:
+		return LogicalType::VARIANT();
+	case LogicalTypeId::GEOMETRY:
+		return LogicalType::GEOMETRY(json.Str("crs", string()));
 	case LogicalTypeId::DECIMAL:
 		return LogicalType::DECIMAL(NumericCast<uint8_t>(json.UInt("width")), NumericCast<uint8_t>(json.UInt("scale")));
 	case LogicalTypeId::LIST:
-		return LogicalType::LIST(TypeFromJson(json.Get("child")));
+		return LogicalType::LIST(RESTJson::TypeFromJson(json.Get("child")));
 	case LogicalTypeId::ARRAY:
-		return LogicalType::ARRAY(TypeFromJson(json.Get("child")), json.UInt("size"));
+		return LogicalType::ARRAY(RESTJson::TypeFromJson(json.Get("child")), json.UInt("size"));
 	case LogicalTypeId::MAP:
-		return LogicalType::MAP(TypeFromJson(json.Get("key")), TypeFromJson(json.Get("value")));
+		return LogicalType::MAP(RESTJson::TypeFromJson(json.Get("key")), RESTJson::TypeFromJson(json.Get("value")));
 	case LogicalTypeId::STRUCT: {
 		child_list_t<LogicalType> children;
 		for (auto &child : json.Get("children").Items()) {
-			children.emplace_back(Identifier(child.Str("name")), TypeFromJson(child.Get("type")));
+			children.emplace_back(Identifier(child.Str("name")), RESTJson::TypeFromJson(child.Get("type")));
 		}
 		return LogicalType::STRUCT(std::move(children));
 	}
 	default:
 		return LogicalType(id);
 	}
+}
+
+LogicalType RESTJson::TypeFromJson(RESTJsonIn json) {
+	auto result = TypeFromJsonInternal(json);
+	auto alias = json.Str("alias", string());
+	if (!alias.empty()) {
+		result = result.WithAlias(std::move(alias));
+	}
+	return result;
 }
 
 JSONMutableValue RESTJson::TypedValueToJson(JSONWriter &writer, const Value &value) {
@@ -368,6 +393,22 @@ JSONMutableValue RESTJson::TypedValueToJson(JSONWriter &writer, const Value &val
 	}
 	case LogicalTypeId::VARCHAR:
 		return writer.CreateString(StringValue::Get(value));
+	case LogicalTypeId::INTERVAL: {
+		auto interval = IntervalValue::Get(value);
+		auto result = writer.CreateObject();
+		result.Add("months", writer.CreateSignedInteger(interval.months));
+		result.Add("days", writer.CreateSignedInteger(interval.days));
+		result.Add("micros", writer.CreateSignedInteger(interval.micros));
+		return result;
+	}
+	case LogicalTypeId::VARIANT: {
+		// the value the variant holds, with its type
+		Vector variant_vector(value, count_t(1));
+		RecursiveUnifiedVectorFormat format;
+		Vector::RecursiveToUnifiedFormat(variant_vector, format);
+		UnifiedVariantVectorData variant_data(format);
+		return ValueToJson(writer, VariantUtils::ConvertVariantToValue(variant_data, 0, 0));
+	}
 	case LogicalTypeId::STRUCT: {
 		auto result = writer.CreateObject();
 		auto &child_types = StructType::GetChildTypes(type);
@@ -404,11 +445,49 @@ JSONMutableValue RESTJson::TypedValueToJson(JSONWriter &writer, const Value &val
 	return writer.CreateString(value.ToString());
 }
 
+//! Variants keep the types of the values they hold, also of nested values
+static Value VariantFromValue(const Value &value) {
+	if (value.IsNull()) {
+		return Value(LogicalType::VARIANT());
+	}
+	switch (value.type().id()) {
+	case LogicalTypeId::STRUCT: {
+		child_list_t<Value> children;
+		auto &values = StructValue::GetChildren(value);
+		for (idx_t i = 0; i < values.size(); i++) {
+			children.emplace_back(StructType::GetChildName(value.type(), i), VariantFromValue(values[i]));
+		}
+		return Value::STRUCT(std::move(children)).DefaultCastAs(LogicalType::VARIANT());
+	}
+	case LogicalTypeId::LIST: {
+		vector<Value> children;
+		for (auto &child : ListValue::GetChildren(value)) {
+			children.push_back(VariantFromValue(child));
+		}
+		return Value::LIST(LogicalType::VARIANT(), std::move(children)).DefaultCastAs(LogicalType::VARIANT());
+	}
+	default:
+		return value.DefaultCastAs(LogicalType::VARIANT());
+	}
+}
+
 Value RESTJson::TypedValueFromJson(RESTJsonIn json, const LogicalType &type) {
 	if (json.IsNull()) {
 		return Value(type);
 	}
 	switch (type.id()) {
+	case LogicalTypeId::INTERVAL: {
+		if (!json.IsObject()) {
+			break;
+		}
+		interval_t interval;
+		interval.months = NumericCast<int32_t>(json.Int("months"));
+		interval.days = NumericCast<int32_t>(json.Int("days"));
+		interval.micros = json.Int("micros");
+		return Value::INTERVAL(interval);
+	}
+	case LogicalTypeId::VARIANT:
+		return VariantFromValue(ValueFromJson(json));
 	case LogicalTypeId::STRUCT: {
 		if (!json.IsObject()) {
 			break;
