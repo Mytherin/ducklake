@@ -139,6 +139,16 @@ static DuckLakeTableEntry &GetInlinedTableEntry(DuckLakeRESTRequest &request, Du
 	throw CatalogException("Table %llu has no inlined data table \"%s\"", table_id.index, inlined_table_name);
 }
 
+//! Rows that the client transaction deleted are not flushed, the request transaction is rolled back afterwards
+static void AddFlushDeletes(DuckLakeRESTRequest &request, RESTJsonIn input, DuckLakeTableEntry &table,
+                            const string &inlined_table_name) {
+	set<idx_t> row_ids;
+	for (auto &row_id : input.TryGet("deleted_row_ids").Items()) {
+		row_ids.insert(row_id.UInt());
+	}
+	request.transaction->AddNewInlinedDeletes(table.GetTableId(), inlined_table_name, std::move(row_ids));
+}
+
 //! The ORDER BY of a flush, parsed so that it can only contain ordering expressions
 static string GetFlushOrder(RESTJsonIn input) {
 	auto order_by = input.Str("order_by", string());
@@ -168,7 +178,7 @@ static void ReadInlinedDataEndpoint(DuckLakeRESTRequest &request, RESTJsonIn inp
 	if (mode == "scan") {
 		result = metadata_manager.ReadInlinedData(snapshot, table_name, columns);
 	} else if (mode == "insertions" || mode == "deletions") {
-		auto start_snapshot = request.GetSnapshotById(input.UInt("start_snapshot_id"));
+		auto start_snapshot = request.GetSnapshot(input, "start_snapshot");
 		if (mode == "insertions") {
 			result = metadata_manager.ReadInlinedDataInsertions(start_snapshot, snapshot, table_name, columns);
 		} else {
@@ -176,6 +186,7 @@ static void ReadInlinedDataEndpoint(DuckLakeRESTRequest &request, RESTJsonIn inp
 		}
 	} else if (mode == "flush") {
 		auto &table = GetInlinedTableEntry(request, snapshot, TableIndex(input.UInt("table_id")), table_name);
+		AddFlushDeletes(request, input, table, table_name);
 		result =
 		    metadata_manager.ReadAllInlinedDataForFlush(snapshot, table_name, table, GetFlushOrder(input), columns);
 	} else {
@@ -183,12 +194,14 @@ static void ReadInlinedDataEndpoint(DuckLakeRESTRequest &request, RESTJsonIn inp
 	}
 	result->ThrowIfError("Failed to read inlined data: ");
 	WriteQueryResult(output, *result);
+	request.connection.Rollback();
 }
 
 static void FlushedRowDeletionsEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
 	auto snapshot = request.GetSnapshot(input);
 	auto table_name = input.Str("table_name");
 	auto &table = GetInlinedTableEntry(request, snapshot, TableIndex(input.UInt("table_id")), table_name);
+	AddFlushDeletes(request, input, table, table_name);
 	vector<Value> partition_values;
 	for (auto &value : input.TryGet("partition_values").Items()) {
 		partition_values.push_back(RESTJson::ValueFromJson(value));
@@ -201,6 +214,7 @@ static void FlushedRowDeletionsEndpoint(DuckLakeRESTRequest &request, RESTJsonIn
 		deletion_out.SetUInt("position", deletion.position);
 		deletion_out.SetUInt("end_snapshot", deletion.end_snapshot);
 	}
+	request.connection.Rollback();
 }
 
 static void InlinedFileDeletionsEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
@@ -373,7 +387,7 @@ static void ColumnMappingsEndpoint(DuckLakeRESTRequest &request, RESTJsonIn inpu
 
 static void TableChangesEndpoint(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonOut output) {
 	auto snapshot = request.GetSnapshot(input);
-	auto start_snapshot = request.GetSnapshotById(input.UInt("start_snapshot_id"));
+	auto start_snapshot = request.GetSnapshot(input, "start_snapshot");
 	auto &table = GetTableEntry(request, snapshot, TableIndex(input.UInt("table_id")));
 	auto &metadata_manager = request.GetMetadataManager();
 	auto files = output.Arr("files");
@@ -424,6 +438,10 @@ private:
 	void CreateNameMap(RESTJsonIn parameters);
 	void SetOption(RESTJsonIn parameters);
 	void RemapNameMap(DuckLakeDataFile &file);
+	//! Maps the id of a partitioning that the client set to the id of the partitioning of the table
+	void RegisterPartition(DuckLakeTableEntry &table, RESTJsonIn parameters);
+	//! Files written for a partitioning that the transaction set refer to the partitioning of the client
+	void RemapPartition(DuckLakeTableEntry &table, DuckLakeDataFile &file);
 
 	DuckLakeSchemaEntry &GetSchema(RESTJsonIn schema_path);
 	//! The qualified name of an entry in a schema of the catalog
@@ -442,6 +460,8 @@ private:
 	map<TableIndex, SchemaIndex> local_table_schemas;
 	//! The name maps of the client transaction, by their id in the client transaction
 	map<idx_t, MappingIndex> name_map_ids;
+	//! The partitionings set by the client transaction, by their id in the client transaction
+	map<idx_t, idx_t> partition_ids;
 };
 
 DuckLakeSchemaEntry &DuckLakeRESTCommit::GetSchema(RESTJsonIn schema_path) {
@@ -559,6 +579,7 @@ void DuckLakeRESTCommit::CreateTable(RESTJsonIn parameters) {
 	}
 	auto table_id = entry->Cast<DuckLakeTableEntry>().GetTableId();
 	local_table_schemas[table_id] = schema.GetSchemaId();
+	RegisterPartition(entry->Cast<DuckLakeTableEntry>(), parameters);
 	auto placeholder = parameters.TryGet("table_id");
 	if (!placeholder.IsNull()) {
 		placeholder_ids[placeholder.Int()] = table_id;
@@ -596,6 +617,14 @@ void DuckLakeRESTCommit::Alter(RESTJsonIn parameters) {
 	                     OnEntryNotFound::THROW_EXCEPTION);
 	auto info = DuckLakeRESTCatalogChanges::ReadAlter(context, parameters.Get("alter"), entry);
 	catalog.Alter(context, *info);
+	if (parameters.Has("partition_id")) {
+		auto &schema = GetSchema(parameters.TryGet("schema_path"));
+		auto table = schema.GetEntry(catalog.GetCatalogTransaction(context), CatalogType::TABLE_ENTRY,
+		                             info->GetQualifiedName().Name());
+		if (table) {
+			RegisterPartition(table->Cast<DuckLakeTableEntry>(), parameters);
+		}
+	}
 }
 
 void DuckLakeRESTCommit::Drop(CatalogType type, RESTJsonIn parameters) {
@@ -668,6 +697,27 @@ void DuckLakeRESTCommit::CreateNameMap(RESTJsonIn parameters) {
 	auto client_id = mapping.mapping_id.index;
 	mapping.table_id = GetTable(GetTableId(parameters.Get("table_id"))).GetTableId();
 	name_map_ids[client_id] = transaction.AddNameMap(DuckLakeNameMap::FromColumnMapping(std::move(mapping)));
+}
+
+void DuckLakeRESTCommit::RegisterPartition(DuckLakeTableEntry &table, RESTJsonIn parameters) {
+	auto client_partition_id = parameters.TryGet("partition_id");
+	auto partition_data = table.GetPartitionData();
+	if (client_partition_id.IsNull() || !partition_data) {
+		return;
+	}
+	partition_ids[client_partition_id.UInt()] = partition_data->partition_id;
+}
+
+void DuckLakeRESTCommit::RemapPartition(DuckLakeTableEntry &table, DuckLakeDataFile &file) {
+	if (!file.partition_id.IsValid() || !DuckLakeTransaction::IsTransactionLocal(file.partition_id.GetIndex())) {
+		return;
+	}
+	auto entry = partition_ids.find(file.partition_id.GetIndex());
+	if (entry == partition_ids.end()) {
+		throw InvalidInputException("File \"%s\" refers to a partitioning that was not set in this transaction",
+		                            file.file_name);
+	}
+	file.partition_id = entry->second;
 }
 
 void DuckLakeRESTCommit::SetOption(RESTJsonIn parameters) {
@@ -763,6 +813,7 @@ void DuckLakeRESTCommit::InsertFiles(RESTJsonIn parameters) {
 	for (auto &file : parameters.Get("files").Items()) {
 		files.push_back(DuckLakeRESTSerializer::ReadDataFile(file));
 		RemapNameMap(files.back());
+		RemapPartition(table, files.back());
 	}
 	transaction.AppendFiles(table.GetTableId(), std::move(files));
 }

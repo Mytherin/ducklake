@@ -62,6 +62,9 @@ detached. This makes it possible to use (and test) every DuckLake feature throug
   conflicts, `404` for catalog errors (e.g. entries that do not exist), `400` for invalid input and `500` otherwise.
 * Identifiers (`snapshot_id`, `table_id`, `column_id`, ...) are the ids of the DuckLake specification.
 * Optional values are `null` or absent.
+* Read requests identify the snapshot to read with a `snapshot` object (as returned by `snapshot_data`), or with a
+  `snapshot_id`. A `snapshot` is used as-is, which also allows reading at snapshots that have been expired since the
+  client loaded them.
 * Paths of files are absolute.
 
 ### Types
@@ -467,6 +470,7 @@ when that is safe; otherwise it fails with a `409`.
 | `sorted_by`      | Optional, the sort keys as SQL expressions.                                         |
 | `options`        | Optional, table options as SQL expressions, e.g. `{"data_inlining_row_limit": "10"}`. |
 | `comment`        | Optional, the comment of the table.                                                 |
+| `partition_id`   | Optional, an id of the client for the partitioning of the table. Files that are inserted later in the transaction refer to the partitioning with it. |
 
 Columns get the field ids `1..n` in the order of the columns (nested fields are numbered depth-first), as in
 `CREATE TABLE`.
@@ -514,6 +518,7 @@ Schemas have to be empty when they are dropped.
 | `schema_path` | The schema of the table or view.            |
 | `name`        | The name of the table or view.              |
 | `alter`       | The change, one of the alterations below.   |
+| `partition_id`| For `set_partitioned_by`: optionally, an id of the client for the new partitioning (as for `create_table`). |
 
 Columns are referred to by name; nested fields by their path from the top-level column, e.g. `["s", "a"]`.
 Expressions are SQL expressions.

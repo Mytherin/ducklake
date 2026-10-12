@@ -7,6 +7,7 @@
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 #include "ducklake_extension.hpp"
+#include "rest/ducklake_rest_serialization.hpp"
 #include "functions/ducklake_table_functions.hpp"
 #include "storage/ducklake_catalog.hpp"
 #include "storage/ducklake_transaction.hpp"
@@ -38,8 +39,12 @@ DuckLakeSnapshot DuckLakeRESTRequest::GetSnapshotById(idx_t snapshot_id) {
 	return transaction->GetSnapshot(at_clause);
 }
 
-DuckLakeSnapshot DuckLakeRESTRequest::GetSnapshot(RESTJsonIn request) {
-	auto snapshot_id = request.TryGet("snapshot_id");
+DuckLakeSnapshot DuckLakeRESTRequest::GetSnapshot(RESTJsonIn request, const string &key) {
+	auto snapshot = request.TryGet(key);
+	if (!snapshot.IsNull()) {
+		return DuckLakeRESTSerializer::ReadSnapshot(snapshot);
+	}
+	auto snapshot_id = request.TryGet(key + "_id");
 	if (snapshot_id.IsNull()) {
 		return transaction->GetSnapshot();
 	}

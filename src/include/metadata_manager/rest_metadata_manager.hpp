@@ -39,9 +39,7 @@ public:
 	bool CanSkipSnapshotFetch(const TransactionChangeInformation &changes) const override {
 		return true;
 	}
-	bool HasPendingChanges() const override {
-		return catalog_request_count > 0;
-	}
+	bool HasPendingChanges() const override;
 	void FlushChangesServerSide(DuckLakeTransaction &transaction, DuckLakeSnapshot transaction_snapshot,
 	                            const TransactionChangeInformation &transaction_changes,
 	                            const DuckLakeRetryConfig &retry_config) override;
@@ -120,6 +118,7 @@ public:
 	void OnCreateMacro(MacroCatalogEntry &macro) override;
 	void OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) override;
 	void OnDropEntry(CatalogEntry &entry) override;
+	void OnEntryChanged(CatalogEntry &entry) override;
 	void OnDropFile(TableIndex table_id, DataFileIndex data_file_id, const string &path, idx_t row_count,
 	                idx_t file_size_bytes) override;
 
@@ -135,6 +134,7 @@ private:
 	void AddDeletes(const TransactionChangeInformation &changes, RESTJsonOut requests);
 	void AddInserts(const TransactionChangeInformation &changes, RESTJsonOut requests);
 	void AddNameMaps(RESTJsonOut requests);
+	void WriteTransactionDeletes(RESTJsonOut out, const DuckLakeTableEntry &table, const string &inlined_table_name);
 	unique_ptr<RESTJsonReader> GetTableChanges(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
 	                                           DuckLakeSnapshot snapshot, const string &changes);
 	void WriteDroppedFiles(RESTJsonOut parameters, TableIndex table_id);
@@ -146,6 +146,8 @@ private:
 	RESTJsonWriter catalog_requests;
 	RESTJsonOut catalog_change_requests;
 	idx_t catalog_request_count = 0;
+	//! The parameters of the last catalog change, which OnEntryChanged completes
+	RESTJsonOut last_catalog_change;
 	//! The data files dropped by the transaction, by table
 	map<TableIndex, vector<DuckLakeFileListEntry>> dropped_files;
 };

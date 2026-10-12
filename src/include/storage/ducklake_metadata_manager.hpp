@@ -238,6 +238,9 @@ public:
 	}
 	virtual void OnDropEntry(CatalogEntry &entry) {
 	}
+	//! Invoked with the new version of an entry that the transaction created or altered
+	virtual void OnEntryChanged(CatalogEntry &entry) {
+	}
 	virtual void OnDropFile(TableIndex table_id, DataFileIndex data_file_id, const string &path, idx_t row_count,
 	                        idx_t file_size_bytes) {
 	}

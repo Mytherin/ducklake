@@ -243,7 +243,10 @@ void DuckLakeInitializer::LoadExistingDuckLake(DuckLakeTransaction &transaction,
 	auto metadata = metadata_manager.LoadDuckLake();
 	DuckLakeVersion resolved_version = DuckLakeVersion::UNSET;
 	for (auto &tag : metadata.tags) {
-		if (tag.key == "version") {
+		if (tag.key == "version" && metadata_manager.IsRemote()) {
+			// the server takes care of migrating the metadata
+			resolved_version = DuckLakeVersionFromString(tag.value);
+		} else if (tag.key == "version") {
 			auto catalog_version = DuckLakeVersionFromString(tag.value);
 			auto target_version = ResolveTargetVersion(catalog_version, tag.value);
 			if (catalog_version > target_version) {

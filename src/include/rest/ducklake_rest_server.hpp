@@ -32,8 +32,9 @@ public:
 	DuckLakeRESTRequest(DatabaseInstance &db, const string &catalog_name);
 
 	DuckLakeMetadataManager &GetMetadataManager();
-	//! The snapshot of the "snapshot_id" field, or the latest snapshot if it is absent
-	DuckLakeSnapshot GetSnapshot(RESTJsonIn request);
+	//! The snapshot of a request: the "snapshot" object, the snapshot with the id "snapshot_id", or the latest
+	//! snapshot if both are absent
+	DuckLakeSnapshot GetSnapshot(RESTJsonIn request, const string &key = "snapshot");
 	DuckLakeSnapshot GetSnapshotById(idx_t snapshot_id);
 
 	Connection connection;
