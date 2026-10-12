@@ -27,6 +27,7 @@ SELECT listen_uri FROM ducklake_rest_serve('ducklake:metadata.ducklake', port :=
 | `port`           | The port to listen on, `0` (the default) picks a free port.                             |
 | `attach_options` | Options for the isolated `ATTACH`, e.g. `DATA_PATH '...'`.                               |
 | `wait`           | Block until the server is stopped, e.g. to run a server from the CLI.                    |
+| `token`          | Require requests to carry this token (`Authorization: Bearer <token>`).                  |
 
 The function returns the `listen_uri` of the server. Starting a server on a port that is in use by another server of
 the same process replaces that server. `ducklake_rest_stop(listen_uri)` stops a server.
@@ -36,6 +37,8 @@ the same process replaces that server. `ducklake_rest_stop(listen_uri)` stops a 
 ```sql
 ATTACH 'ducklake:rest:http://localhost:8181' AS lake;
 ```
+
+A server that requires a token is attached with `ATTACH 'ducklake:rest:http://localhost:8181' AS lake (META_TOKEN '...')`.
 
 The client reads the data path and the options of the DuckLake from the server. Data files are read and written by the
 client directly, so the data path has to be accessible from both the client and the server.
@@ -59,7 +62,8 @@ detached. This makes it possible to use (and test) every DuckLake feature throug
 * Each request runs in a transaction of its own on the server.
 * Errors are reported with a non-200 status code and a body of the form
   `{"error": {"type": "<DuckDB exception type>", "message": "..."}}`. The status code is `409` for transaction
-  conflicts, `404` for catalog errors (e.g. entries that do not exist), `400` for invalid input and `500` otherwise.
+  conflicts, `404` for catalog errors (e.g. entries that do not exist), `400` for invalid input, `401` for a missing or
+  invalid token and `500` otherwise.
 * Identifiers (`snapshot_id`, `table_id`, `column_id`, ...) are the ids of the DuckLake specification.
 * Optional values are `null` or absent.
 * Read requests identify the snapshot to read with a `snapshot` object (as returned by `snapshot_data`), or with a

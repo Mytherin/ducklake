@@ -53,6 +53,10 @@ public:
 
 	//! Binds the socket and starts serving in the background, returns the bound port
 	idx_t Start(const string &host, idx_t port, idx_t thread_count = 0);
+	//! Requests have to carry the token as a bearer token, if it is set
+	void SetToken(string token_p) {
+		token = std::move(token_p);
+	}
 	void Stop();
 	//! Blocks until the server is stopped
 	void Wait();
@@ -73,6 +77,7 @@ private:
 	weak_ptr<DatabaseInstance> db;
 	shared_ptr<DatabaseInstance> owned_db;
 	string catalog_name;
+	string token;
 	unique_ptr<duckdb_httplib::Server> server;
 	std::thread server_thread;
 	string listen_uri;

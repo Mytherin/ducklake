@@ -7,7 +7,8 @@
 
 namespace duckdb {
 
-DuckLakeRESTClient::DuckLakeRESTClient(string base_url_p) : base_url(std::move(base_url_p)) {
+DuckLakeRESTClient::DuckLakeRESTClient(string base_url_p, string token_p)
+    : base_url(std::move(base_url_p)), token(std::move(token_p)) {
 	StringUtil::RTrim(base_url, "/");
 }
 
@@ -38,7 +39,11 @@ void DuckLakeRESTClient::ReturnConnection(unique_ptr<duckdb_httplib::Client> con
 unique_ptr<RESTJsonReader> DuckLakeRESTClient::Post(const string &endpoint, const RESTJsonWriter &request) {
 	auto body = request.ToString();
 	auto connection = GetConnection();
-	auto result = connection->Post("/v1/" + endpoint, body, "application/json");
+	duckdb_httplib::Headers headers;
+	if (!token.empty()) {
+		headers.emplace("Authorization", "Bearer " + token);
+	}
+	auto result = connection->Post("/v1/" + endpoint, headers, body, "application/json");
 	if (!result) {
 		throw IOException("Failed to send DuckLake REST request \"%s\" to %s: %s", endpoint, base_url,
 		                  duckdb_httplib::to_string(result.error()));

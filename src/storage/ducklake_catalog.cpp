@@ -341,7 +341,12 @@ DuckLakeRESTClient &DuckLakeCatalog::GetRESTClient() {
 		if (StringUtil::StartsWith(url, "rest:")) {
 			url = url.substr(5);
 		}
-		rest_client = make_shared_ptr<DuckLakeRESTClient>(std::move(url));
+		string token;
+		auto entry = options.metadata_parameters.find("token");
+		if (entry != options.metadata_parameters.end()) {
+			token = entry->second.ToString();
+		}
+		rest_client = make_shared_ptr<DuckLakeRESTClient>(std::move(url), std::move(token));
 	}
 	return *rest_client;
 }

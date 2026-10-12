@@ -21,7 +21,8 @@ namespace duckdb {
 //! Sends requests to a DuckLake REST server, the connections to the server are pooled
 class DuckLakeRESTClient {
 public:
-	explicit DuckLakeRESTClient(string base_url);
+	//! Requests carry the token as a bearer token, if it is set
+	DuckLakeRESTClient(string base_url, string token);
 	~DuckLakeRESTClient();
 
 	//! Sends the request to an endpoint, rethrows the error reported by the server
@@ -41,6 +42,7 @@ private:
 
 private:
 	string base_url;
+	string token;
 	mutex lock;
 	vector<unique_ptr<duckdb_httplib::Client>> idle_connections;
 };

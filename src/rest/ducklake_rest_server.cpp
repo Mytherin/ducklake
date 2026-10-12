@@ -134,6 +134,15 @@ idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_cou
 	}
 	auto handler = [this](const duckdb_httplib::Request &req, duckdb_httplib::Response &res) {
 		string response;
+		if (!token.empty() && req.get_header_value("Authorization") != "Bearer " + token) {
+			RESTJsonWriter output;
+			auto error = output.Root().Obj("error");
+			error.SetStr("type", Exception::ExceptionTypeToString(ExceptionType::PERMISSION));
+			error.SetStr("message", "Missing or invalid token for the DuckLake REST server");
+			res.status = 401;
+			res.set_content(output.ToString(), "application/json");
+			return;
+		}
 		res.status = HandleRequest(req.path.substr(ENDPOINT_PREFIX.size()), req.body, response);
 		res.set_content(response, "application/json");
 	};
@@ -280,6 +289,7 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	auto port_val = GetNamedParameter(input, "port");
 	auto options_val = GetNamedParameter(input, "attach_options");
 	auto wait_val = GetNamedParameter(input, "wait");
+	auto token_val = GetNamedParameter(input, "token");
 	string host = host_val.IsNull() ? "localhost" : StringValue::Get(host_val);
 	idx_t port = port_val.IsNull() ? 0 : port_val.GetValue<idx_t>();
 	string attach_options = options_val.IsNull() ? string() : StringValue::Get(options_val);
@@ -296,6 +306,9 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 			throw BinderException("ducklake_rest_serve: catalog \"%s\" is not a DuckLake catalog", target_str);
 		}
 		server = make_uniq<DuckLakeRESTServer>(context.db, target_str);
+	}
+	if (!token_val.IsNull()) {
+		server->SetToken(StringValue::Get(token_val));
 	}
 	auto &registry = DuckLakeRESTServerRegistry::Get();
 	auto listen_uri = registry.Start(std::move(server), host, port);
@@ -340,7 +353,8 @@ DuckLakeRESTServeFunction::DuckLakeRESTServeFunction()
 		options.Add("host", LogicalType::VARCHAR)
 		    .Add("port", LogicalType::UBIGINT)
 		    .Add("attach_options", LogicalType::VARCHAR)
-		    .Add("wait", LogicalType::BOOLEAN);
+		    .Add("wait", LogicalType::BOOLEAN)
+		    .Add("token", LogicalType::VARCHAR);
 	});
 }
 

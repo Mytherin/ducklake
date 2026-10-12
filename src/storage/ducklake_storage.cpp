@@ -81,7 +81,7 @@ static void ServeLocalDuckLakeOverREST(DuckLakeOptions &options, const AttachOpt
 	for (auto &entry : attach_options.options) {
 		auto option = StringUtil::Lower(entry.first);
 		if (option == "snapshot_version" || option == "snapshot_time" || option == "busy_timeout" ||
-		    option == "metadata_catalog") {
+		    option == "metadata_catalog" || option == "meta_token") {
 			continue;
 		}
 		server_options.push_back(entry.first + " " + entry.second.ToSQLString());
