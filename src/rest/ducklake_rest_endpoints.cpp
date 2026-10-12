@@ -399,6 +399,8 @@ private:
 	DuckLakeCatalog &catalog;
 	ClientContext &context;
 	map<int64_t, TableIndex> placeholder_ids;
+	//! The schemas of the tables created by the transaction
+	map<TableIndex, SchemaIndex> local_table_schemas;
 };
 
 DuckLakeSchemaEntry &DuckLakeRESTCommit::GetSchema(RESTJsonIn schema_path) {
@@ -439,16 +441,28 @@ TableIndex DuckLakeRESTCommit::GetTableId(RESTJsonIn id) {
 }
 
 DuckLakeTableEntry &DuckLakeRESTCommit::GetTable(TableIndex table_id) {
-	optional_ptr<CatalogEntry> entry;
-	if (DuckLakeTransaction::IsTransactionLocal(table_id.index)) {
-		entry = transaction.GetLocalEntryById(table_id);
-	} else {
-		entry = catalog.GetEntryById(transaction, transaction.GetSnapshot(), table_id);
-	}
-	if (!entry || entry->type != CatalogType::TABLE_ENTRY) {
+	if (!DuckLakeTransaction::IsTransactionLocal(table_id.index)) {
+		auto entry = catalog.GetEntryById(transaction, transaction.GetSnapshot(), table_id);
+		if (entry && entry->type == CatalogType::TABLE_ENTRY) {
+			return entry->Cast<DuckLakeTableEntry>();
+		}
 		throw CatalogException("Table with id %llu does not exist", table_id.index);
 	}
-	return entry->Cast<DuckLakeTableEntry>();
+	// tables created by the transaction are not in the id map of their catalog set
+	auto schema_id = local_table_schemas.find(table_id);
+	if (schema_id != local_table_schemas.end()) {
+		auto local_entries = transaction.GetTransactionLocalEntries(CatalogType::TABLE_ENTRY, schema_id->second);
+		if (local_entries) {
+			for (auto &local_entry : local_entries->GetEntries()) {
+				auto &catalog_entry = *local_entry.second;
+				if (catalog_entry.type == CatalogType::TABLE_ENTRY &&
+				    catalog_entry.Cast<DuckLakeTableEntry>().GetTableId() == table_id) {
+					return catalog_entry.Cast<DuckLakeTableEntry>();
+				}
+			}
+		}
+	}
+	throw CatalogException("Table with id %llu does not exist", table_id.index);
 }
 
 void DuckLakeRESTCommit::CreateSchema(RESTJsonIn parameters) {
@@ -502,9 +516,11 @@ void DuckLakeRESTCommit::CreateTable(RESTJsonIn parameters) {
 	if (!entry) {
 		throw CatalogException("Table \"%s\" already exists", parameters.Str("table_name"));
 	}
+	auto table_id = entry->Cast<DuckLakeTableEntry>().GetTableId();
+	local_table_schemas[table_id] = schema.GetSchemaId();
 	auto placeholder = parameters.TryGet("table_id");
 	if (!placeholder.IsNull()) {
-		placeholder_ids[placeholder.Int()] = entry->Cast<DuckLakeTableEntry>().GetTableId();
+		placeholder_ids[placeholder.Int()] = table_id;
 	}
 }
 

@@ -2173,14 +2173,6 @@ optional_ptr<CatalogEntry> DuckLakeTransaction::GetLocalEntryById(TableIndex tab
 		if (entry) {
 			return entry;
 		}
-		// entries created by the transaction are not in the id map
-		for (auto &local_entry : schema_entry.second->GetEntries()) {
-			auto &catalog_entry = *local_entry.second;
-			if (catalog_entry.type == CatalogType::TABLE_ENTRY &&
-			    catalog_entry.Cast<DuckLakeTableEntry>().GetTableId() == table_id) {
-				return catalog_entry;
-			}
-		}
 	}
 	return nullptr;
 }
