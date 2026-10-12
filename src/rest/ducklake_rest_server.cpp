@@ -157,11 +157,11 @@ idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_cou
 	const string pattern = R"(/v1/([a-z_]+))";
 	server->Get(pattern, handler);
 	server->Post(pattern, handler);
-	int bound_port;
+	int32_t bound_port;
 	if (port == 0) {
 		bound_port = server->bind_to_any_port(host);
 	} else {
-		bound_port = server->bind_to_port(host, NumericCast<int>(port)) ? NumericCast<int>(port) : -1;
+		bound_port = server->bind_to_port(host, NumericCast<int32_t>(port)) ? NumericCast<int32_t>(port) : -1;
 	}
 	if (bound_port < 0) {
 		throw IOException("Failed to start DuckLake REST server on %s:%llu", host, port);
