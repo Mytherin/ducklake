@@ -158,6 +158,41 @@ struct RESTStringCodec : public RESTCodec<RESTStringCodec> {
 	}
 };
 
+//! Maps paths between the data path of a client and the data path of the server, for clients that have another view of
+//! the data path (e.g. another mount point). Paths outside of the data paths are not mapped.
+class RESTPathMapper {
+public:
+	RESTPathMapper(string client_path, string server_path);
+
+	string ToServer(const string &path) const;
+	string ToClient(const string &path) const;
+
+private:
+	static string Map(const string &path, const string &from, const string &to);
+
+private:
+	string client_path;
+	string server_path;
+};
+
+//! The path mapper for the paths that the current thread writes and reads, see DuckLakeRESTClientAPI
+class RESTPathScope {
+public:
+	explicit RESTPathScope(optional_ptr<const RESTPathMapper> mapper);
+	~RESTPathScope();
+
+	static optional_ptr<const RESTPathMapper> Current();
+
+private:
+	optional_ptr<const RESTPathMapper> previous;
+};
+
+//! Paths of files and directories, which are mapped to and from the data path of the server by clients
+struct RESTPathCodec : public RESTCodec<RESTPathCodec> {
+	static JSONMutableValue Write(JSONWriter &writer, const string &value);
+	static void Read(RESTJsonIn in, string &result);
+};
+
 struct RESTBoolCodec : public RESTCodec<RESTBoolCodec> {
 	static JSONMutableValue Write(JSONWriter &writer, bool value) {
 		return writer.CreateBoolean(value);

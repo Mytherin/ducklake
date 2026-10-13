@@ -38,6 +38,7 @@ ENDPOINT_KINDS = ['read', 'maintenance', 'transaction', 'commit']
 # primitive type -> (codec, C++ type, C++ type when nullable, description)
 PRIMITIVES = {
     'string': ('RESTStringCodec', 'string', 'string', 'string'),
+    'path': ('RESTPathCodec', 'string', 'string', 'path'),
     'bool': ('RESTBoolCodec', 'bool', 'RESTOptional<bool>', 'boolean'),
     'uint64': ('RESTUInt64Codec', 'idx_t', 'optional_idx', 'unsigned integer'),
     'int64': ('RESTInt64Codec', 'int64_t', 'RESTOptional<int64_t>', 'integer'),
@@ -469,7 +470,7 @@ class Spec:
                 return str(int(value))
             if expr.name == 'double':
                 return repr(float(value))
-            if expr.name == 'string':
+            if expr.name in ('string', 'path'):
                 return f'string({cpp_string(value)})'
         if expr.kind == 'named':
             entry = self.types[expr.name]
@@ -1227,6 +1228,11 @@ def generate_header(spec):
         lines.extend(doc_comment(endpoint.summary, '\t'))
         lines.append(f'\t{result} {endpoint.cpp_name}(const {endpoint.request.cpp_name} &request);')
     lines.append('')
+    lines.append('\t//! Maps the paths of the requests and responses to and from the data path of the server, if set')
+    lines.append('\tvirtual optional_ptr<const RESTPathMapper> GetPathMapper() const {')
+    lines.append('\t\treturn nullptr;')
+    lines.append('\t}')
+    lines.append('')
     lines.append('\t//! Sends the JSON body of a request to an endpoint, returns the JSON body of the response')
     lines.append('\t//! Rethrows the error reported by the server')
     lines.append('\tvirtual string Post(const string &endpoint, const string &body) = 0;')
@@ -1493,6 +1499,7 @@ def generate_source(spec):
         lines.append(
             f'{result} DuckLakeRESTClientAPI::{endpoint.cpp_name}(const {endpoint.request.cpp_name} &request) {{'
         )
+        lines.append('\tRESTPathScope paths(GetPathMapper());')
         post = f'Post({cpp_string(endpoint.name)}, DuckLakeRESTSerializer::ToJSON(request))'
         if response:
             lines.append(f'\tRESTJsonReader document({post});')

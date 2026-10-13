@@ -1118,7 +1118,7 @@ RESTCreatedTable DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeDataFile &value) {
 	auto result = writer.CreateObject();
-	result.Add("path", RESTWriteValue<RESTStringCodec>(writer, value.file_name));
+	result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.file_name));
 	result.Add("record_count", RESTWriteValue<RESTUInt64Codec>(writer, value.row_count));
 	result.Add("file_size_bytes", RESTWriteValue<RESTUInt64Codec>(writer, value.file_size_bytes));
 	if (!RESTIsNull(value.footer_size)) {
@@ -1167,7 +1167,7 @@ DuckLakeDataFile DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for DataFile");
 	}
 	DuckLakeDataFile result;
-	RESTReadValue<RESTStringCodec>(in.Get("path"), result.file_name);
+	RESTReadValue<RESTPathCodec>(in.Get("path"), result.file_name);
 	RESTReadValue<RESTUInt64Codec>(in.Get("record_count"), result.row_count);
 	RESTReadValue<RESTUInt64Codec>(in.Get("file_size_bytes"), result.file_size_bytes);
 	{
@@ -1254,8 +1254,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	if (!RESTIsNull(value.data_file_id)) {
 		result.Add("data_file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.data_file_id));
 	}
-	result.Add("data_file_path", RESTWriteValue<RESTStringCodec>(writer, value.data_file_path));
-	result.Add("path", RESTWriteValue<RESTStringCodec>(writer, value.file_name));
+	result.Add("data_file_path", RESTWriteValue<RESTPathCodec>(writer, value.data_file_path));
+	result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.file_name));
 	result.Add("format", RESTWriteValue<RESTFileFormatCodec>(writer, value.format));
 	result.Add("delete_count", RESTWriteValue<RESTUInt64Codec>(writer, value.delete_count));
 	result.Add("file_size_bytes", RESTWriteValue<RESTUInt64Codec>(writer, value.file_size_bytes));
@@ -1270,7 +1270,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 		           RESTWriteValue<RESTUInt64Codec>(writer, value.overwritten_delete_file.delete_file_id));
 	}
 	result.Add("overwritten_delete_file_path",
-	           RESTWriteValue<RESTStringCodec>(writer, value.overwritten_delete_file.path));
+	           RESTWriteValue<RESTPathCodec>(writer, value.overwritten_delete_file.path));
 	if (!RESTIsNull(value.begin_snapshot)) {
 		result.Add("begin_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.begin_snapshot));
 	}
@@ -1296,12 +1296,12 @@ DuckLakeDeleteFile DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("data_file_path");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.data_file_path);
+			RESTReadValue<RESTPathCodec>(entry, result.data_file_path);
 		} else {
 			result.data_file_path = string("");
 		}
 	}
-	RESTReadValue<RESTStringCodec>(in.Get("path"), result.file_name);
+	RESTReadValue<RESTPathCodec>(in.Get("path"), result.file_name);
 	{
 		auto entry = in.TryGet("format");
 		if (!entry.IsNull()) {
@@ -1351,7 +1351,7 @@ DuckLakeDeleteFile DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("overwritten_delete_file_path");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.overwritten_delete_file.path);
+			RESTReadValue<RESTPathCodec>(entry, result.overwritten_delete_file.path);
 		} else {
 			result.overwritten_delete_file.path = string("");
 		}
@@ -1534,7 +1534,7 @@ RESTDropNotNull DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDroppedFile &value) {
 	auto result = writer.CreateObject();
 	result.Add("data_file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.data_file_id));
-	result.Add("path", RESTWriteValue<RESTStringCodec>(writer, value.path));
+	result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.path));
 	result.Add("record_count", RESTWriteValue<RESTUInt64Codec>(writer, value.record_count));
 	result.Add("file_size_bytes", RESTWriteValue<RESTUInt64Codec>(writer, value.file_size_bytes));
 	return result;
@@ -1547,7 +1547,7 @@ RESTDroppedFile DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	}
 	RESTDroppedFile result;
 	RESTReadValue<RESTUInt64Codec>(in.Get("data_file_id"), result.data_file_id);
-	RESTReadValue<RESTStringCodec>(in.Get("path"), result.path);
+	RESTReadValue<RESTPathCodec>(in.Get("path"), result.path);
 	RESTReadValue<RESTUInt64Codec>(in.Get("record_count"), result.record_count);
 	RESTReadValue<RESTUInt64Codec>(in.Get("file_size_bytes"), result.file_size_bytes);
 	return result;
@@ -1667,7 +1667,7 @@ DuckLakeFileColumnStats DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeFileData &value) {
 	auto result = writer.CreateObject();
-	result.Add("path", RESTWriteValue<RESTStringCodec>(writer, value.path));
+	result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.path));
 	result.Add("encryption_key", RESTWriteValue<RESTStringCodec>(writer, value.encryption_key));
 	result.Add("file_size_bytes", RESTWriteValue<RESTUInt64Codec>(writer, value.file_size_bytes));
 	if (!RESTIsNull(value.footer_size)) {
@@ -1683,7 +1683,7 @@ DuckLakeFileData DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for FileData");
 	}
 	DuckLakeFileData result;
-	RESTReadValue<RESTStringCodec>(in.Get("path"), result.path);
+	RESTReadValue<RESTPathCodec>(in.Get("path"), result.path);
 	{
 		auto entry = in.TryGet("encryption_key");
 		if (!entry.IsNull()) {
@@ -1720,7 +1720,7 @@ DuckLakeFileData DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeFileForCleanup &value) {
 	auto result = writer.CreateObject();
 	result.Add("data_file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.id));
-	result.Add("path", RESTWriteValue<RESTStringCodec>(writer, value.path));
+	result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.path));
 	result.Add("schedule_start", RESTWriteValue<RESTTimestampCodec>(writer, value.time));
 	return result;
 }
@@ -1732,7 +1732,7 @@ DuckLakeFileForCleanup DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	}
 	DuckLakeFileForCleanup result;
 	RESTReadValue<RESTUInt64Codec>(in.Get("data_file_id"), result.id);
-	RESTReadValue<RESTStringCodec>(in.Get("path"), result.path);
+	RESTReadValue<RESTPathCodec>(in.Get("path"), result.path);
 	RESTReadValue<RESTTimestampCodec>(in.Get("schedule_start"), result.time);
 	return result;
 }
@@ -2210,7 +2210,7 @@ DuckLakeGlobalStatsInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeInlinedFileDeletionEntry &value) {
 	auto result = writer.CreateObject();
 	result.Add("data_file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.file_id));
-	result.Add("data_file_path", RESTWriteValue<RESTStringCodec>(writer, value.data_file_path));
+	result.Add("data_file_path", RESTWriteValue<RESTPathCodec>(writer, value.data_file_path));
 	result.Add("row_id", RESTWriteValue<RESTUInt64Codec>(writer, value.row_id));
 	result.Add("begin_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.begin_snapshot));
 	if (!RESTIsNull(value.delete_file_id)) {
@@ -2230,7 +2230,7 @@ DuckLakeInlinedFileDeletionEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	}
 	DuckLakeInlinedFileDeletionEntry result;
 	RESTReadValue<RESTUInt64Codec>(in.Get("data_file_id"), result.file_id);
-	RESTReadValue<RESTStringCodec>(in.Get("data_file_path"), result.data_file_path);
+	RESTReadValue<RESTPathCodec>(in.Get("data_file_path"), result.data_file_path);
 	RESTReadValue<RESTUInt64Codec>(in.Get("row_id"), result.row_id);
 	RESTReadValue<RESTUInt64Codec>(in.Get("begin_snapshot"), result.begin_snapshot);
 	{
@@ -2953,7 +2953,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	}
 	result.Add("schema_uuid", RESTWriteValue<RESTStringCodec>(writer, value.uuid));
 	result.Add("schema_name", RESTWriteValue<RESTStringCodec>(writer, value.name));
-	result.Add("path", RESTWriteValue<RESTStringCodec>(writer, value.path));
+	result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.path));
 	result.Add("tags", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeTag>>>(writer, value.tags));
 	return result;
 }
@@ -2988,7 +2988,7 @@ DuckLakeSchemaInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("path");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.path);
+			RESTReadValue<RESTPathCodec>(entry, result.path);
 		} else {
 			result.path = string("");
 		}
@@ -3384,7 +3384,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	}
 	result.Add("table_uuid", RESTWriteValue<RESTStringCodec>(writer, value.uuid));
 	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.name));
-	result.Add("path", RESTWriteValue<RESTStringCodec>(writer, value.path));
+	result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.path));
 	result.Add("columns", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnInfo>>>(writer, value.columns));
 	result.Add("tags", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeTag>>>(writer, value.tags));
 	result.Add("inlined_data_tables", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeInlinedTableInfo>>>(
@@ -3422,7 +3422,7 @@ DuckLakeTableInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("path");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.path);
+			RESTReadValue<RESTPathCodec>(entry, result.path);
 		} else {
 			result.path = string("");
 		}
@@ -4892,7 +4892,7 @@ RESTKnownFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTKnownFilesResponse &value) {
 	auto result = writer.CreateObject();
-	result.Add("paths", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.paths));
+	result.Add("paths", RESTWriteValue<RESTListCodec<RESTPathCodec>>(writer, value.paths));
 	return result;
 }
 
@@ -4905,7 +4905,7 @@ RESTKnownFilesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("paths");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.paths);
+			RESTReadValue<RESTListCodec<RESTPathCodec>>(entry, result.paths);
 		}
 	}
 	return result;
@@ -5177,7 +5177,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCre
 		result.Add("schema_uuid", RESTWriteValue<RESTStringCodec>(writer, value.schema_uuid));
 	}
 	if (!RESTIsNull(value.path)) {
-		result.Add("path", RESTWriteValue<RESTStringCodec>(writer, value.path));
+		result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.path));
 	}
 	result.Add("if_not_exists", RESTWriteValue<RESTBoolCodec>(writer, value.if_not_exists));
 	return result;
@@ -5205,7 +5205,7 @@ RESTCreateSchemaRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("path");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.path);
+			RESTReadValue<RESTPathCodec>(entry, result.path);
 		}
 	}
 	{
@@ -5233,7 +5233,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCre
 		result.Add("table_uuid", RESTWriteValue<RESTStringCodec>(writer, value.table_uuid));
 	}
 	if (!RESTIsNull(value.path)) {
-		result.Add("path", RESTWriteValue<RESTStringCodec>(writer, value.path));
+		result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.path));
 	}
 	result.Add("columns", RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTColumnDefinition>>>(writer, value.columns));
 	result.Add("partitioned_by", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.partitioned_by));
@@ -5282,7 +5282,7 @@ RESTCreateTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("path");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.path);
+			RESTReadValue<RESTPathCodec>(entry, result.path);
 		}
 	}
 	RESTReadValue<RESTListCodec<RESTObjectCodec<RESTColumnDefinition>>>(in.Get("columns"), result.columns);
@@ -6462,202 +6462,242 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 //===--------------------------------------------------------------------===//
 RESTColumnCreatedWithTableResponse
 DuckLakeRESTClientAPI::ColumnCreatedWithTable(const RESTColumnCreatedWithTableRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("column_created_with_table", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTColumnCreatedWithTableResponse>(document.Root());
 }
 
 RESTColumnMappingsResponse DuckLakeRESTClientAPI::ColumnMappings(const RESTColumnMappingsRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("column_mappings", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTColumnMappingsResponse>(document.Root());
 }
 
 DuckLakeMetadata DuckLakeRESTClientAPI::Config(const RESTConfigRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("config", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<DuckLakeMetadata>(document.Root());
 }
 
 RESTDeletedInlinedRowsResponse DuckLakeRESTClientAPI::DeletedInlinedRows(const RESTDeletedInlinedRowsRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("deleted_inlined_rows", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTDeletedInlinedRowsResponse>(document.Root());
 }
 
 RESTInlinedRows DuckLakeRESTClientAPI::DuckLakeTable(const RESTDuckLakeTableRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("ducklake_table", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTInlinedRows>(document.Root());
 }
 
 RESTDuckLakeTablesResponse DuckLakeRESTClientAPI::DuckLakeTables(const RESTDuckLakeTablesRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("ducklake_tables", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTDuckLakeTablesResponse>(document.Root());
 }
 
 RESTFilesForCompactionResponse DuckLakeRESTClientAPI::FilesForCompaction(const RESTFilesForCompactionRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("files_for_compaction", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTFilesForCompactionResponse>(document.Root());
 }
 
 RESTInlinedFileDeletionsResponse
 DuckLakeRESTClientAPI::InlinedFileDeletions(const RESTInlinedFileDeletionsRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("inlined_file_deletions", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTInlinedFileDeletionsResponse>(document.Root());
 }
 
 RESTInlinedTablesResponse DuckLakeRESTClientAPI::InlinedTables(const RESTInlinedTablesRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("inlined_tables", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTInlinedTablesResponse>(document.Root());
 }
 
 RESTListSnapshotsResponse DuckLakeRESTClientAPI::ListSnapshots(const RESTListSnapshotsRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("list_snapshots", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTListSnapshotsResponse>(document.Root());
 }
 
 RESTNextColumnIdResponse DuckLakeRESTClientAPI::NextColumnId(const RESTNextColumnIdRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("next_column_id", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTNextColumnIdResponse>(document.Root());
 }
 
 RESTInlinedRows DuckLakeRESTClientAPI::ReadInlinedData(const RESTReadInlinedDataRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("read_inlined_data", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTInlinedRows>(document.Root());
 }
 
 RESTRowCountResponse DuckLakeRESTClientAPI::RowCount(const RESTRowCountRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("row_count", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTRowCountResponse>(document.Root());
 }
 
 RESTSelectResponse DuckLakeRESTClientAPI::Select(const RESTSelectRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("select", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTSelectResponse>(document.Root());
 }
 
 RESTSnapshotDataResponse DuckLakeRESTClientAPI::SnapshotData(const RESTSnapshotDataRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("snapshot_data", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTSnapshotDataResponse>(document.Root());
 }
 
 RESTTableChangesResponse DuckLakeRESTClientAPI::TableChanges(const RESTTableChangesRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("table_changes", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTTableChangesResponse>(document.Root());
 }
 
 RESTTableSchemaVersionsResponse
 DuckLakeRESTClientAPI::TableSchemaVersions(const RESTTableSchemaVersionsRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("table_schema_versions", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTTableSchemaVersionsResponse>(document.Root());
 }
 
 RESTTableSizesResponse DuckLakeRESTClientAPI::TableSizes(const RESTTableSizesRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("table_sizes", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTTableSizesResponse>(document.Root());
 }
 
 RESTExpireSnapshotsResponse DuckLakeRESTClientAPI::ExpireSnapshots(const RESTExpireSnapshotsRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("expire_snapshots", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTExpireSnapshotsResponse>(document.Root());
 }
 
 RESTFilesForCleanupResponse DuckLakeRESTClientAPI::FilesForCleanup(const RESTFilesForCleanupRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("files_for_cleanup", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTFilesForCleanupResponse>(document.Root());
 }
 
 RESTKnownFilesResponse DuckLakeRESTClientAPI::KnownFiles(const RESTKnownFilesRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("known_files", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTKnownFilesResponse>(document.Root());
 }
 
 void DuckLakeRESTClientAPI::RemoveCleanedUpFiles(const RESTRemoveCleanedUpFilesRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	Post("remove_cleaned_up_files", DuckLakeRESTSerializer::ToJSON(request));
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::AlterTable(const RESTAlterTableRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("alter_table", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::AlterView(const RESTAlterViewRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("alter_view", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::CommitTransaction(const RESTCommitTransactionRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("commit_transaction", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::Compact(const RESTCompactRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("compact", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::CreateMacro(const RESTCreateMacroRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("create_macro", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::CreateNameMap(const RESTCreateNameMapRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("create_name_map", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::CreateSchema(const RESTCreateSchemaRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("create_schema", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::CreateTable(const RESTCreateTableRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("create_table", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::CreateView(const RESTCreateViewRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("create_view", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::DeleteData(const RESTDeleteDataRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("delete_data", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::DropMacro(const RESTDropMacroRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("drop_macro", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::DropSchema(const RESTDropSchemaRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("drop_schema", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::DropTable(const RESTDropTableRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("drop_table", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::DropView(const RESTDropViewRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("drop_view", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::FlushInlinedData(const RESTFlushInlinedDataRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("flush_inlined_data", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::InsertFiles(const RESTInsertFilesRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("insert_files", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::InsertRows(const RESTInsertRowsRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("insert_rows", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::SetOption(const RESTSetOptionRequest &request) {
+	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("set_option", DuckLakeRESTSerializer::ToJSON(request)));
 	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
 }

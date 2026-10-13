@@ -12,6 +12,7 @@
 
 #include "storage/ducklake_initializer.hpp"
 #include "storage/ducklake_catalog.hpp"
+#include "rest/ducklake_rest_client.hpp"
 #include "storage/ducklake_transaction.hpp"
 #include "storage/ducklake_schema_entry.hpp"
 #include "common/ducklake_version.hpp"
@@ -313,10 +314,14 @@ void DuckLakeInitializer::LoadExistingDuckLake(DuckLakeTransaction &transaction,
 				options.data_path = metadata_manager.LoadPath(tag.value);
 				InitializeDataPath();
 			} else {
+				// the client of a REST catalog can have another view of the data path than the server
+				bool is_rest = catalog.MetadataType() == "rest";
+				if (is_rest && options.data_path != metadata_manager.LoadPath(tag.value)) {
+					catalog.GetRESTClient().SetPathMapping(options.data_path, metadata_manager.LoadPath(tag.value));
+				}
 				// verify that they match if override_data_path is not set to true
-				// the data path of a REST catalog is the view of the client, the server has its own
-				bool override_data_path = options.override_data_path || catalog.MetadataType() == "rest";
-				if (metadata_manager.StorePath(options.data_path) != tag.value && !override_data_path) {
+				if (metadata_manager.StorePath(options.data_path) != tag.value && !options.override_data_path &&
+				    !is_rest) {
 					throw InvalidConfigurationException(
 					    "DATA_PATH parameter \"%s\" does not match existing data path in the catalog \"%s\".\nYou can "
 					    "override the DATA_PATH by setting OVERRIDE_DATA_PATH to True.",

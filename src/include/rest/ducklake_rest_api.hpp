@@ -1970,6 +1970,11 @@ public:
 	//! Sets or resets a DuckLake option (`ducklake_metadata`).
 	RESTCommitTransactionResponse SetOption(const RESTSetOptionRequest &request);
 
+	//! Maps the paths of the requests and responses to and from the data path of the server, if set
+	virtual optional_ptr<const RESTPathMapper> GetPathMapper() const {
+		return nullptr;
+	}
+
 	//! Sends the JSON body of a request to an endpoint, returns the JSON body of the response
 	//! Rethrows the error reported by the server
 	virtual string Post(const string &endpoint, const string &body) = 0;

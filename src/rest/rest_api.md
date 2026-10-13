@@ -51,8 +51,9 @@ starts one.
 A server that requires a token is attached with `ATTACH 'ducklake:rest:http://localhost:8181' AS lake (META_TOKEN '...')`.
 
 The client reads the data path and the options of the DuckLake from the server. A `DATA_PATH` in the `ATTACH` of the
-client is not an error if it differs from the data path of the server, but the paths of the entries and files that the
-server returns are absolute: it only applies to entries that the client creates itself (e.g. new schemas). Data files are read and written by the
+client is the view of the client of the data path, e.g. when it has mounted the data path somewhere else: the client
+maps the paths between its data path and the data path of the server (`DataPath` fields below), so the server only ever
+sees its own data path. Paths outside of the data path are not mapped. Data files are read and written by the
 client directly, so the data path has to be accessible from both the client and the server.
 
 ## Conventions
@@ -131,6 +132,7 @@ bind shapes to the C++ classes of DuckLake; they do not change the JSON of the A
 | `uint64`       | `UInt64`         | a non-negative integer                                                       |
 | `int64`        | `Long`           | an integer                                                                   |
 | `double`       | `Double`         | a number                                                                     |
+| `path`         | `DataPath`       | a path of a file or directory, which clients map between their data path and the data path of the server |
 | `timestamp`    | `Timestamp`      | a timestamp with time zone as a string, e.g. `"2025-01-01 00:00:00+00"`      |
 | `value`        | `Value`          | a [value without a known type](#values)                                      |
 | `logical_type` | `LogicalType`    | a [type](#types)                                                             |
@@ -549,7 +551,7 @@ Response:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `paths` | list of `string` (default `[]`) | The paths. |
+| `paths` | list of `path` (default `[]`) | The paths. |
 
 ### `remove_cleaned_up_files`
 
@@ -692,7 +694,7 @@ Request:
 | `entry_reference` | `uint64` (optional) | A number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can use it to keep track of the entries it created, e.g. to keep their oids stable. |
 | `schema_path` | list of `string` | The path of the schema, e.g. `["parent", "child"]`. |
 | `schema_uuid` | `string` (optional) | The uuid of the schema. |
-| `path` | `string` (optional) | The data path of the schema. |
+| `path` | `path` (optional) | The data path of the schema. |
 | `if_not_exists` | `bool` (default `false`) | Do nothing if the schema exists. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
@@ -713,7 +715,7 @@ Request:
 | `schema_path` | list of `string` (default `[]`) | The schema of the table, e.g. `["main"]`. |
 | `table_name` | `string` | The name of the table. |
 | `table_uuid` | `string` (optional) | The uuid of the table. |
-| `path` | `string` (optional) | The data path of the table. |
+| `path` | `path` (optional) | The data path of the table. |
 | `columns` | list of [`ColumnDefinition`](#columndefinition) | The columns of the table. |
 | `partitioned_by` | list of `string` (default `[]`) | The partition keys as SQL expressions, e.g. `["year(ts)"]`. |
 | `sorted_by` | list of `string` (default `[]`) | The sort keys as SQL expressions. |
@@ -1131,7 +1133,7 @@ read it.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `path` | `string` | The path of the file. |
+| `path` | `path` | The path of the file. |
 | `record_count` | `uint64` | The number of rows. |
 | `file_size_bytes` | `uint64` | The size of the file. |
 | `footer_size` | `uint64` (optional) | The size of the footer. |
@@ -1164,8 +1166,8 @@ A delete file written by a client, which replaces the previous delete file of it
 | Field | Type | Description |
 |-------|------|-------------|
 | `data_file_id` | `uint64` (optional) | The data file whose rows are deleted. |
-| `data_file_path` | `string` (default `""`) | The path of the data file. |
-| `path` | `string` | The path of the delete file. |
+| `data_file_path` | `path` (default `""`) | The path of the data file. |
+| `path` | `path` | The path of the delete file. |
 | `format` | [`FileFormat`](#fileformat) (default `"parquet"`) | The format of the delete file. |
 | `delete_count` | `uint64` | The number of deleted rows. |
 | `file_size_bytes` | `uint64` | The size of the delete file. |
@@ -1174,7 +1176,7 @@ A delete file written by a client, which replaces the previous delete file of it
 | `encryption_key` | `string` (default `""`) | The key the file is encrypted with, if any. |
 | `overwrites_existing_delete` | `bool` (default `false`) | Whether the delete file replaces a delete file of the data file. |
 | `overwritten_delete_file_id` | `uint64` (optional) | The delete file that is replaced. |
-| `overwritten_delete_file_path` | `string` (default `""`) | The path of the delete file that is replaced. |
+| `overwritten_delete_file_path` | `path` (default `""`) | The path of the delete file that is replaced. |
 | `begin_snapshot` | `uint64` (optional) | The snapshot of the deletes, if it is not the snapshot of the commit. |
 | `max_snapshot` | `uint64` (optional) | The last snapshot whose deletes the file holds, for partial delete files. |
 | `source` | [`DeleteFileSource`](#deletefilesource) (default `"regular"`) | Why the delete file was written. |
@@ -1230,7 +1232,7 @@ A data file that is deleted entirely.
 | Field | Type | Description |
 |-------|------|-------------|
 | `data_file_id` | `uint64` | The data file. |
-| `path` | `string` | The path of the file. |
+| `path` | `path` | The path of the file. |
 | `record_count` | `uint64` | The number of rows of the file. |
 | `file_size_bytes` | `uint64` | The size of the file. |
 
@@ -1282,7 +1284,7 @@ A file that a client reads.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `path` | `string` | The absolute path of the file. |
+| `path` | `path` | The absolute path of the file. |
 | `encryption_key` | `string` (default `""`) | The key the file is encrypted with, if any. |
 | `file_size_bytes` | `uint64` (default `0`) | The size of the file. |
 | `footer_size` | `uint64` (optional) | The size of the footer of the file. |
@@ -1295,7 +1297,7 @@ A file that is scheduled for deletion.
 | Field | Type | Description |
 |-------|------|-------------|
 | `data_file_id` | `uint64` | The id of the file. |
-| `path` | `string` | The path of the file. |
+| `path` | `path` | The path of the file. |
 | `schedule_start` | `timestamp` | When the file was scheduled for deletion. |
 
 ### `FileFormat`
@@ -1417,7 +1419,7 @@ A deletion of a row of a data file that is inlined in the catalog.
 | Field | Type | Description |
 |-------|------|-------------|
 | `data_file_id` | `uint64` | The data file. |
-| `data_file_path` | `string` | The path of the data file. |
+| `data_file_path` | `path` | The path of the data file. |
 | `row_id` | `uint64` | The position of the row in the file. |
 | `begin_snapshot` | `uint64` | The snapshot that deleted the row. |
 | `delete_file_id` | `uint64` (optional) | The current delete file of the data file. |
@@ -1722,7 +1724,7 @@ A schema of the catalog.
 | `parent_schema_id` | `uint64` (optional) | The parent schema, for nested schemas. |
 | `schema_uuid` | `string` (default `""`) | The uuid of the schema. |
 | `schema_name` | `string` | The name of the schema. |
-| `path` | `string` (default `""`) | The data path of the schema. |
+| `path` | `path` (default `""`) | The data path of the schema. |
 | `tags` | list of [`Tag`](#tag) (default `[]`) | The tags of the schema. |
 
 ### `SchemaSetting`
@@ -1877,7 +1879,7 @@ A table of the catalog.
 | `schema_id` | `uint64` (optional) | The schema of the table. |
 | `table_uuid` | `string` (default `""`) | The uuid of the table. |
 | `table_name` | `string` | The name of the table. |
-| `path` | `string` (default `""`) | The data path of the table. |
+| `path` | `path` (default `""`) | The data path of the table. |
 | `columns` | list of [`ColumnInfo`](#columninfo) (default `[]`) | The columns of the table. |
 | `tags` | list of [`Tag`](#tag) (default `[]`) | The tags of the table. |
 | `inlined_data_tables` | list of [`InlinedTableInfo`](#inlinedtableinfo) (default `[]`) | The inlined data tables of the table. |

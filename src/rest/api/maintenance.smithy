@@ -60,7 +60,7 @@ operation RemoveCleanedUpFiles {
 operation KnownFiles {
     output := {
         /// The paths.
-        paths: StringList = []
+        paths: DataPathList = []
     }
 }
 
@@ -74,7 +74,7 @@ structure FileForCleanup {
 
     /// The path of the file.
     @required
-    path: String
+    path: DataPath
 
     /// When the file was scheduled for deletion.
     @required

@@ -130,7 +130,7 @@ structure SchemaInfo {
     schema_name: String
 
     /// The data path of the schema.
-    path: String = ""
+    path: DataPath = ""
 
     /// The tags of the schema.
     tags: TagList = []
@@ -204,7 +204,7 @@ structure TableInfo {
     table_name: String
 
     /// The data path of the table.
-    path: String = ""
+    path: DataPath = ""
 
     /// The columns of the table.
     columns: ColumnInfoList = []
@@ -559,7 +559,7 @@ enum FileFormat {
 structure FileData {
     /// The absolute path of the file.
     @required
-    path: String
+    path: DataPath
 
     /// The key the file is encrypted with, if any.
     encryption_key: String = ""
@@ -710,12 +710,12 @@ structure DeleteFile {
     data_file_id: UInt64
 
     /// The path of the data file.
-    data_file_path: String = ""
+    data_file_path: DataPath = ""
 
     /// The path of the delete file.
     @required
     @cppMember("file_name")
-    path: String
+    path: DataPath
 
     /// The format of the delete file.
     format: FileFormat = "parquet"
@@ -746,7 +746,7 @@ structure DeleteFile {
 
     /// The path of the delete file that is replaced.
     @cppMember("overwritten_delete_file.path")
-    overwritten_delete_file_path: String = ""
+    overwritten_delete_file_path: DataPath = ""
 
     /// The snapshot of the deletes, if it is not the snapshot of the commit.
     begin_snapshot: UInt64
@@ -777,7 +777,7 @@ structure DataFile {
     /// The path of the file.
     @required
     @cppMember("file_name")
-    path: String
+    path: DataPath
 
     /// The number of rows.
     @required
@@ -997,7 +997,7 @@ structure InlinedFileDeletion {
 
     /// The path of the data file.
     @required
-    data_file_path: String
+    data_file_path: DataPath
 
     /// The position of the row in the file.
     @required
@@ -1404,6 +1404,10 @@ list SortInfoList {
 
 list StringList {
     member: String
+}
+
+list DataPathList {
+    member: DataPath
 }
 
 list TableInfoList {

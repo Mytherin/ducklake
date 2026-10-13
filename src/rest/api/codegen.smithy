@@ -64,6 +64,7 @@ enum wireType {
     VALUE = "value"
     LOGICAL_TYPE = "logical_type"
     ROWS = "rows"
+    PATH = "path"
 }
 
 /// The sections of the reference documentation.

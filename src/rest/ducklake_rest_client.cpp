@@ -52,6 +52,10 @@ int32_t DuckLakeRESTClient::PostRaw(const string &endpoint, const string &body, 
 	return result->status;
 }
 
+void DuckLakeRESTClient::SetPathMapping(string client_path, string server_path) {
+	path_mapper = make_uniq<RESTPathMapper>(std::move(client_path), std::move(server_path));
+}
+
 string DuckLakeRESTClient::Post(const string &endpoint, const string &body) {
 	auto connection = GetConnection();
 	duckdb_httplib::Headers headers;

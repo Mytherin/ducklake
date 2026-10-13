@@ -27,6 +27,67 @@ RESTRows &RESTRows::operator=(RESTRows &&other) noexcept {
 RESTRows::~RESTRows() {
 }
 
+//===--------------------------------------------------------------------===//
+// Paths
+//===--------------------------------------------------------------------===//
+static string WithTrailingSeparator(string path) {
+	if (!path.empty() && path.back() != '/') {
+		path += '/';
+	}
+	return path;
+}
+
+RESTPathMapper::RESTPathMapper(string client_path_p, string server_path_p)
+    : client_path(WithTrailingSeparator(std::move(client_path_p))),
+      server_path(WithTrailingSeparator(std::move(server_path_p))) {
+}
+
+string RESTPathMapper::Map(const string &path, const string &from, const string &to) {
+	if (StringUtil::StartsWith(path, from)) {
+		return to + path.substr(from.size());
+	}
+	// the data path itself, without the trailing separator
+	if (path.size() + 1 == from.size() && StringUtil::StartsWith(from, path)) {
+		return to.substr(0, to.size() - 1);
+	}
+	return path;
+}
+
+string RESTPathMapper::ToServer(const string &path) const {
+	return Map(path, client_path, server_path);
+}
+
+string RESTPathMapper::ToClient(const string &path) const {
+	return Map(path, server_path, client_path);
+}
+
+static thread_local optional_ptr<const RESTPathMapper> current_path_mapper;
+
+RESTPathScope::RESTPathScope(optional_ptr<const RESTPathMapper> mapper) : previous(current_path_mapper) {
+	current_path_mapper = mapper;
+}
+
+RESTPathScope::~RESTPathScope() {
+	current_path_mapper = previous;
+}
+
+optional_ptr<const RESTPathMapper> RESTPathScope::Current() {
+	return current_path_mapper;
+}
+
+JSONMutableValue RESTPathCodec::Write(JSONWriter &writer, const string &value) {
+	auto mapper = RESTPathScope::Current();
+	return writer.CreateString(mapper ? mapper->ToServer(value) : value);
+}
+
+void RESTPathCodec::Read(RESTJsonIn in, string &result) {
+	auto mapper = RESTPathScope::Current();
+	result = in.Str();
+	if (mapper) {
+		result = mapper->ToClient(result);
+	}
+}
+
 JSONMutableValue RESTTimestampCodec::Write(JSONWriter &writer, timestamp_tz_t value) {
 	return writer.CreateString(Value::TIMESTAMPTZ(value).ToString());
 }

@@ -65,7 +65,7 @@ structure CreateSchemaRequest {
     schema_uuid: String
 
     /// The data path of the schema.
-    path: String
+    path: DataPath
 
     /// Do nothing if the schema exists.
     if_not_exists: Boolean = false
@@ -99,7 +99,7 @@ structure CreateTableRequest {
     table_uuid: String
 
     /// The data path of the table.
-    path: String
+    path: DataPath
 
     /// The columns of the table.
     @required
@@ -520,7 +520,7 @@ structure DroppedFile {
 
     /// The path of the file.
     @required
-    path: String
+    path: DataPath
 
     /// The number of rows of the file.
     @required

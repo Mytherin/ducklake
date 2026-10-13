@@ -134,6 +134,11 @@ union CommitRequest {
     compact: CompactRequest
 }
 
+/// The path of a file or directory. Clients can have another view of the data path of the DuckLake than the server (e.g.
+/// another mount point): they map the paths between their data path and the data path of the server.
+@wireType("path")
+string DataPath
+
 /// An unsigned integer.
 @wireType("uint64")
 long UInt64
