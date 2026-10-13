@@ -1,6 +1,5 @@
 #include "storage/ducklake_catalog.hpp"
-#include "rest/ducklake_rest_client.hpp"
-#include "rest/ducklake_rest_server.hpp"
+#include "rest/ducklake_rest_connection.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -334,21 +333,17 @@ DuckLakeCatalog::~DuckLakeCatalog() {
 	UnregisterCatalog();
 }
 
-DuckLakeRESTClient &DuckLakeCatalog::GetRESTClient() {
-	lock_guard<mutex> guard(rest_client_lock);
-	if (!rest_client) {
-		auto url = options.rest_server ? options.rest_server->ListenURI() : MetadataPath();
-		if (StringUtil::StartsWith(url, "rest:")) {
-			url = url.substr(5);
-		}
-		string token;
-		auto entry = options.metadata_parameters.find("token");
-		if (entry != options.metadata_parameters.end()) {
-			token = entry->second.ToString();
-		}
-		rest_client = make_shared_ptr<DuckLakeRESTClient>(std::move(url), std::move(token));
+void DuckLakeCatalog::ConnectREST(ClientContext &context) {
+	if (!rest_connection) {
+		rest_connection = DuckLakeRESTConnection::Open(context, options);
 	}
-	return *rest_client;
+}
+
+DuckLakeRESTClient &DuckLakeCatalog::GetRESTClient() {
+	if (!rest_connection) {
+		throw InternalException("The REST catalog is not connected to its server");
+	}
+	return rest_connection->Client();
 }
 
 void DuckLakeCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
@@ -1130,14 +1125,8 @@ optional_ptr<BoundAtClause> DuckLakeCatalog::CatalogSnapshot() const {
 
 void DuckLakeCatalog::OnDetach(ClientContext &context) {
 	auto &db_manager = DatabaseManager::Get(context);
-	if (options.rest_server) {
-		auto server = std::move(options.rest_server);
-		if (server.use_count() == 1) {
-			// the last user of a local REST server detaches the DuckLake it serves
-			auto served_catalog = server->CatalogName();
-			server.reset();
-			db_manager.DetachDatabase(context, Identifier(served_catalog), OnEntryNotFound::RETURN_NULL);
-		}
+	if (rest_connection) {
+		rest_connection->Close(context);
 	}
 	// the metadata database stays attached while another DuckLake uses it
 	if (!UnregisterCatalog() || !OwnsMetadataDatabase()) {

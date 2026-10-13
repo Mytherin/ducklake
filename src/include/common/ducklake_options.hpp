@@ -19,7 +19,6 @@
 #include "common/index.hpp"
 
 namespace duckdb {
-class DuckLakeRESTServer;
 
 using option_map_t = unordered_map<string, string>;
 
@@ -45,8 +44,6 @@ struct DuckLakeOptions {
 	//! For ducklake:rest:<path>, the local DuckLake that is served over REST and the options to attach it with
 	string rest_local_path;
 	string rest_local_attach_options;
-	//! The local REST server that serves the metadata of a local DuckLake
-	shared_ptr<DuckLakeRESTServer> rest_server;
 };
 
 } // namespace duckdb

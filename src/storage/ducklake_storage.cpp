@@ -7,7 +7,6 @@
 #include "storage/ducklake_catalog.hpp"
 #include "storage/ducklake_transaction_manager.hpp"
 #include "storage/ducklake_secret.hpp"
-#include "rest/ducklake_rest_server.hpp"
 
 namespace duckdb {
 
