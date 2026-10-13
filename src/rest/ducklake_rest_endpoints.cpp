@@ -504,7 +504,7 @@ protected:
 	void Compact(RESTCompactRequest &parameters) override;
 
 private:
-	void Alter(const vector<string> &schema_path, const string &name, const RESTJsonValue &alter,
+	void Alter(const vector<string> &schema_path, const string &name, const RESTAlteration &alter,
 	           optional_idx partition_id);
 	void Drop(CatalogType type, const vector<string> &schema_path, const string &name);
 	void RemapNameMap(DuckLakeDataFile &file);
@@ -695,10 +695,10 @@ void DuckLakeRESTCommit::CreateMacro(RESTCreateMacroRequest &parameters) {
 	AddEntryReference(schema.CreateFunction(catalog.GetCatalogTransaction(context), *info), parameters.entry_reference);
 }
 
-void DuckLakeRESTCommit::Alter(const vector<string> &schema_path, const string &name, const RESTJsonValue &alter,
+void DuckLakeRESTCommit::Alter(const vector<string> &schema_path, const string &name, const RESTAlteration &alter,
                                optional_idx partition_id) {
 	AlterEntryData entry(GetEntryName(schema_path, name), OnEntryNotFound::THROW_EXCEPTION);
-	auto info = DuckLakeRESTCatalogChanges::ReadAlter(context, alter.value, entry);
+	auto info = DuckLakeRESTCatalogChanges::ReadAlter(context, alter, entry);
 	catalog.Alter(context, *info);
 	if (partition_id.IsValid()) {
 		auto &schema = GetSchema(schema_path);
@@ -711,11 +711,11 @@ void DuckLakeRESTCommit::Alter(const vector<string> &schema_path, const string &
 }
 
 void DuckLakeRESTCommit::AlterTable(RESTAlterTableRequest &parameters) {
-	Alter(parameters.schema_path, parameters.name, parameters.alter, parameters.partition_id);
+	Alter(parameters.schema_path, parameters.name, *parameters.alter, parameters.partition_id);
 }
 
 void DuckLakeRESTCommit::AlterView(RESTAlterViewRequest &parameters) {
-	Alter(parameters.schema_path, parameters.name, parameters.alter, optional_idx());
+	Alter(parameters.schema_path, parameters.name, *parameters.alter, optional_idx());
 }
 
 void DuckLakeRESTCommit::Drop(CatalogType type, const vector<string> &schema_path, const string &name) {

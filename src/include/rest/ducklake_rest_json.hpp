@@ -15,43 +15,11 @@
 
 namespace duckdb {
 
-//! A handle to a mutable JSON value that is owned by a JSONWriter
-class RESTJsonOut {
-public:
-	RESTJsonOut(JSONWriter &writer, JSONMutableValue val) : writer(&writer), val(val) {
-	}
-
-	RESTJsonOut Obj(const string &key);
-	RESTJsonOut Arr(const string &key);
-	void SetStr(const string &key, const string &value);
-	void SetUInt(const string &key, idx_t value);
-	void SetInt(const string &key, int64_t value);
-	void SetBool(const string &key, bool value);
-	void SetDouble(const string &key, double value);
-	void SetNull(const string &key);
-	//! Writes null for an invalid index
-	void SetOpt(const string &key, optional_idx value);
-	void SetValue(const string &key, const Value &value);
-	void SetRaw(const string &key, JSONMutableValue value);
-
-	RESTJsonOut AppendObj();
-	RESTJsonOut AppendArr();
-	void AppendStr(const string &value);
-	void AppendUInt(idx_t value);
-	void AppendRaw(JSONMutableValue value);
-
-	JSONWriter *writer;
-	JSONMutableValue val;
-};
-
-//! Builds a JSON document with an object as root
+//! Builds a JSON document
 class RESTJsonWriter {
 public:
 	RESTJsonWriter();
 
-	RESTJsonOut Root() {
-		return RESTJsonOut(writer, root);
-	}
 	void SetRoot(JSONMutableValue value) {
 		root = value;
 		writer.SetRoot(value);

@@ -88,6 +88,13 @@ static int32_t StatusCodeForError(ExceptionType type) {
 	}
 }
 
+static string ErrorBody(ExceptionType type, const string &message) {
+	RESTErrorResponse response;
+	response.error.type = Exception::ExceptionTypeToString(type);
+	response.error.message = message;
+	return DuckLakeRESTSerializer::ToJSON(response);
+}
+
 int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &body, string &response) {
 	try {
 		auto &endpoints = DuckLakeRESTAPI::GetEndpoints();
@@ -100,11 +107,9 @@ int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &
 		if (!database) {
 			throw ConnectionException("The database served by the DuckLake REST server was closed");
 		}
-		RESTJsonReader input(request_body);
-		RESTJsonWriter output;
 		DuckLakeRESTRequest request(*database, catalog_name);
 		try {
-			entry->second(request, input.Root(), output);
+			response = entry->second(request, request_body);
 			if (request.connection.HasActiveTransaction()) {
 				request.connection.Commit();
 			}
@@ -114,15 +119,10 @@ int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &
 			}
 			throw;
 		}
-		response = output.ToString();
 		return 200;
 	} catch (std::exception &ex) {
 		ErrorData error(ex);
-		RESTJsonWriter output;
-		auto error_out = output.Root().Obj("error");
-		error_out.SetStr("type", Exception::ExceptionTypeToString(error.Type()));
-		error_out.SetStr("message", error.RawMessage());
-		response = output.ToString();
+		response = ErrorBody(error.Type(), error.RawMessage());
 		return StatusCodeForError(error.Type());
 	}
 }
@@ -139,12 +139,10 @@ idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_cou
 	auto handler = [this](const duckdb_httplib::Request &req, duckdb_httplib::Response &res) {
 		string response;
 		if (!token.empty() && req.get_header_value("Authorization") != "Bearer " + token) {
-			RESTJsonWriter output;
-			auto error = output.Root().Obj("error");
-			error.SetStr("type", Exception::ExceptionTypeToString(ExceptionType::PERMISSION));
-			error.SetStr("message", "Missing or invalid token for the DuckLake REST server");
 			res.status = 401;
-			res.set_content(output.ToString(), "application/json");
+			res.set_content(
+			    ErrorBody(ExceptionType::PERMISSION, "Missing or invalid token for the DuckLake REST server"),
+			    "application/json");
 			return;
 		}
 		res.status = HandleRequest(req.path.substr(ENDPOINT_PREFIX.size()), req.body, response);

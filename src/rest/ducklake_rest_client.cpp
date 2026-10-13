@@ -52,8 +52,7 @@ int32_t DuckLakeRESTClient::PostRaw(const string &endpoint, const string &body, 
 	return result->status;
 }
 
-unique_ptr<RESTJsonReader> DuckLakeRESTClient::Post(const string &endpoint, const RESTJsonWriter &request) {
-	auto body = request.ToString();
+string DuckLakeRESTClient::Post(const string &endpoint, const string &body) {
 	auto connection = GetConnection();
 	duckdb_httplib::Headers headers;
 	if (!token.empty()) {
@@ -65,16 +64,18 @@ unique_ptr<RESTJsonReader> DuckLakeRESTClient::Post(const string &endpoint, cons
 		                  duckdb_httplib::to_string(result.error()));
 	}
 	ReturnConnection(std::move(connection));
-	auto response = make_uniq<RESTJsonReader>(result->body);
 	if (result->status != 200) {
-		auto error = response->Root().TryGet("error");
-		if (error.IsNull()) {
+		RESTErrorResponse error;
+		try {
+			RESTJsonReader document(result->body);
+			error = DuckLakeRESTSerializer::Read<RESTErrorResponse>(document.Root());
+		} catch (std::exception &) {
 			throw IOException("DuckLake REST request \"%s\" failed with status %d", endpoint, result->status);
 		}
-		auto type = Exception::StringToExceptionType(error.Str("type", "Error"));
-		ErrorData(type, error.Str("message", string())).Throw();
+		auto type = Exception::StringToExceptionType(error.error.type);
+		ErrorData(type, error.error.message).Throw();
 	}
-	return response;
+	return result->body;
 }
 
 } // namespace duckdb

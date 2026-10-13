@@ -20,6 +20,7 @@ use ducklake.rest.codegen#wireType
     "common/ducklake_data_file.hpp"
     "storage/ducklake_metadata_info.hpp"
     "storage/ducklake_stats.hpp"
+    "duckdb/common/enums/catalog_type.hpp"
 ])
 @docSections([
     {

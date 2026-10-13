@@ -193,9 +193,9 @@ structure AlterTableRequest {
     @required
     name: String
 
-    /// The change, see [alterations](#alterations).
+    /// The change.
     @required
-    alter: Document
+    alter: Alteration
 
     /// For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`).
     partition_id: UInt64
@@ -216,9 +216,9 @@ structure AlterViewRequest {
     @required
     name: String
 
-    /// The change, see [alterations](#alterations).
+    /// The change.
     @required
-    alter: Document
+    alter: Alteration
 }
 
 /// Drops a schema, which has to be empty.

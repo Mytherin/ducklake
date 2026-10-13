@@ -193,10 +193,11 @@ class ObjectType:
         self.extends = spec.get('extends')
         self.custom = spec.get('custom', False)
         self.null_if = spec.get('null_if')
+        self.variant_of = spec.get('variant_of')
         self.is_request = is_request
         self.commit_request = None
         self.fields = [Field(field, self.name) for field in spec.get('fields', [])]
-        known = {'name', 'description', 'class', 'extends', 'custom', 'null_if', 'fields'}
+        known = {'name', 'description', 'class', 'extends', 'custom', 'null_if', 'fields', 'variant_of'}
         unknown = set(spec.keys()) - known
         if unknown:
             raise SpecError(f'{self.name}: unknown type properties {sorted(unknown)}')
@@ -208,6 +209,29 @@ class ObjectType:
     @property
     def cpp_name(self):
         return self.cpp_class if self.cpp_class else 'REST' + self.name
+
+
+class UnionType:
+    """A tagged union of structures, which is an object with exactly one member: the name of the variant"""
+
+    def __init__(self, spec, section):
+        self.spec = spec
+        self.section = section
+        self.name = spec['name']
+        self.description = description_text(spec)
+        self.variants = [(variant['name'], variant['type']) for variant in spec['variants']]
+
+    @property
+    def cpp_name(self):
+        return 'REST' + self.name
+
+    @property
+    def type_enum(self):
+        return f'REST{self.name}Type'
+
+    @property
+    def codec(self):
+        return f'REST{self.name}Codec'
 
 
 class EnumType:
@@ -279,6 +303,8 @@ class Section:
         for entry in spec.get('types', []):
             if 'values' in entry:
                 self.types.append(EnumType(entry, self))
+            elif 'variants' in entry:
+                self.types.append(UnionType(entry, self))
             else:
                 self.types.append(ObjectType(entry, self))
         self.endpoints = [Endpoint(entry, self) for entry in spec.get('endpoints', [])]
@@ -290,6 +316,7 @@ class Spec:
         self.types = {}
         self.objects = []
         self.enums = []
+        self.unions = []
         for section in self.sections:
             for entry in section.types:
                 if entry.name in self.types:
@@ -297,6 +324,8 @@ class Spec:
                 self.types[entry.name] = entry
                 if isinstance(entry, EnumType):
                     self.enums.append(entry)
+                elif isinstance(entry, UnionType):
+                    self.unions.append(entry)
                 else:
                     self.objects.append(entry)
         self.endpoints = [endpoint for section in self.sections for endpoint in section.endpoints]
@@ -336,6 +365,11 @@ class Spec:
         return self.types[name]
 
     def validate(self):
+        for union in self.unions:
+            for wire_name, struct_name in union.variants:
+                variant = self.lookup_object(struct_name, union.name)
+                if variant.variant_of != (union.name, wire_name) or variant.is_bound or variant.extends:
+                    raise SpecError(f'{union.name}: {struct_name} has to be an unbound structure without a mixin')
         classes = {}
         for obj in self.all_objects():
             if obj.cpp_class:
@@ -391,7 +425,7 @@ class Spec:
         if expr.kind == 'map':
             raise SpecError('maps have no codec')
         entry = self.types[expr.name]
-        if isinstance(entry, EnumType):
+        if isinstance(entry, (EnumType, UnionType)):
             return entry.codec
         return f'RESTObjectCodec<{entry.cpp_name}>'
 
@@ -405,6 +439,8 @@ class Spec:
         if expr.kind == 'map':
             return f'map<{self.cpp_type_of(expr.args[0])}, {self.cpp_type_of(expr.args[1])}>'
         entry = self.types[expr.name]
+        if isinstance(entry, UnionType):
+            return f'unique_ptr<{entry.cpp_name}>'
         if isinstance(entry, EnumType):
             if nullable and entry.cpp_enum:
                 return f'RESTOptional<{entry.cpp_name}>'
@@ -543,6 +579,12 @@ class SmithyModel:
         self.commit_requests = {}
         for name, member in self.shapes[COMMIT_UNION]['members'].items():
             self.commit_requests[member['target']] = name
+        # the variants of the unions other than CommitRequest, by the structure of their parameters
+        self.variants = {}
+        for shape_id, shape in self.shapes.items():
+            if shape['type'] == 'union' and shape_id.startswith(NAMESPACE + '#') and shape_id != COMMIT_UNION:
+                for name, member in shape['members'].items():
+                    self.variants[member['target']] = (self.local_name(shape_id), name)
         # the entries of lists that are stored as C++ maps, which are not structures of the generated code
         self.map_entries = set()
         for shape in self.shapes.values():
@@ -592,7 +634,7 @@ class SmithyModel:
             return f'map<{key}, {value}>'
         if shape['type'] == 'map':
             return f'dict<{self.type_text(shape["value"]["target"])}>'
-        if shape['type'] in ('structure', 'enum'):
+        if shape['type'] in ('structure', 'enum', 'union'):
             return self.local_name(target)
         raise SpecError(f'unsupported shape type {shape["type"]} of {target}')
 
@@ -641,8 +683,17 @@ class SmithyModel:
             result['null_if'] = null_if
         if self.trait(shape, 'customSerialization') is not None:
             result['custom'] = True
+        if shape_id in self.variants:
+            result['variant_of'] = self.variants[shape_id]
         result['fields'] = self.fields(shape)
         return result
+
+    def union(self, shape_id):
+        shape = self.shapes[shape_id]
+        variants = [
+            {'name': name, 'type': self.local_name(member['target'])} for name, member in shape['members'].items()
+        ]
+        return {'name': self.local_name(shape_id), 'description': self.documentation(shape), 'variants': variants}
 
     def enum(self, shape_id):
         shape = self.shapes[shape_id]
@@ -713,7 +764,7 @@ class SmithyModel:
 
     def sections(self):
         endpoints = [self.endpoint(operation['target']) for operation in self.service.get('operations', [])]
-        excluded = set(self.commit_requests) | self.map_entries
+        excluded = set(self.commit_requests) | self.map_entries | {COMMIT_UNION}
         types = []
         for shape_id, shape in self.shapes.items():
             if not shape_id.startswith(NAMESPACE + '#') or shape_id in excluded:
@@ -725,6 +776,8 @@ class SmithyModel:
                 types.append(self.structure(shape_id))
             elif shape['type'] == 'enum':
                 types.append(self.enum(shape_id))
+            elif shape['type'] == 'union':
+                types.append(self.union(shape_id))
         result = []
         for section in self.trait(self.service, 'docSections', []):
             data = {'section': section['title'], 'description': section.get('documentation', '').strip()}
@@ -914,6 +967,8 @@ def generate_header(spec):
     lines.append('namespace duckdb {')
     lines.append('class DuckLakeRESTRequest;')
     lines.append('struct RESTCommitRequest;')
+    for union in spec.unions:
+        lines.append(f'struct {union.cpp_name};')
     lines.append('')
 
     # enums
@@ -948,6 +1003,13 @@ def generate_header(spec):
     lines.append('struct DuckLakeRESTSerializer {')
     lines.append('\ttemplate <class T>')
     lines.append('\tstatic T Read(RESTJsonIn in);')
+    lines.append('\t//! The JSON document of a structure')
+    lines.append('\ttemplate <class T>')
+    lines.append('\tstatic string ToJSON(const T &value) {')
+    lines.append('\t\tRESTJsonWriter document;')
+    lines.append('\t\tdocument.SetRoot(Write(document.writer, value));')
+    lines.append('\t\treturn document.ToString();')
+    lines.append('\t}')
     lines.append('')
     for obj in all_objects:
         lines.append(f'\tstatic JSONMutableValue Write(JSONWriter &writer, const {obj.cpp_name} &value);')
@@ -1019,15 +1081,56 @@ def generate_header(spec):
     lines.append('\ttemplate <class TARGET>')
     lines.append('\tTARGET &Cast() {')
     lines.append('\t\tD_ASSERT(type == TARGET::TYPE);')
-    lines.append('\t\treturn reinterpret_cast<TARGET &>(*this);')
+    lines.append('\t\treturn static_cast<TARGET &>(*this);')
     lines.append('\t}')
     lines.append('\ttemplate <class TARGET>')
     lines.append('\tconst TARGET &Cast() const {')
     lines.append('\t\tD_ASSERT(type == TARGET::TYPE);')
-    lines.append('\t\treturn reinterpret_cast<const TARGET &>(*this);')
+    lines.append('\t\treturn static_cast<const TARGET &>(*this);')
     lines.append('\t}')
     lines.append('};')
     lines.append('')
+
+    # unions
+    if spec.unions:
+        lines.append('//===--------------------------------------------------------------------===//')
+        lines.append('// Unions')
+        lines.append('//===--------------------------------------------------------------------===//')
+    for union in spec.unions:
+        lines.append(f'enum class {union.type_enum} : uint8_t {{')
+        for wire_name, _ in union.variants:
+            lines.append(f'\t{upper_case(wire_name)},')
+        lines.append('};')
+        lines.append('')
+        lines.extend(doc_comment(union.description, ''))
+        lines.append(f'struct {union.cpp_name} {{')
+        lines.append(f'\texplicit {union.cpp_name}({union.type_enum} type) : type(type) {{')
+        lines.append('\t}')
+        lines.append(f'\tvirtual ~{union.cpp_name}() {{')
+        lines.append('\t}')
+        lines.append('')
+        lines.append(f'\t{union.type_enum} type;')
+        lines.append('')
+        lines.append('\ttemplate <class TARGET>')
+        lines.append('\tTARGET &Cast() {')
+        lines.append('\t\tD_ASSERT(type == TARGET::TYPE);')
+        lines.append('\t\treturn static_cast<TARGET &>(*this);')
+        lines.append('\t}')
+        lines.append('\ttemplate <class TARGET>')
+        lines.append('\tconst TARGET &Cast() const {')
+        lines.append('\t\tD_ASSERT(type == TARGET::TYPE);')
+        lines.append('\t\treturn static_cast<const TARGET &>(*this);')
+        lines.append('\t}')
+        lines.append('};')
+        lines.append('')
+        lines.append(f'struct {union.codec} : public RESTCodec<{union.codec}> {{')
+        lines.append(f'\tstatic JSONMutableValue Write(JSONWriter &writer, const {union.cpp_name} &value);')
+        lines.append(f'\tstatic void Read(RESTJsonIn in, unique_ptr<{union.cpp_name}> &result);')
+        lines.append(f'\tstatic void ReadPtr(RESTJsonIn in, unique_ptr<{union.cpp_name}> &result) {{')
+        lines.append('\t\tRead(in, result);')
+        lines.append('\t}')
+        lines.append('};')
+        lines.append('')
 
     # structures
     lines.append('//===--------------------------------------------------------------------===//')
@@ -1041,6 +1144,8 @@ def generate_header(spec):
             bases.append(f'public {spec.types[obj.extends].cpp_name}')
         if obj.commit_request:
             bases.append('public RESTCommitRequest')
+        if obj.variant_of:
+            bases.append(f'public {spec.types[obj.variant_of[0]].cpp_name}')
         base = f' : {", ".join(bases)}' if bases else ''
         lines.append(f'struct {obj.cpp_name}{base} {{')
         if obj.commit_request:
@@ -1049,6 +1154,14 @@ def generate_header(spec):
             lines.append('')
             lines.append(f'\t{obj.cpp_name}() : RESTCommitRequest(TYPE) {{')
             lines.append(f'\t}}')
+            lines.append('')
+        if obj.variant_of:
+            union = spec.types[obj.variant_of[0]]
+            type_name = f'{union.type_enum}::{upper_case(obj.variant_of[1])}'
+            lines.append(f'\tstatic constexpr const {union.type_enum} TYPE = {type_name};')
+            lines.append('')
+            lines.append(f'\t{obj.cpp_name}() : {union.cpp_name}(TYPE) {{')
+            lines.append('\t}')
             lines.append('')
         for field in obj.fields:
             lines.extend(doc_comment(field.description, '\t'))
@@ -1089,9 +1202,8 @@ def generate_header(spec):
         lines.append(f'\tvirtual void {endpoint.cpp_name}({endpoint.request.cpp_name} &request) = 0;')
     lines.append('};')
     lines.append('')
-    lines.append(
-        'typedef void (*rest_endpoint_t)(DuckLakeRESTRequest &request, RESTJsonIn input, ' 'RESTJsonWriter &output);'
-    )
+    lines.append('//! Handles the JSON body of a request to an endpoint, returns the JSON body of the response')
+    lines.append('typedef string (*rest_endpoint_t)(DuckLakeRESTRequest &request, const string &body);')
     lines.append('')
     lines.append('struct DuckLakeRESTAPI {')
     lines.append('\t//! The endpoints of the API, by their name')
@@ -1115,10 +1227,9 @@ def generate_header(spec):
         lines.extend(doc_comment(endpoint.summary, '\t'))
         lines.append(f'\t{result} {endpoint.cpp_name}(const {endpoint.request.cpp_name} &request);')
     lines.append('')
-    lines.append('\t//! Sends the request to an endpoint, rethrows the error reported by the server')
-    lines.append(
-        '\tvirtual unique_ptr<RESTJsonReader> Post(const string &endpoint, const RESTJsonWriter &request) = 0;'
-    )
+    lines.append('\t//! Sends the JSON body of a request to an endpoint, returns the JSON body of the response')
+    lines.append('\t//! Rethrows the error reported by the server')
+    lines.append('\tvirtual string Post(const string &endpoint, const string &body) = 0;')
     lines.append('};')
     lines.append('')
     lines.append('} // namespace duckdb')
@@ -1299,27 +1410,69 @@ def generate_source(spec):
     lines.append('}')
     lines.append('')
 
+    if spec.unions:
+        lines.append('//===--------------------------------------------------------------------===//')
+        lines.append('// Unions')
+        lines.append('//===--------------------------------------------------------------------===//')
+    for union in spec.unions:
+        lines.append(f'JSONMutableValue {union.codec}::Write(JSONWriter &writer, const {union.cpp_name} &value) {{')
+        lines.append('\tauto result = writer.CreateObject();')
+        lines.append('\tswitch (value.type) {')
+        for wire_name, struct_name in union.variants:
+            cpp_struct = spec.types[struct_name].cpp_name
+            lines.append(f'\tcase {union.type_enum}::{upper_case(wire_name)}:')
+            lines.append(
+                f'\t\tresult.Add({cpp_string(wire_name)}, DuckLakeRESTSerializer::Write(writer, '
+                f'value.Cast<{cpp_struct}>()));'
+            )
+            lines.append('\t\tbreak;')
+        lines.append('\tdefault:')
+        lines.append(f'\t\tthrow InternalException("Unsupported {union.type_enum}");')
+        lines.append('\t}')
+        lines.append('\treturn result;')
+        lines.append('}')
+        lines.append('')
+        lines.append(f'void {union.codec}::Read(RESTJsonIn in, unique_ptr<{union.cpp_name}> &result) {{')
+        lines.append('\tauto members = in.Members();')
+        lines.append('\tif (members.size() != 1) {')
+        lines.append(
+            f'\t\tthrow InvalidInputException("DuckLake REST: a {union.name} has to be an object with exactly one '
+            f'member, the name of the variant");'
+        )
+        lines.append('\t}')
+        lines.append('\tauto &name = members[0].first;')
+        for wire_name, struct_name in union.variants:
+            cpp_struct = spec.types[struct_name].cpp_name
+            lines.append(f'\tif (name == {cpp_string(wire_name)}) {{')
+            lines.append(
+                f'\t\tresult = make_uniq<{cpp_struct}>(DuckLakeRESTSerializer::Read<{cpp_struct}>(members[0].second));'
+            )
+            lines.append('\t\treturn;')
+            lines.append('\t}')
+        lines.append(f'\tthrow InvalidInputException("DuckLake REST: \\"%s\\" is not a valid {union.name}", name);')
+        lines.append('}')
+        lines.append('')
+
     lines.append('//===--------------------------------------------------------------------===//')
     lines.append('// Server')
     lines.append('//===--------------------------------------------------------------------===//')
     commit = spec.commit_endpoint
     for endpoint in spec.endpoints:
-        lines.append(
-            f'static void {endpoint.cpp_name}Endpoint(DuckLakeRESTRequest &request, RESTJsonIn input, '
-            f'RESTJsonWriter &output) {{'
-        )
-        lines.append(f'\tauto parameters = DuckLakeRESTSerializer::Read<{endpoint.request.cpp_name}>(input);')
+        lines.append(f'static string {endpoint.cpp_name}Endpoint(DuckLakeRESTRequest &request, const string &body) {{')
+        lines.append('\tRESTJsonReader document(body);')
+        lines.append(f'\tauto parameters = DuckLakeRESTSerializer::Read<{endpoint.request.cpp_name}>(document.Root());')
         if endpoint.kind == 'commit':
             lines.append('\t// a request of a commit on its own commits a transaction with only this request')
             lines.append(f'\t{commit.request.cpp_name} commit;')
             lines.append(f'\tcommit.requests.push_back(make_uniq<{endpoint.request.cpp_name}>(std::move(parameters)));')
             lines.append(f'\tauto result = DuckLakeRESTEndpoints::{commit.cpp_name}(request, commit);')
-            lines.append('\toutput.SetRoot(DuckLakeRESTSerializer::Write(output.writer, result));')
+            lines.append('\treturn DuckLakeRESTSerializer::ToJSON(result);')
         elif endpoint.response:
             lines.append(f'\tauto result = DuckLakeRESTEndpoints::{endpoint.cpp_name}(request, parameters);')
-            lines.append('\toutput.SetRoot(DuckLakeRESTSerializer::Write(output.writer, result));')
+            lines.append('\treturn DuckLakeRESTSerializer::ToJSON(result);')
         else:
             lines.append(f'\tDuckLakeRESTEndpoints::{endpoint.cpp_name}(request, parameters);')
+            lines.append('\treturn "{}";')
         lines.append('}')
         lines.append('')
     lines.append('const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {')
@@ -1340,13 +1493,12 @@ def generate_source(spec):
         lines.append(
             f'{result} DuckLakeRESTClientAPI::{endpoint.cpp_name}(const {endpoint.request.cpp_name} &request) {{'
         )
-        lines.append('\tRESTJsonWriter body;')
-        lines.append('\tbody.SetRoot(DuckLakeRESTSerializer::Write(body.writer, request));')
+        post = f'Post({cpp_string(endpoint.name)}, DuckLakeRESTSerializer::ToJSON(request))'
         if response:
-            lines.append(f'\tauto response = Post({cpp_string(endpoint.name)}, body);')
-            lines.append(f'\treturn DuckLakeRESTSerializer::Read<{response.cpp_name}>(response->Root());')
+            lines.append(f'\tRESTJsonReader document({post});')
+            lines.append(f'\treturn DuckLakeRESTSerializer::Read<{response.cpp_name}>(document.Root());')
         else:
-            lines.append(f'\tPost({cpp_string(endpoint.name)}, body);')
+            lines.append(f'\t{post};')
         lines.append('}')
         lines.append('')
     lines.append('} // namespace duckdb')
@@ -1429,13 +1581,22 @@ def generate_docs(spec):
             if entry.description:
                 lines.append(entry.description)
                 lines.append('')
-            if isinstance(entry, EnumType):
+            if isinstance(entry, UnionType):
+                lines.append('An object with exactly one member, the name of the variant:')
+                lines.append('')
+                lines.append('| Variant | Type |')
+                lines.append('|---------|------|')
+                for wire_name, struct_name in entry.variants:
+                    lines.append(f'| `{wire_name}` | [`{struct_name}`](#{struct_name.lower()}) |')
+            elif isinstance(entry, EnumType):
                 lines.append('| Value | Description |')
                 lines.append('|-------|-------------|')
                 for value in entry.values:
                     lines.append(f'| `{value["name"]}` | {escape_cell(description_text(value))} |')
             else:
-                if entry.extends:
+                if entry.extends and not entry.fields:
+                    lines.append(f'Has the fields of [`{entry.extends}`](#{entry.extends.lower()}).')
+                elif entry.extends:
                     lines.append(f'Has the fields of [`{entry.extends}`](#{entry.extends.lower()}), and:')
                     lines.append('')
                     fields = entry.fields

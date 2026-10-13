@@ -598,7 +598,7 @@ Request:
 |-------|------|-------------|
 | `schema_path` | list of `string` (default `[]`) | The schema of the table. |
 | `name` | `string` | The name of the table. |
-| `alter` | `json` | The change, see [alterations](#alterations). |
+| `alter` | [`Alteration`](#alteration) | The change. |
 | `partition_id` | `uint64` (optional) | For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`). |
 
 Response: as for [`commit_transaction`](#commit_transaction).
@@ -613,7 +613,7 @@ Request:
 |-------|------|-------------|
 | `schema_path` | list of `string` (default `[]`) | The schema of the view. |
 | `name` | `string` | The name of the view. |
-| `alter` | `json` | The change, see [alterations](#alterations). |
+| `alter` | [`Alteration`](#alteration) | The change. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
@@ -881,6 +881,54 @@ Response: as for [`commit_transaction`](#commit_transaction).
 The structures that the endpoints share. Fields that are optional can be `null` or absent; the server and the
 client leave them out when they have no value.
 
+### `AddColumn`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column` | [`ColumnDefinition`](#columndefinition) | The column. |
+| `if_not_exists` | `bool` (default `false`) | Do nothing if the column exists. |
+
+### `AddField`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_path` | list of `string` | The path of the parent column. |
+| `field` | [`ColumnDefinition`](#columndefinition) | The field. |
+| `if_not_exists` | `bool` (default `false`) | Do nothing if the field exists. |
+
+### `Alteration`
+
+The change of an `alter_table` or `alter_view` request: an object with exactly one member, the name of the change.
+Columns are referred to by name; nested fields by their path from the top-level column, e.g. `["s", "a"]`.
+Expressions are SQL expressions.
+
+```json
+{"rename_column": {"old_name": "i", "new_name": "j"}}
+```
+
+An object with exactly one member, the name of the variant:
+
+| Variant | Type |
+|---------|------|
+| `rename_table` | [`RenameTable`](#renametable) |
+| `rename_view` | [`RenameView`](#renameview) |
+| `rename_column` | [`RenameColumn`](#renamecolumn) |
+| `rename_field` | [`RenameField`](#renamefield) |
+| `add_column` | [`AddColumn`](#addcolumn) |
+| `add_field` | [`AddField`](#addfield) |
+| `remove_column` | [`RemoveColumn`](#removecolumn) |
+| `remove_field` | [`RemoveField`](#removefield) |
+| `change_column_type` | [`ChangeColumnType`](#changecolumntype) |
+| `set_default` | [`SetDefault`](#setdefault) |
+| `set_not_null` | [`SetNotNull`](#setnotnull) |
+| `drop_not_null` | [`DropNotNull`](#dropnotnull) |
+| `set_partitioned_by` | [`SetPartitionedBy`](#setpartitionedby) |
+| `set_sorted_by` | [`SetSortedBy`](#setsortedby) |
+| `set_options` | [`SetOptions`](#setoptions) |
+| `reset_options` | [`ResetOptions`](#resetoptions) |
+| `set_comment` | [`SetComment`](#setcomment) |
+| `set_column_comment` | [`SetColumnComment`](#setcolumncomment) |
+
 ### `AtClause`
 
 The `AT` clause of a time travel query.
@@ -899,6 +947,15 @@ The unit of an `AT` clause.
 | `version` | A snapshot id. |
 | `timestamp` | A timestamp. |
 
+### `CatalogEntryType`
+
+The type of a catalog entry.
+
+| Value | Description |
+|-------|-------------|
+| `TABLE_ENTRY` |  |
+| `VIEW_ENTRY` |  |
+
 ### `CatalogInfo`
 
 The catalog at a snapshot.
@@ -911,6 +968,14 @@ The catalog at a snapshot.
 | `macros` | list of [`MacroInfo`](#macroinfo) (default `[]`) | The macros. |
 | `partitions` | list of [`PartitionInfo`](#partitioninfo) (default `[]`) | The partitionings of the tables. |
 | `sorts` | list of [`SortInfo`](#sortinfo) (default `[]`) | The sort orders of the tables. |
+
+### `ChangeColumnType`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_path` | list of `string` | The path of the column. |
+| `column_type` | `string` | The new type, as a DuckDB SQL type name (e.g. `BIGINT`). |
+| `expression` | `string` (optional) | The `USING` expression that converts the old values. |
 
 ### `ColumnDefinition`
 
@@ -943,6 +1008,11 @@ A column of a table, as stored in `ducklake_column`.
 ### `ColumnStats`
 
 The statistics of a column of a file or of inserted rows.
+
+```json
+{"type": {"id": "INTEGER"}, "min_value": "1", "max_value": "2", "null_count": 0, "value_count": 2,
+ "column_size_bytes": 10, "any_valid": true, "bounds_unknown": false, "min_is_exact": true, "max_is_exact": true}
+```
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1154,6 +1224,12 @@ A deleted version of a row of an inlined data table.
 | `begin_snapshot` | `int64` | The snapshot that inserted the row. |
 | `end_snapshot` | `int64` | The snapshot that deleted the row. |
 
+### `DropNotNull`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_path` | list of `string` | The path of the column. |
+
 ### `DroppedFile`
 
 A data file that is deleted entirely.
@@ -1174,6 +1250,28 @@ A filter whose value is only known while the scan runs (e.g. of a top-N).
 | `column_id` | `uint64` | The column. |
 | `comparison_type` | `string` | The comparison, as a DuckDB `ExpressionType` (e.g. `COMPARE_GREATERTHAN`). |
 | `type` | `logical_type` | The type of the column. |
+
+### `ErrorInfo`
+
+The details of an error.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `string` (default `"Error"`) | The type of the DuckDB exception, e.g. `Catalog`. |
+| `message` | `string` (default `""`) | The message of the error. |
+
+### `ErrorResponse`
+
+The body of a response with a status code other than 200: `409` for transaction conflicts, `404` for catalog errors
+(e.g. entries that do not exist), `400` for invalid input, `401` for a missing or invalid token and `500` otherwise.
+
+```json
+{"error": {"type": "Catalog", "message": "Table with id 1000 does not exist at snapshot 3"}}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `error` | [`ErrorInfo`](#errorinfo) | The error. |
 
 ### `FileColumnStats`
 
@@ -1357,9 +1455,12 @@ Deletes of inlined rows.
 
 A set of rows, e.g. the rows of an inlined data table.
 
-Has the fields of [`RowSet`](#rowset), and:
+```json
+{"columns": [{"name": "row_id", "type": {"id": "BIGINT"}}, {"name": "i", "type": {"id": "INTEGER"}}],
+ "rows": [[0, 1], [1, 2]]}
+```
 
-No fields.
+Has the fields of [`RowSet`](#rowset).
 
 ### `InlinedTableInfo`
 
@@ -1426,6 +1527,13 @@ The type of a macro.
 ### `Metadata`
 
 The global metadata of the DuckLake (the contents of `ducklake_metadata`).
+
+```json
+{
+  "tags": [{"key": "version", "value": "1.1-dev1"}, {"key": "data_path", "value": "/data/"}],
+  "table_settings": [{"table_id": 1, "key": "data_inlining_row_limit", "value": "10"}]
+}
+```
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1498,6 +1606,54 @@ The partitioning of a table.
 | `table_id` | `uint64` (optional) | The table. |
 | `fields` | list of [`PartitionField`](#partitionfield) (default `[]`) | The partition keys. |
 
+### `RemoveColumn`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_name` | `string` | The name of the column. |
+| `if_exists` | `bool` (default `false`) | Do nothing if the column does not exist. |
+| `cascade` | `bool` (default `false`) | Also drop what depends on the column. |
+
+### `RemoveField`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_path` | list of `string` | The path of the field. |
+| `if_exists` | `bool` (default `false`) | Do nothing if the field does not exist. |
+| `cascade` | `bool` (default `false`) | Also drop what depends on the field. |
+
+### `RenameColumn`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `old_name` | `string` | The current name of the column. |
+| `new_name` | `string` | The new name of the column. |
+
+### `RenameField`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_path` | list of `string` | The path of the field. |
+| `new_name` | `string` | The new name of the field. |
+
+### `RenameTable`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `new_name` | `string` | The new name of the table. |
+
+### `RenameView`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `new_name` | `string` | The new name of the view. |
+
+### `ResetOptions`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `options` | list of `string` (default `[]`) | The options to reset. |
+
 ### `ResultColumn`
 
 A column of a set of rows.
@@ -1551,6 +1707,12 @@ out an `OR` entirely if it does not understand one of its parts.
 `runtime_filter_columns` the server returns the min/max statistics of the files in `column_min_max`, so the client
 can prune files at runtime.
 
+```json
+{"expressions": ["i >= 150", "s = 'a' OR st.a IN (1, 2)"],
+ "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "INTEGER"}}],
+ "runtime_filter_columns": [1]}
+```
+
 | Field | Type | Description |
 |-------|------|-------------|
 | `expressions` | list of `string` (default `[]`) | SQL expressions that hold for all rows of the scan. |
@@ -1579,6 +1741,52 @@ An option of the DuckLake that is set for a schema.
 | `schema_id` | `uint64` (optional) | The schema. |
 | `key` | `string` | The option. |
 | `value` | `string` (default `""`) | The value of the option. |
+
+### `SetColumnComment`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entry_type` | [`CatalogEntryType`](#catalogentrytype) | Whether the column is of a table or a view. |
+| `column_name` | `string` | The name of the column. |
+| `comment` | `value` (optional) | The comment, absent to drop the comment. |
+
+### `SetComment`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `entry_type` | [`CatalogEntryType`](#catalogentrytype) | Whether the comment is of a table or a view. |
+| `comment` | `value` (optional) | The comment, absent to drop the comment. |
+
+### `SetDefault`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_path` | list of `string` | The path of the column. |
+| `expression` | `string` (optional) | The default, absent to drop the default. |
+
+### `SetNotNull`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `column_path` | list of `string` | The path of the column. |
+
+### `SetOptions`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `options` | object of `string` (default `{}`) | The options as SQL expressions, e.g. `{"data_inlining_row_limit": "10"}`. |
+
+### `SetPartitionedBy`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `partitioned_by` | list of `string` (default `[]`) | The partition keys as SQL expressions, empty to reset the partitioning. |
+
+### `SetSortedBy`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sorted_by` | list of `string` (default `[]`) | The sort keys, e.g. `["j DESC NULLS LAST"]`, empty to reset the sort order. |
 
 ### `Snapshot`
 
@@ -1742,33 +1950,6 @@ A view of the catalog.
 | `column_tags` | list of [`ViewColumnTag`](#viewcolumntag) (default `[]`) | The tags of the columns of the view. |
 
 <!-- END GENERATED REFERENCE -->
-
-## Alterations
-
-The `alter` of `alter_table` and `alter_view` is an object with a `type` and the fields of that type. Columns are
-referred to by name; nested fields by their path from the top-level column, e.g. `["s", "a"]`. Expressions are SQL
-expressions.
-
-| `type`               | Fields                                                                         |
-|----------------------|--------------------------------------------------------------------------------|
-| `rename_table`       | `new_name`                                                                     |
-| `rename_view`        | `new_name`                                                                     |
-| `rename_column`      | `old_name`, `new_name`                                                         |
-| `rename_field`       | `column_path`, `new_name`                                                      |
-| `add_column`         | `column` (as in `create_table`), `if_not_exists`                               |
-| `add_field`          | `column_path` (of the parent), `field` (as in `create_table`), `if_not_exists` |
-| `remove_column`      | `column_name`, `if_exists`, `cascade`                                          |
-| `remove_field`       | `column_path`, `if_exists`, `cascade`                                          |
-| `change_column_type` | `column_path`, `column_type`, `expression` (optional, the `USING` expression)  |
-| `set_default`        | `column_path`, `expression` (absent to drop the default)                       |
-| `set_not_null`       | `column_path`                                                                  |
-| `drop_not_null`      | `column_path`                                                                  |
-| `set_partitioned_by` | `partitioned_by`: the partition keys (empty to reset the partitioning)         |
-| `set_sorted_by`      | `sorted_by`: the sort keys, e.g. `["j DESC NULLS LAST"]` (empty to reset)      |
-| `set_options`        | `options`: `{"<option>": "<expression>"}`                                      |
-| `reset_options`      | `options`: `["<option>"]`                                                      |
-| `set_comment`        | `entry_type` (`TABLE_ENTRY` / `VIEW_ENTRY`), `comment`                         |
-| `set_column_comment` | `entry_type`, `column_name`, `comment`                                         |
 
 ## Reference Implementation
 

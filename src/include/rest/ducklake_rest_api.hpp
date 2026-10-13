@@ -13,10 +13,12 @@
 #include "common/ducklake_data_file.hpp"
 #include "storage/ducklake_metadata_info.hpp"
 #include "storage/ducklake_stats.hpp"
+#include "duckdb/common/enums/catalog_type.hpp"
 
 namespace duckdb {
 class DuckLakeRESTRequest;
 struct RESTCommitRequest;
+struct RESTAlteration;
 
 //===--------------------------------------------------------------------===//
 // Enums
@@ -27,6 +29,14 @@ struct RESTAtUnitCodec : public RESTCodec<RESTAtUnitCodec> {
 	static string FromString(const string &value);
 	static JSONMutableValue Write(JSONWriter &writer, const string &value);
 	static void Read(RESTJsonIn in, string &result);
+};
+
+//! The type of a catalog entry.
+struct RESTCatalogEntryTypeCodec : public RESTCodec<RESTCatalogEntryTypeCodec> {
+	static const char *ToString(CatalogType value);
+	static CatalogType FromString(const string &value);
+	static JSONMutableValue Write(JSONWriter &writer, CatalogType value);
+	static void Read(RESTJsonIn in, CatalogType &result);
 };
 
 //! The type of a compaction.
@@ -120,13 +130,19 @@ struct RESTTableChangeTypeCodec : public RESTCodec<RESTTableChangeTypeCodec> {
 //===--------------------------------------------------------------------===//
 // Serialization
 //===--------------------------------------------------------------------===//
+struct RESTAddColumn;
+struct RESTAddField;
 struct RESTAtClause;
+struct RESTChangeColumnType;
 struct RESTColumnDefinition;
 struct RESTCreatedEntry;
 struct RESTCreatedTable;
 struct RESTDeletedRowVersion;
+struct RESTDropNotNull;
 struct RESTDroppedFile;
 struct RESTDynamicFilter;
+struct RESTErrorInfo;
+struct RESTErrorResponse;
 struct RESTFileRowDeletes;
 struct RESTFlushedFileDeletions;
 struct RESTFlushedInlinedTable;
@@ -134,10 +150,24 @@ struct RESTInlinedRowDeletes;
 struct RESTInlinedRows;
 struct RESTInlinedTableRows;
 struct RESTOptionSetting;
+struct RESTRemoveColumn;
+struct RESTRemoveField;
+struct RESTRenameColumn;
+struct RESTRenameField;
+struct RESTRenameTable;
+struct RESTRenameView;
+struct RESTResetOptions;
 struct RESTResultColumn;
 struct RESTRetryConfig;
 struct RESTRowSet;
 struct RESTScanFilters;
+struct RESTSetColumnComment;
+struct RESTSetComment;
+struct RESTSetDefault;
+struct RESTSetNotNull;
+struct RESTSetOptions;
+struct RESTSetPartitionedBy;
+struct RESTSetSortedBy;
 struct RESTSnapshotReference;
 struct RESTColumnCreatedWithTableRequest;
 struct RESTColumnCreatedWithTableResponse;
@@ -203,9 +233,19 @@ struct RESTSetOptionRequest;
 struct DuckLakeRESTSerializer {
 	template <class T>
 	static T Read(RESTJsonIn in);
+	//! The JSON document of a structure
+	template <class T>
+	static string ToJSON(const T &value) {
+		RESTJsonWriter document;
+		document.SetRoot(Write(document.writer, value));
+		return document.ToString();
+	}
 
+	static JSONMutableValue Write(JSONWriter &writer, const RESTAddColumn &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTAddField &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTAtClause &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeCatalogInfo &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTChangeColumnType &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnDefinition &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeColumnInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeColumnStats &value);
@@ -221,8 +261,11 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeDeleteFile &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeDeleteScanEntry &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDeletedRowVersion &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTDropNotNull &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDroppedFile &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDynamicFilter &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTErrorInfo &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTErrorResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileColumnStats &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileData &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileForCleanup &value);
@@ -248,12 +291,26 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTOptionSetting &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakePartitionFieldInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakePartitionInfo &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTRemoveColumn &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTRemoveField &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTRenameColumn &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTRenameField &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTRenameTable &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTRenameView &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTResetOptions &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTResultColumn &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTRetryConfig &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTRowSet &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTScanFilters &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSchemaInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSchemaSetting &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTSetColumnComment &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTSetComment &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTSetDefault &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTSetNotNull &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTSetOptions &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTSetPartitionedBy &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTSetSortedBy &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSnapshot &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSnapshotInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSnapshotReference &value);
@@ -327,9 +384,15 @@ struct DuckLakeRESTSerializer {
 };
 
 template <>
+RESTAddColumn DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTAddField DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
 RESTAtClause DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeCatalogInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTChangeColumnType DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTColumnDefinition DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -361,9 +424,15 @@ DuckLakeDeleteScanEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDeletedRowVersion DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
+RESTDropNotNull DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
 RESTDroppedFile DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDynamicFilter DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTErrorInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTErrorResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeFileColumnStats DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -415,6 +484,20 @@ DuckLakePartitionFieldInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakePartitionInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
+RESTRemoveColumn DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTRemoveField DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTRenameColumn DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTRenameField DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTRenameTable DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTRenameView DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTResetOptions DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
 RESTResultColumn DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTRetryConfig DuckLakeRESTSerializer::Read(RESTJsonIn in);
@@ -426,6 +509,20 @@ template <>
 DuckLakeSchemaInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeSchemaSetting DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTSetColumnComment DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTSetComment DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTSetDefault DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTSetNotNull DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTSetOptions DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTSetPartitionedBy DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTSetSortedBy DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeSnapshot DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -643,26 +740,71 @@ struct RESTCommitRequest {
 	template <class TARGET>
 	TARGET &Cast() {
 		D_ASSERT(type == TARGET::TYPE);
-		return reinterpret_cast<TARGET &>(*this);
+		return static_cast<TARGET &>(*this);
 	}
 	template <class TARGET>
 	const TARGET &Cast() const {
 		D_ASSERT(type == TARGET::TYPE);
-		return reinterpret_cast<const TARGET &>(*this);
+		return static_cast<const TARGET &>(*this);
+	}
+};
+
+//===--------------------------------------------------------------------===//
+// Unions
+//===--------------------------------------------------------------------===//
+enum class RESTAlterationType : uint8_t {
+	RENAME_TABLE,
+	RENAME_VIEW,
+	RENAME_COLUMN,
+	RENAME_FIELD,
+	ADD_COLUMN,
+	ADD_FIELD,
+	REMOVE_COLUMN,
+	REMOVE_FIELD,
+	CHANGE_COLUMN_TYPE,
+	SET_DEFAULT,
+	SET_NOT_NULL,
+	DROP_NOT_NULL,
+	SET_PARTITIONED_BY,
+	SET_SORTED_BY,
+	SET_OPTIONS,
+	RESET_OPTIONS,
+	SET_COMMENT,
+	SET_COLUMN_COMMENT,
+};
+
+//! The change of an `alter_table` or `alter_view` request: an object with exactly one member, the name of the change.
+struct RESTAlteration {
+	explicit RESTAlteration(RESTAlterationType type) : type(type) {
+	}
+	virtual ~RESTAlteration() {
+	}
+
+	RESTAlterationType type;
+
+	template <class TARGET>
+	TARGET &Cast() {
+		D_ASSERT(type == TARGET::TYPE);
+		return static_cast<TARGET &>(*this);
+	}
+	template <class TARGET>
+	const TARGET &Cast() const {
+		D_ASSERT(type == TARGET::TYPE);
+		return static_cast<const TARGET &>(*this);
+	}
+};
+
+struct RESTAlterationCodec : public RESTCodec<RESTAlterationCodec> {
+	static JSONMutableValue Write(JSONWriter &writer, const RESTAlteration &value);
+	static void Read(RESTJsonIn in, unique_ptr<RESTAlteration> &result);
+	static void ReadPtr(RESTJsonIn in, unique_ptr<RESTAlteration> &result) {
+		Read(in, result);
 	}
 };
 
 //===--------------------------------------------------------------------===//
 // Structures
 //===--------------------------------------------------------------------===//
-//! The `AT` clause of a time travel query.
-struct RESTAtClause {
-	//! The unit of the value.
-	string unit;
-	//! The snapshot id or timestamp.
-	Value value;
-};
-
 //! The definition of a column in a catalog change.
 struct RESTColumnDefinition {
 	//! The name of the column.
@@ -675,6 +817,54 @@ struct RESTColumnDefinition {
 	RESTOptional<string> comment;
 	//! Whether the column is `NOT NULL`.
 	bool not_null = false;
+};
+
+struct RESTAddColumn : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::ADD_COLUMN;
+
+	RESTAddColumn() : RESTAlteration(TYPE) {
+	}
+
+	//! The column.
+	RESTColumnDefinition column;
+	//! Do nothing if the column exists.
+	bool if_not_exists = false;
+};
+
+struct RESTAddField : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::ADD_FIELD;
+
+	RESTAddField() : RESTAlteration(TYPE) {
+	}
+
+	//! The path of the parent column.
+	vector<string> column_path;
+	//! The field.
+	RESTColumnDefinition field;
+	//! Do nothing if the field exists.
+	bool if_not_exists = false;
+};
+
+//! The `AT` clause of a time travel query.
+struct RESTAtClause {
+	//! The unit of the value.
+	string unit;
+	//! The snapshot id or timestamp.
+	Value value;
+};
+
+struct RESTChangeColumnType : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::CHANGE_COLUMN_TYPE;
+
+	RESTChangeColumnType() : RESTAlteration(TYPE) {
+	}
+
+	//! The path of the column.
+	vector<string> column_path;
+	//! The new type, as a DuckDB SQL type name (e.g. `BIGINT`).
+	string column_type;
+	//! The `USING` expression that converts the old values.
+	string expression;
 };
 
 //! An entry that a commit created.
@@ -705,6 +895,16 @@ struct RESTDeletedRowVersion {
 	int64_t end_snapshot = 0;
 };
 
+struct RESTDropNotNull : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::DROP_NOT_NULL;
+
+	RESTDropNotNull() : RESTAlteration(TYPE) {
+	}
+
+	//! The path of the column.
+	vector<string> column_path;
+};
+
 //! A data file that is deleted entirely.
 struct RESTDroppedFile {
 	//! The data file.
@@ -725,6 +925,20 @@ struct RESTDynamicFilter {
 	string comparison_type;
 	//! The type of the column.
 	LogicalType type;
+};
+
+//! The details of an error.
+struct RESTErrorInfo {
+	//! The type of the DuckDB exception, e.g. `Catalog`.
+	string type = string("Error");
+	//! The message of the error.
+	string message = string("");
+};
+
+//! The body of a response with a status code other than 200: `409` for transaction conflicts, `404` for catalog errors
+struct RESTErrorResponse {
+	//! The error.
+	RESTErrorInfo error;
 };
 
 //! Deletes of rows of a data file that are inlined in the catalog.
@@ -800,6 +1014,88 @@ struct RESTOptionSetting {
 	RESTOptional<int64_t> table_id;
 };
 
+struct RESTRemoveColumn : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::REMOVE_COLUMN;
+
+	RESTRemoveColumn() : RESTAlteration(TYPE) {
+	}
+
+	//! The name of the column.
+	string column_name;
+	//! Do nothing if the column does not exist.
+	bool if_exists = false;
+	//! Also drop what depends on the column.
+	bool cascade = false;
+};
+
+struct RESTRemoveField : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::REMOVE_FIELD;
+
+	RESTRemoveField() : RESTAlteration(TYPE) {
+	}
+
+	//! The path of the field.
+	vector<string> column_path;
+	//! Do nothing if the field does not exist.
+	bool if_exists = false;
+	//! Also drop what depends on the field.
+	bool cascade = false;
+};
+
+struct RESTRenameColumn : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::RENAME_COLUMN;
+
+	RESTRenameColumn() : RESTAlteration(TYPE) {
+	}
+
+	//! The current name of the column.
+	string old_name;
+	//! The new name of the column.
+	string new_name;
+};
+
+struct RESTRenameField : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::RENAME_FIELD;
+
+	RESTRenameField() : RESTAlteration(TYPE) {
+	}
+
+	//! The path of the field.
+	vector<string> column_path;
+	//! The new name of the field.
+	string new_name;
+};
+
+struct RESTRenameTable : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::RENAME_TABLE;
+
+	RESTRenameTable() : RESTAlteration(TYPE) {
+	}
+
+	//! The new name of the table.
+	string new_name;
+};
+
+struct RESTRenameView : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::RENAME_VIEW;
+
+	RESTRenameView() : RESTAlteration(TYPE) {
+	}
+
+	//! The new name of the view.
+	string new_name;
+};
+
+struct RESTResetOptions : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::RESET_OPTIONS;
+
+	RESTResetOptions() : RESTAlteration(TYPE) {
+	}
+
+	//! The options to reset.
+	vector<string> options;
+};
+
 //! How a commit is retried on conflicts.
 struct RESTRetryConfig {
 	//! The number of retries.
@@ -818,6 +1114,84 @@ struct RESTScanFilters {
 	vector<RESTDynamicFilter> dynamic_filters;
 	//! The columns to return the min/max statistics of.
 	vector<idx_t> runtime_filter_columns;
+};
+
+struct RESTSetColumnComment : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::SET_COLUMN_COMMENT;
+
+	RESTSetColumnComment() : RESTAlteration(TYPE) {
+	}
+
+	//! Whether the column is of a table or a view.
+	CatalogType entry_type = CatalogType::TABLE_ENTRY;
+	//! The name of the column.
+	string column_name;
+	//! The comment, absent to drop the comment.
+	Value comment;
+};
+
+struct RESTSetComment : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::SET_COMMENT;
+
+	RESTSetComment() : RESTAlteration(TYPE) {
+	}
+
+	//! Whether the comment is of a table or a view.
+	CatalogType entry_type = CatalogType::TABLE_ENTRY;
+	//! The comment, absent to drop the comment.
+	Value comment;
+};
+
+struct RESTSetDefault : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::SET_DEFAULT;
+
+	RESTSetDefault() : RESTAlteration(TYPE) {
+	}
+
+	//! The path of the column.
+	vector<string> column_path;
+	//! The default, absent to drop the default.
+	string expression;
+};
+
+struct RESTSetNotNull : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::SET_NOT_NULL;
+
+	RESTSetNotNull() : RESTAlteration(TYPE) {
+	}
+
+	//! The path of the column.
+	vector<string> column_path;
+};
+
+struct RESTSetOptions : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::SET_OPTIONS;
+
+	RESTSetOptions() : RESTAlteration(TYPE) {
+	}
+
+	//! The options as SQL expressions, e.g. `{"data_inlining_row_limit": "10"}`.
+	map<string, string> options;
+};
+
+struct RESTSetPartitionedBy : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::SET_PARTITIONED_BY;
+
+	RESTSetPartitionedBy() : RESTAlteration(TYPE) {
+	}
+
+	//! The partition keys as SQL expressions, empty to reset the partitioning.
+	vector<string> partitioned_by;
+};
+
+struct RESTSetSortedBy : public RESTAlteration {
+	static constexpr const RESTAlterationType TYPE = RESTAlterationType::SET_SORTED_BY;
+
+	RESTSetSortedBy() : RESTAlteration(TYPE) {
+	}
+
+	//! The sort keys, e.g. `["j DESC NULLS LAST"]`, empty to reset the sort order.
+	vector<string> sorted_by;
 };
 
 //! The snapshot that a request reads. A `snapshot` is used as-is, which also allows reading at snapshots that
@@ -1109,8 +1483,8 @@ struct RESTAlterTableRequest : public RESTCommitRequest {
 	vector<string> schema_path;
 	//! The name of the table.
 	string name;
-	//! The change, see [alterations](#alterations).
-	RESTJsonValue alter;
+	//! The change.
+	unique_ptr<RESTAlteration> alter;
 	//! For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`).
 	optional_idx partition_id;
 };
@@ -1126,8 +1500,8 @@ struct RESTAlterViewRequest : public RESTCommitRequest {
 	vector<string> schema_path;
 	//! The name of the view.
 	string name;
-	//! The change, see [alterations](#alterations).
-	RESTJsonValue alter;
+	//! The change.
+	unique_ptr<RESTAlteration> alter;
 };
 
 struct RESTCommitTransactionRequest : public RESTSnapshotReference {
@@ -1498,7 +1872,8 @@ protected:
 	virtual void SetOption(RESTSetOptionRequest &request) = 0;
 };
 
-typedef void (*rest_endpoint_t)(DuckLakeRESTRequest &request, RESTJsonIn input, RESTJsonWriter &output);
+//! Handles the JSON body of a request to an endpoint, returns the JSON body of the response
+typedef string (*rest_endpoint_t)(DuckLakeRESTRequest &request, const string &body);
 
 struct DuckLakeRESTAPI {
 	//! The endpoints of the API, by their name
@@ -1595,8 +1970,9 @@ public:
 	//! Sets or resets a DuckLake option (`ducklake_metadata`).
 	RESTCommitTransactionResponse SetOption(const RESTSetOptionRequest &request);
 
-	//! Sends the request to an endpoint, rethrows the error reported by the server
-	virtual unique_ptr<RESTJsonReader> Post(const string &endpoint, const RESTJsonWriter &request) = 0;
+	//! Sends the JSON body of a request to an endpoint, returns the JSON body of the response
+	//! Rethrows the error reported by the server
+	virtual string Post(const string &endpoint, const string &body) = 0;
 };
 
 } // namespace duckdb

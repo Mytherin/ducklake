@@ -21,8 +21,9 @@ struct DuckLakeRESTCatalogChanges {
 	static RESTColumnDefinition WriteColumn(const ColumnDefinition &column, bool not_null);
 	static ColumnDefinition ReadColumn(ClientContext &context, const RESTColumnDefinition &column);
 
-	static void WriteAlter(RESTJsonOut out, const AlterInfo &info);
-	static unique_ptr<AlterInfo> ReadAlter(ClientContext &context, RESTJsonIn in, const AlterEntryData &entry);
+	static unique_ptr<RESTAlteration> WriteAlter(const AlterInfo &info);
+	static unique_ptr<AlterInfo> ReadAlter(ClientContext &context, const RESTAlteration &alteration,
+	                                       const AlterEntryData &entry);
 };
 
 } // namespace duckdb

@@ -485,6 +485,12 @@ structure DynamicFilter {
 /// `dynamic_filters` let the server order the files so that these filters can prune files early. For
 /// `runtime_filter_columns` the server returns the min/max statistics of the files in `column_min_max`, so the client
 /// can prune files at runtime.
+///
+/// ```json
+/// {"expressions": ["i >= 150", "s = 'a' OR st.a IN (1, 2)"],
+///  "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "INTEGER"}}],
+///  "runtime_filter_columns": [1]}
+/// ```
 structure ScanFilters {
     /// SQL expressions that hold for all rows of the scan.
     expressions: StringList = []

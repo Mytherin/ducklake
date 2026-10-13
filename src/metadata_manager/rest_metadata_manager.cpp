@@ -759,12 +759,6 @@ static LogicalType GetAlteredType(const AlterInfo &info) {
 	}
 }
 
-static RESTJsonValue WriteAlter(const AlterInfo &info) {
-	RESTJsonWriter writer;
-	DuckLakeRESTCatalogChanges::WriteAlter(writer.Root(), info);
-	return RESTJsonValue::FromWriter(writer);
-}
-
 void RESTMetadataManager::OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) {
 	auto altered_type = GetAlteredType(info);
 	if (altered_type.id() != LogicalTypeId::INVALID) {
@@ -776,13 +770,13 @@ void RESTMetadataManager::OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterI
 		auto &request = AddCommitRequest<RESTAlterViewRequest>();
 		request.schema_path = GetSchemaPath(schema);
 		request.name = std::move(name);
-		request.alter = WriteAlter(info);
+		request.alter = DuckLakeRESTCatalogChanges::WriteAlter(info);
 		return;
 	}
 	auto &request = AddCommitRequest<RESTAlterTableRequest>();
 	request.schema_path = GetSchemaPath(schema);
 	request.name = std::move(name);
-	request.alter = WriteAlter(info);
+	request.alter = DuckLakeRESTCatalogChanges::WriteAlter(info);
 }
 
 void RESTMetadataManager::OnDropEntry(CatalogEntry &entry) {

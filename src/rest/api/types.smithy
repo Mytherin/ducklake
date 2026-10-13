@@ -90,6 +90,13 @@ structure TableSetting {
 }
 
 /// The global metadata of the DuckLake (the contents of `ducklake_metadata`).
+///
+/// ```json
+/// {
+///   "tags": [{"key": "version", "value": "1.1-dev1"}, {"key": "data_path", "value": "/data/"}],
+///   "table_settings": [{"table_id": 1, "key": "data_inlining_row_limit", "value": "10"}]
+/// }
+/// ```
 @cppClass("DuckLakeMetadata")
 structure Metadata {
     /// The global options, including the `version` and the `data_path` of the DuckLake.
@@ -487,6 +494,11 @@ structure GlobalTableStats {
 }
 
 /// The statistics of a column of a file or of inserted rows.
+///
+/// ```json
+/// {"type": {"id": "INTEGER"}, "min_value": "1", "max_value": "2", "null_count": 0, "value_count": 2,
+///  "column_size_bytes": 10, "any_valid": true, "bounds_unknown": false, "min_is_exact": true, "max_is_exact": true}
+/// ```
 @mixin(
     localTraits: [cppClass, customSerialization]
 )
@@ -1150,6 +1162,11 @@ structure RowSet {
 }
 
 /// A set of rows, e.g. the rows of an inlined data table.
+///
+/// ```json
+/// {"columns": [{"name": "row_id", "type": {"id": "BIGINT"}}, {"name": "i", "type": {"id": "INTEGER"}}],
+///  "rows": [[0, 1], [1, 2]]}
+/// ```
 structure InlinedRows with [RowSet] {}
 
 /// The rows of an inlined data table.
@@ -1424,4 +1441,25 @@ list ViewInfoList {
 map StringMap {
     key: String
     value: String
+}
+
+/// The details of an error.
+structure ErrorInfo {
+    /// The type of the DuckDB exception, e.g. `Catalog`.
+    type: String = "Error"
+
+    /// The message of the error.
+    message: String = ""
+}
+
+/// The body of a response with a status code other than 200: `409` for transaction conflicts, `404` for catalog errors
+/// (e.g. entries that do not exist), `400` for invalid input, `401` for a missing or invalid token and `500` otherwise.
+///
+/// ```json
+/// {"error": {"type": "Catalog", "message": "Table with id 1000 does not exist at snapshot 3"}}
+/// ```
+structure ErrorResponse {
+    /// The error.
+    @required
+    error: ErrorInfo
 }

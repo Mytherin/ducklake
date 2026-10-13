@@ -131,6 +131,42 @@ SELECT status, response->>'$.error.message' LIKE '%exactly one member%' FROM duc
 ----
 400	true
 
+# alterations are unions: an object with exactly one member, the name of the change
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'alter_table',
+'{"schema_path": ["main"], "name": "t", "alter": {"rename_column": {"old_name": "s", "new_name": "str"}}}')
+----
+200
+
+query I
+SELECT string_agg(column_name, ',' ORDER BY column_name) FROM (DESCRIBE dl.t)
+----
+i,str
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%"bogus" is not a valid Alteration%' FROM ducklake_rest_request('{rest_server}', 'alter_table',
+'{"name": "t", "alter": {"bogus": {}}}')
+----
+400	true
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%exactly one%' FROM ducklake_rest_request('{rest_server}', 'alter_table',
+'{"name": "t", "alter": {"type": "rename_column", "old_name": "i", "new_name": "j"}}')
+----
+400	true
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%missing required field "new_name"%' FROM ducklake_rest_request('{rest_server}', 'alter_table',
+'{"name": "t", "alter": {"rename_table": {}}}')
+----
+400	true
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%not a valid CatalogEntryType%' FROM ducklake_rest_request('{rest_server}', 'alter_table',
+'{"name": "t", "alter": {"set_comment": {"entry_type": "SCHEMA_ENTRY", "comment": "c"}}}')
+----
+400	true
+
 # the changes of a table are returned by their type
 query II
 SELECT status, json_array_length(response->'$.insertions') > 0 FROM ducklake_rest_request('{rest_server}', 'table_changes',

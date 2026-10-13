@@ -39,8 +39,6 @@ struct RESTOptional {
 struct RESTJsonValue {
 	shared_ptr<RESTJsonReader> document;
 	RESTJsonIn value;
-
-	static RESTJsonValue FromWriter(const RESTJsonWriter &writer);
 };
 
 //! Rows of typed values, which are owned when they were read
@@ -118,6 +116,11 @@ struct RESTCodec {
 		CODEC::Read(in, result);
 		return result;
 	}
+	//! Codecs of polymorphic types hide this to read the right subclass
+	template <class T>
+	static void ReadPtr(RESTJsonIn in, unique_ptr<T> &result) {
+		result = make_uniq<T>(CODEC::template Get<T>(in));
+	}
 };
 
 //! Writes / reads a value with a codec, values of nullable fields can be wrapped
@@ -139,7 +142,7 @@ void RESTReadValue(RESTJsonIn in, T &result) {
 }
 template <class CODEC, class T>
 void RESTReadValue(RESTJsonIn in, unique_ptr<T> &result) {
-	result = make_uniq<T>(CODEC::template Get<T>(in));
+	CODEC::ReadPtr(in, result);
 }
 template <class CODEC, class T>
 void RESTReadValue(RESTJsonIn in, RESTOptional<T> &result) {

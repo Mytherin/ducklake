@@ -15,82 +15,6 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 // Writer
 //===--------------------------------------------------------------------===//
-RESTJsonOut RESTJsonOut::Obj(const string &key) {
-	auto result = writer->CreateObject();
-	val.Add(key, result);
-	return RESTJsonOut(*writer, result);
-}
-
-RESTJsonOut RESTJsonOut::Arr(const string &key) {
-	auto result = writer->CreateArray();
-	val.Add(key, result);
-	return RESTJsonOut(*writer, result);
-}
-
-void RESTJsonOut::SetStr(const string &key, const string &value) {
-	val.AddString(key, value);
-}
-
-void RESTJsonOut::SetUInt(const string &key, idx_t value) {
-	val.Add(key, writer->CreateUnsignedInteger(value));
-}
-
-void RESTJsonOut::SetInt(const string &key, int64_t value) {
-	val.Add(key, writer->CreateSignedInteger(value));
-}
-
-void RESTJsonOut::SetBool(const string &key, bool value) {
-	val.Add(key, writer->CreateBoolean(value));
-}
-
-void RESTJsonOut::SetDouble(const string &key, double value) {
-	val.Add(key, writer->CreateDouble(value));
-}
-
-void RESTJsonOut::SetNull(const string &key) {
-	val.Add(key, writer->CreateNull());
-}
-
-void RESTJsonOut::SetOpt(const string &key, optional_idx value) {
-	if (value.IsValid()) {
-		SetUInt(key, value.GetIndex());
-	} else {
-		SetNull(key);
-	}
-}
-
-void RESTJsonOut::SetValue(const string &key, const Value &value) {
-	val.Add(key, RESTJson::ValueToJson(*writer, value));
-}
-
-void RESTJsonOut::SetRaw(const string &key, JSONMutableValue value) {
-	val.Add(key, value);
-}
-
-RESTJsonOut RESTJsonOut::AppendObj() {
-	auto result = writer->CreateObject();
-	val.Append(result);
-	return RESTJsonOut(*writer, result);
-}
-
-RESTJsonOut RESTJsonOut::AppendArr() {
-	auto result = writer->CreateArray();
-	val.Append(result);
-	return RESTJsonOut(*writer, result);
-}
-
-void RESTJsonOut::AppendStr(const string &value) {
-	val.AppendString(value);
-}
-
-void RESTJsonOut::AppendUInt(idx_t value) {
-	val.Append(writer->CreateUnsignedInteger(value));
-}
-
-void RESTJsonOut::AppendRaw(JSONMutableValue value) {
-	val.Append(value);
-}
-
 RESTJsonWriter::RESTJsonWriter() {
 	root = writer.CreateObject();
 	writer.SetRoot(root);
@@ -288,39 +212,40 @@ Value RESTJson::ValueFromJson(RESTJsonIn json) {
 
 JSONMutableValue RESTJson::TypeToJson(JSONWriter &writer, const LogicalType &type) {
 	auto result = writer.CreateObject();
-	RESTJsonOut out(writer, result);
-	out.SetStr("id", EnumUtil::ToString(type.id()));
+	result.AddString("id", EnumUtil::ToString(type.id()));
 	if (type.HasAlias()) {
-		out.SetStr("alias", type.GetAlias());
+		result.AddString("alias", type.GetAlias());
 	}
 	switch (type.id()) {
 	case LogicalTypeId::GEOMETRY:
 		if (GeoType::HasCRS(type)) {
-			out.SetStr("crs", GeoType::GetCRS(type).GetDefinition());
+			result.AddString("crs", GeoType::GetCRS(type).GetDefinition());
 		}
 		break;
 	case LogicalTypeId::DECIMAL:
-		out.SetUInt("width", DecimalType::GetWidth(type));
-		out.SetUInt("scale", DecimalType::GetScale(type));
+		result.Add("width", writer.CreateUnsignedInteger(DecimalType::GetWidth(type)));
+		result.Add("scale", writer.CreateUnsignedInteger(DecimalType::GetScale(type)));
 		break;
 	case LogicalTypeId::LIST:
-		out.SetRaw("child", TypeToJson(writer, ListType::GetChildType(type)));
+		result.Add("child", TypeToJson(writer, ListType::GetChildType(type)));
 		break;
 	case LogicalTypeId::ARRAY:
-		out.SetRaw("child", TypeToJson(writer, ArrayType::GetChildType(type)));
-		out.SetUInt("size", ArrayType::GetSize(type));
+		result.Add("child", TypeToJson(writer, ArrayType::GetChildType(type)));
+		result.Add("size", writer.CreateUnsignedInteger(ArrayType::GetSize(type)));
 		break;
 	case LogicalTypeId::MAP:
-		out.SetRaw("key", TypeToJson(writer, MapType::KeyType(type)));
-		out.SetRaw("value", TypeToJson(writer, MapType::ValueType(type)));
+		result.Add("key", TypeToJson(writer, MapType::KeyType(type)));
+		result.Add("value", TypeToJson(writer, MapType::ValueType(type)));
 		break;
 	case LogicalTypeId::STRUCT: {
-		auto children = out.Arr("children");
+		auto children = writer.CreateArray();
 		for (auto &child : StructType::GetChildTypes(type)) {
-			auto child_obj = children.AppendObj();
-			child_obj.SetStr("name", child.first.GetIdentifierName());
-			child_obj.SetRaw("type", TypeToJson(writer, child.second));
+			auto child_obj = writer.CreateObject();
+			child_obj.AddString("name", child.first.GetIdentifierName());
+			child_obj.Add("type", TypeToJson(writer, child.second));
+			children.Append(child_obj);
 		}
+		result.Add("children", children);
 		break;
 	}
 	default:

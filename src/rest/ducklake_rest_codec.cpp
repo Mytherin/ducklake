@@ -4,13 +4,6 @@
 
 namespace duckdb {
 
-RESTJsonValue RESTJsonValue::FromWriter(const RESTJsonWriter &writer) {
-	RESTJsonValue result;
-	result.document = make_shared_ptr<RESTJsonReader>(writer.ToString());
-	result.value = result.document->Root();
-	return result;
-}
-
 RESTRows::RESTRows() {
 }
 

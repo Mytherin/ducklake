@@ -25,7 +25,7 @@ public:
 	DuckLakeRESTClient(string base_url, string token);
 	~DuckLakeRESTClient() override;
 
-	unique_ptr<RESTJsonReader> Post(const string &endpoint, const RESTJsonWriter &request) override;
+	string Post(const string &endpoint, const string &body) override;
 	//! Sends a request body to an endpoint, returns the status code and the body of the response
 	int32_t PostRaw(const string &endpoint, const string &body, string &response);
 
