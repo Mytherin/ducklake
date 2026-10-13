@@ -1,5 +1,5 @@
 #include "storage/ducklake_catalog.hpp"
-#include "rest/ducklake_rest_connection.hpp"
+#include "rest/ducklake_rest_client.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -333,17 +333,27 @@ DuckLakeCatalog::~DuckLakeCatalog() {
 	UnregisterCatalog();
 }
 
-void DuckLakeCatalog::ConnectREST(ClientContext &context) {
-	if (!rest_connection) {
-		rest_connection = DuckLakeRESTConnection::Open(context, options);
+void DuckLakeCatalog::ConnectREST() {
+	if (rest_client) {
+		return;
 	}
+	auto url = MetadataPath();
+	if (StringUtil::StartsWith(url, "rest:")) {
+		url = url.substr(5);
+	}
+	string token;
+	auto entry = options.metadata_parameters.find("token");
+	if (entry != options.metadata_parameters.end()) {
+		token = entry->second.ToString();
+	}
+	rest_client = make_uniq<DuckLakeRESTClient>(std::move(url), std::move(token));
 }
 
 DuckLakeRESTClient &DuckLakeCatalog::GetRESTClient() {
-	if (!rest_connection) {
+	if (!rest_client) {
 		throw InternalException("The REST catalog is not connected to its server");
 	}
-	return rest_connection->Client();
+	return *rest_client;
 }
 
 void DuckLakeCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
@@ -1125,9 +1135,6 @@ optional_ptr<BoundAtClause> DuckLakeCatalog::CatalogSnapshot() const {
 
 void DuckLakeCatalog::OnDetach(ClientContext &context) {
 	auto &db_manager = DatabaseManager::Get(context);
-	if (rest_connection) {
-		rest_connection->Close(context);
-	}
 	// the metadata database stays attached while another DuckLake uses it
 	if (!UnregisterCatalog() || !OwnsMetadataDatabase()) {
 		return;

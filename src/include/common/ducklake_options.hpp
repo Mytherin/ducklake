@@ -41,9 +41,6 @@ struct DuckLakeOptions {
 	map<TableIndex, option_map_t> table_options;
 	idx_t busy_timeout = 5000;
 	DuckLakeVersion ducklake_version = DuckLakeVersion::UNSET;
-	//! For ducklake:rest:<path>, the local DuckLake that is served over REST and the options to attach it with
-	string rest_local_path;
-	string rest_local_attach_options;
 };
 
 } // namespace duckdb

@@ -4,7 +4,6 @@ add_library(
   ducklake_rest_catalog_changes.cpp
   ducklake_rest_client.cpp
   ducklake_rest_codec.cpp
-  ducklake_rest_connection.cpp
   ducklake_rest_endpoints.cpp
   ducklake_rest_filters.cpp
   ducklake_rest_json.cpp

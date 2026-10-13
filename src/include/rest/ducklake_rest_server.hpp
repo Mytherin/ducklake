@@ -45,8 +45,7 @@ public:
 //! An HTTP server that exposes a DuckLake catalog through the DuckLake REST API
 class DuckLakeRESTServer {
 public:
-	//! The server keeps the database alive, unless it is a server of a catalog of the same database
-	DuckLakeRESTServer(shared_ptr<DatabaseInstance> db, string catalog_name, bool keep_database_alive = true);
+	DuckLakeRESTServer(shared_ptr<DatabaseInstance> db, string catalog_name);
 	~DuckLakeRESTServer();
 
 	//! Binds the socket and starts serving in the background, returns the bound port
@@ -70,8 +69,7 @@ public:
 	int32_t HandleRequest(const string &endpoint, const string &body, string &response);
 
 private:
-	weak_ptr<DatabaseInstance> db;
-	shared_ptr<DatabaseInstance> owned_db;
+	shared_ptr<DatabaseInstance> db;
 	string catalog_name;
 	string token;
 	unique_ptr<duckdb_httplib::Server> server;
@@ -87,16 +85,10 @@ public:
 	string Start(unique_ptr<DuckLakeRESTServer> server, const string &host, idx_t port);
 	bool Stop(const string &listen_uri);
 	optional_ptr<DuckLakeRESTServer> GetServer(const string &listen_uri);
-	//! A server on a free local port that serves the DuckLake at a path, attached in a database as a hidden catalog.
-	//! The server is shared by all users of the DuckLake in the database, and stops when the last one is gone.
-	shared_ptr<DuckLakeRESTServer> GetLocalServer(const shared_ptr<DatabaseInstance> &db, const string &path,
-	                                              const string &attach_options);
 
 private:
 	mutex lock;
 	unordered_map<string, unique_ptr<DuckLakeRESTServer>> servers;
-	unordered_map<string, weak_ptr<DuckLakeRESTServer>> local_servers;
-	idx_t local_server_count = 0;
 };
 
 struct DuckLakeRESTServeFunction : public TableFunction {

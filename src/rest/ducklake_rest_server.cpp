@@ -4,6 +4,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 #include "ducklake_extension.hpp"
@@ -57,12 +58,8 @@ DuckLakeSnapshot DuckLakeRESTRequest::GetSnapshot(const RESTSnapshotReference &r
 //===--------------------------------------------------------------------===//
 // Server
 //===--------------------------------------------------------------------===//
-DuckLakeRESTServer::DuckLakeRESTServer(shared_ptr<DatabaseInstance> db_p, string catalog_name_p,
-                                       bool keep_database_alive)
-    : db(db_p), catalog_name(std::move(catalog_name_p)) {
-	if (keep_database_alive) {
-		owned_db = std::move(db_p);
-	}
+DuckLakeRESTServer::DuckLakeRESTServer(shared_ptr<DatabaseInstance> db_p, string catalog_name_p)
+    : db(std::move(db_p)), catalog_name(std::move(catalog_name_p)) {
 }
 
 DuckLakeRESTServer::~DuckLakeRESTServer() {
@@ -103,11 +100,7 @@ int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &
 		if (entry == endpoints.end()) {
 			throw InvalidInputException("Unknown DuckLake REST endpoint \"%s\"", endpoint);
 		}
-		auto database = db.lock();
-		if (!database) {
-			throw ConnectionException("The database served by the DuckLake REST server was closed");
-		}
-		DuckLakeRESTRequest request(*database, catalog_name);
+		DuckLakeRESTRequest request(*db, catalog_name);
 		try {
 			response = entry->second(request, request_body);
 			if (request.connection.HasActiveTransaction()) {
@@ -184,9 +177,13 @@ void DuckLakeRESTServer::Wait() {
 // Registry
 //===--------------------------------------------------------------------===//
 //! Attaches the DuckLake in a database of its own, so the served catalog is isolated from the caller
-static shared_ptr<DatabaseInstance> OpenIsolatedDuckLake(const string &path, const string &attach_options,
-                                                         const string &catalog_name) {
-	DuckDB db(nullptr);
+static shared_ptr<DatabaseInstance> OpenIsolatedDuckLake(ClientContext &context, const string &path,
+                                                         const string &attach_options, const string &catalog_name) {
+	// the database of the server uses as many threads as the database that starts it
+	DBConfig config;
+	config.SetOptionByName("threads",
+	                       Value::BIGINT(NumericCast<int64_t>(TaskScheduler::GetScheduler(context).NumberOfThreads())));
+	DuckDB db(nullptr, &config);
 	db.LoadStaticExtension<DucklakeExtension>();
 	Connection con(db);
 	auto query = StringUtil::Format("ATTACH %s AS %s", SQLString(path), SQLIdentifier(catalog_name));
@@ -229,35 +226,6 @@ bool DuckLakeRESTServerRegistry::Stop(const string &listen_uri) {
 	}
 	server->Stop();
 	return true;
-}
-
-shared_ptr<DuckLakeRESTServer> DuckLakeRESTServerRegistry::GetLocalServer(const shared_ptr<DatabaseInstance> &db,
-                                                                          const string &path,
-                                                                          const string &attach_options) {
-	static constexpr idx_t LOCAL_SERVER_THREADS = 4;
-	lock_guard<mutex> guard(lock);
-	auto key = to_string(reinterpret_cast<uintptr_t>(db.get())) + ":" + path;
-	auto entry = local_servers.find(key);
-	if (entry != local_servers.end()) {
-		auto server = entry->second.lock();
-		if (server) {
-			return server;
-		}
-	}
-	auto catalog_name = "__ducklake_rest_" + to_string(local_server_count++);
-	Connection con(*db);
-	auto query =
-	    StringUtil::Format("ATTACH %s AS %s (HIDDEN true", SQLString("ducklake:" + path), SQLIdentifier(catalog_name));
-	if (!attach_options.empty()) {
-		query += ", " + attach_options;
-	}
-	query += ")";
-	auto result = con.Query(query);
-	result->ThrowIfError("Failed to attach the DuckLake served over REST: ");
-	auto server = make_shared_ptr<DuckLakeRESTServer>(db, catalog_name, false);
-	server->Start("localhost", 0, LOCAL_SERVER_THREADS);
-	local_servers[key] = server;
-	return server;
 }
 
 optional_ptr<DuckLakeRESTServer> DuckLakeRESTServerRegistry::GetServer(const string &listen_uri) {
@@ -305,7 +273,7 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	unique_ptr<DuckLakeRESTServer> server;
 	if (StringUtil::StartsWith(target_str, "ducklake:")) {
 		const string catalog_name = "ducklake_rest";
-		auto db = OpenIsolatedDuckLake(target_str, attach_options, catalog_name);
+		auto db = OpenIsolatedDuckLake(context, target_str, attach_options, catalog_name);
 		server = make_uniq<DuckLakeRESTServer>(std::move(db), catalog_name);
 	} else {
 		auto &catalog = Catalog::GetCatalog(context, Identifier(target_str));

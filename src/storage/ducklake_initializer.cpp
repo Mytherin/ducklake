@@ -62,7 +62,7 @@ string DuckLakeInitializer::GetAttachOptions() {
 void DuckLakeInitializer::Initialize() {
 	auto &transaction = DuckLakeTransaction::Get(context, catalog);
 	if (transaction.GetMetadataManager().IsRemote()) {
-		catalog.ConnectREST(context);
+		catalog.ConnectREST();
 		// the metadata is served remotely - there is no metadata database to attach or migrate
 		LoadExistingDuckLake(transaction, true);
 		if (options.at_clause) {
@@ -314,7 +314,9 @@ void DuckLakeInitializer::LoadExistingDuckLake(DuckLakeTransaction &transaction,
 				InitializeDataPath();
 			} else {
 				// verify that they match if override_data_path is not set to true
-				if (metadata_manager.StorePath(options.data_path) != tag.value && !options.override_data_path) {
+				// the data path of a REST catalog is the view of the client, the server has its own
+				bool override_data_path = options.override_data_path || catalog.MetadataType() == "rest";
+				if (metadata_manager.StorePath(options.data_path) != tag.value && !override_data_path) {
 					throw InvalidConfigurationException(
 					    "DATA_PATH parameter \"%s\" does not match existing data path in the catalog \"%s\".\nYou can "
 					    "override the DATA_PATH by setting OVERRIDE_DATA_PATH to True.",

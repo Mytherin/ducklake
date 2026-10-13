@@ -30,7 +30,6 @@
 
 namespace duckdb {
 class DuckLakeRESTClient;
-class DuckLakeRESTConnection;
 struct CreateMacroInfo;
 struct DuckLakeMacroInfo;
 struct DuckLakeGlobalStatsInfo;
@@ -357,7 +356,7 @@ public:
 	}
 
 	//! Connects to the REST server that serves the metadata, for REST catalogs
-	void ConnectREST(ClientContext &context);
+	void ConnectREST();
 	//! The client of the REST server that serves the metadata, for REST catalogs
 	DuckLakeRESTClient &GetRESTClient();
 	DuckLakeOptions &GetOptions() {
@@ -443,8 +442,8 @@ private:
 	atomic<idx_t> last_uncommitted_catalog_version;
 	//! The metadata server type
 	string metadata_type;
-	//! The connection to the REST server that serves the metadata, for REST catalogs
-	unique_ptr<DuckLakeRESTConnection> rest_connection;
+	//! The client of the REST server that serves the metadata, for REST catalogs
+	unique_ptr<DuckLakeRESTClient> rest_client;
 	//! The resolved DuckLake spec version of the attached catalog
 	DuckLakeVersion ducklake_version = DuckLakeVersion::V1_0;
 	//! A per-instance identifier used to scope ObjectCache keys.

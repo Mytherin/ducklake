@@ -45,22 +45,15 @@ SELECT response FROM ducklake_rest_request('http://localhost:8181', 'snapshot_da
 ATTACH 'ducklake:rest:http://localhost:8181' AS lake;
 ```
 
+`ducklake:rest:` only connects to a server that is already running (see [Starting a server](#starting-a-server)): it never
+starts one.
+
 A server that requires a token is attached with `ATTACH 'ducklake:rest:http://localhost:8181' AS lake (META_TOKEN '...')`.
 
-The client reads the data path and the options of the DuckLake from the server. Data files are read and written by the
+The client reads the data path and the options of the DuckLake from the server. A `DATA_PATH` in the `ATTACH` of the
+client is not an error if it differs from the data path of the server, but the paths of the entries and files that the
+server returns are absolute: it only applies to entries that the client creates itself (e.g. new schemas). Data files are read and written by the
 client directly, so the data path has to be accessible from both the client and the server.
-
-### Serving a local DuckLake
-
-```sql
-ATTACH 'ducklake:rest:metadata.ducklake' AS lake (DATA_PATH 'data/');
-```
-
-A `ducklake:rest:` path that is not an `http://` or `https://` URL attaches the DuckLake at that path as a hidden
-catalog of the same database, serves it over REST on a free local port, and connects to it through REST. The attach
-options are passed on to the served DuckLake, and its metadata catalog is attached under the name the metadata catalog
-of a regular DuckLake would get (e.g. `__ducklake_metadata_lake`). The server stops when the last catalog using it is
-detached. This makes it possible to use (and test) every DuckLake feature through the REST API.
 
 ## Conventions
 
@@ -1978,5 +1971,7 @@ endpoints through `DuckLakeRESTClientAPI`. The JSON conversions that are not gen
 * `test/configs/rest.json` runs the DuckDB tests on a DuckLake that is served over REST (like
   `test/configs/attach_ducklake.json`):
   `build/release/test/unittest --test-config test/configs/rest.json --test-dir duckdb`
-* `test/configs/rest_ducklake.json` runs the DuckLake tests with every DuckLake served over REST:
+* `test/configs/rest_ducklake.json` runs the DuckLake tests with a REST server that its `on_init` starts for every test, and
+  `DUCKLAKE_CONNECTION` pointing to the server. Tests that read the metadata catalog directly are skipped, as it is
+  attached by the server:
   `build/release/test/unittest --test-config test/configs/rest_ducklake.json "test/sql/*"`
