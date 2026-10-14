@@ -21,6 +21,16 @@ struct CreateSchemaInfo;
 //! Which inlined rows the cache of the inlined rows of a table at a schema version holds
 enum class RESTInlinedRowsKind : uint8_t { SCAN, INSERTIONS, DELETIONS };
 
+//! The columns that the cached inlined rows of a table have: all columns, or the field ids of top-level columns
+struct RESTInlinedProjection {
+	static RESTInlinedProjection From(optional_ptr<const vector<FieldIndex>> projection);
+
+	bool Covers(const RESTInlinedProjection &other) const;
+
+	bool all = true;
+	unordered_set<idx_t> columns;
+};
+
 //! The kind of rows, the snapshots they are for (the start snapshot is 0 for scans) and the inlined data
 using InlinedRowsKey = std::tuple<RESTInlinedRowsKind, idx_t, idx_t, string>;
 
@@ -69,12 +79,14 @@ public:
 	DuckLakeCatalogInfo GetCatalogForSnapshot(DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeGlobalStatsInfo> GetGlobalTableStats(DuckLakeSnapshot snapshot) override;
 	map<TableIndex, idx_t> GetTableRecordCounts(DuckLakeSnapshot snapshot) override;
-	vector<DuckLakeFileListEntry> GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
-	                                               const FilterPushdownInfo *filter_info = nullptr,
-	                                               bool include_local_changes = true) override;
+	vector<DuckLakeFileListEntry>
+	GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
+	                 const FilterPushdownInfo *filter_info = nullptr, bool include_local_changes = true,
+	                 optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
 	vector<DuckLakeFileListExtendedEntry>
 	GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
-	                         const FilterPushdownInfo *filter_info = nullptr) override;
+	                         const FilterPushdownInfo *filter_info = nullptr,
+	                         optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
 	idx_t GetNextColumnId(TableIndex table_id) override;
 	vector<DuckLakeCompactionFileEntry> GetFilesForCompaction(DuckLakeTableEntry &table, CompactionType type,
 	                                                          double deletion_threshold, DuckLakeSnapshot snapshot,
@@ -146,7 +158,10 @@ private:
 	//! Keeps the inlined rows that came along with a file list for the transaction: the scans read the columns they
 	//! need from them
 	void CacheInlinedRows(RESTInlinedRowsKind kind, idx_t start_snapshot_id, DuckLakeSnapshot snapshot,
-	                      TableIndex table_id, vector<RESTInlinedTableRows> &inlined_data);
+	                      TableIndex table_id, vector<RESTInlinedTableRows> &inlined_data,
+	                      const RESTInlinedProjection &projection = RESTInlinedProjection());
+	//! Whether the rows that came along with a scan of the table have the columns
+	bool InlinedRowsCached(DuckLakeSnapshot snapshot, TableIndex table_id, const RESTInlinedProjection &projection);
 	//! Reads the columns from the cached rows of the inlined data, or fetches the rows from the server
 	unique_ptr<QueryResult> ReadCachedInlinedRows(RESTInlinedRowsKind kind, DuckLakeSnapshot start_snapshot,
 	                                              DuckLakeSnapshot snapshot, const string &inlined_table_name,
@@ -176,6 +191,8 @@ private:
 	map<InlinedRowsKey, shared_ptr<RESTInlinedRows>> inlined_rows;
 	//! The schema versions that tables have inlined rows for, by snapshot and table, which came along with a file list
 	map<pair<idx_t, idx_t>, vector<idx_t>> inlined_table_versions;
+	//! The columns of the rows that came along with a scan, by snapshot and table
+	map<pair<idx_t, idx_t>, RESTInlinedProjection> inlined_projections;
 	//! The table statistics read by the transaction, by snapshot
 	unordered_map<idx_t, vector<DuckLakeGlobalStatsInfo>> table_stats;
 	//! The data files dropped by the transaction, by table

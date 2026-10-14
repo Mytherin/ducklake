@@ -1343,6 +1343,8 @@ struct RESTSelectRequest : public RESTSnapshotReference {
 	unique_ptr<RESTScanFilters> filters;
 	//! Also return the inlined rows of the table that are visible in the snapshot.
 	bool include_inlined_data = false;
+	//! The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
+	RESTOptional<vector<idx_t>> columns;
 };
 
 struct RESTSelectResponse {

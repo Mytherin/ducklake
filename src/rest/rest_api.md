@@ -401,6 +401,7 @@ Request:
 | `extended` | `bool` (default `false`) | Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`. |
 | `filters` | [`ScanFilters`](#scanfilters) (optional) | Filters to prune files with. |
 | `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows of the table that are visible in the snapshot. |
+| `columns` | list of `uint64` (optional) | The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
 
 Response:
 

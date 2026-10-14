@@ -1,0 +1,161 @@
+# name: test/sql/rest/rest_projection.test
+# description: Inlined rows are read with the columns that a scan needs over the DuckLake REST API
+# group: [rest]
+
+require ducklake
+
+require parquet
+
+include test/template/rest_setup.test_template
+
+statement ok
+ATTACH 'ducklake:rest:{rest_server}' AS dl
+
+statement ok
+CREATE TABLE dl.t(i INTEGER, s VARCHAR, d DOUBLE)
+
+statement ok
+INSERT INTO dl.t VALUES (1, 'one', 1.5), (2, NULL, 2.5), (3, 'three', NULL)
+
+# a column is added: the inlined rows have two schema versions
+statement ok
+ALTER TABLE dl.t ADD COLUMN e INTEGER DEFAULT 7
+
+statement ok
+INSERT INTO dl.t VALUES (4, 'four', 4.5, 40)
+
+query I
+SELECT i FROM dl.t ORDER BY i
+----
+1
+2
+3
+4
+
+query I
+SELECT s FROM dl.t ORDER BY s NULLS FIRST
+----
+NULL
+four
+one
+three
+
+query II
+SELECT i, e FROM dl.t ORDER BY i
+----
+1	7
+2	7
+3	7
+4	40
+
+query III
+SELECT d, s, i FROM dl.t ORDER BY i
+----
+1.5	one	1
+2.5	NULL	2
+NULL	three	3
+4.5	four	4
+
+query I
+SELECT count(*) FROM dl.t
+----
+4
+
+query I
+SELECT count(*) FROM dl.t WHERE d > 2
+----
+2
+
+query I
+SELECT sum(e) FROM dl.t WHERE s IS NOT NULL
+----
+54
+
+# scans with other columns in a transaction
+statement ok
+BEGIN
+
+query I
+SELECT i FROM dl.t ORDER BY i
+----
+1
+2
+3
+4
+
+query I
+SELECT s FROM dl.t ORDER BY s NULLS FIRST
+----
+NULL
+four
+one
+three
+
+query I
+SELECT d FROM dl.t ORDER BY d NULLS FIRST
+----
+NULL
+1.5
+2.5
+4.5
+
+query IIII
+SELECT * FROM dl.t ORDER BY i
+----
+1	one	1.5	7
+2	NULL	2.5	7
+3	three	NULL	7
+4	four	4.5	40
+
+query I
+SELECT i FROM dl.t ORDER BY i
+----
+1
+2
+3
+4
+
+# the transaction's own changes are applied to the rows
+statement ok
+DELETE FROM dl.t WHERE i = 2
+
+statement ok
+INSERT INTO dl.t VALUES (5, 'five', 5.5, 50)
+
+query II
+SELECT s, e FROM dl.t ORDER BY e, s NULLS FIRST
+----
+one	7
+three	7
+four	40
+five	50
+
+statement ok
+COMMIT
+
+query II
+SELECT i, e FROM dl.t ORDER BY i
+----
+1	7
+3	7
+4	40
+5	50
+
+# the change feed reads the columns it needs
+statement ok
+SET VARIABLE latest = (SELECT max(snapshot_id) FROM dl.snapshots())
+
+query IIII
+SELECT i, s, e, change_type FROM dl.table_changes('t', 0, getvariable('latest')) WHERE i = 4 ORDER BY change_type
+----
+4	four	40	insert
+
+query I
+SELECT count(*) FROM dl.table_changes('t', 0, getvariable('latest')) WHERE change_type = 'insert'
+----
+5
+
+statement ok
+DETACH dl
+
+include test/template/rest_teardown.test_template

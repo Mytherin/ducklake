@@ -141,7 +141,9 @@ RESTSnapshotDataResponse DuckLakeRESTEndpoints::SnapshotData(DuckLakeRESTRequest
 //! and end snapshot and all columns of the table at that schema version
 static vector<RESTInlinedTableRows>
 ReadInlinedTableRows(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
-                     const std::function<unique_ptr<QueryResult>(const string &, const vector<string> &)> &read_rows) {
+                     const std::function<unique_ptr<QueryResult>(const string &, const vector<string> &)> &read_rows,
+                     const RESTOptional<vector<idx_t>> &projection = RESTOptional<vector<idx_t>>()) {
+	unordered_set<idx_t> projected_fields(projection.value.begin(), projection.value.end());
 	auto &metadata_manager = request.GetMetadataManager();
 	auto col_names = metadata_manager.InlinedColNames();
 	vector<RESTInlinedTableRows> result;
@@ -157,6 +159,10 @@ ReadInlinedTableRows(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, Du
 			columns.push_back(SQLIdentifier::ToString(name));
 		}
 		for (auto &column : table_at_version->GetColumns().Physical()) {
+			auto field_id = table_at_version->GetFieldId(column.Physical()).GetFieldIndex().index;
+			if (projection.has_value && projected_fields.find(field_id) == projected_fields.end()) {
+				continue;
+			}
 			names.push_back(column.Name().GetIdentifierName());
 			columns.push_back(
 			    metadata_manager.CastColumnToTarget(SQLIdentifier::ToString(names.back()), column.Type()));
@@ -189,9 +195,11 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 		return result;
 	}
 	result.inlined_data = ReadInlinedTableRows(
-	    request, table, snapshot, [&](const string &inlined_table_name, const vector<string> &columns) {
+	    request, table, snapshot,
+	    [&](const string &inlined_table_name, const vector<string> &columns) {
 		    return metadata_manager.ReadInlinedData(snapshot, inlined_table_name, columns);
-	    });
+	    },
+	    parameters.columns);
 	return result;
 }
 

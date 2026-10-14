@@ -80,6 +80,11 @@ operation Select {
 
         /// Also return the inlined rows of the table that are visible in the snapshot.
         include_inlined_data: Boolean = false
+
+        /// The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
+        /// columns, besides the row id and the begin and end snapshot. All columns of the table if absent.
+        @cppType("RESTOptional<vector<idx_t>>")
+        columns: UInt64List
     }
 
     output := {

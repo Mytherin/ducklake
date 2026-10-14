@@ -367,9 +367,12 @@ public:
 	virtual vector<DuckLakeGlobalStatsInfo> GetGlobalTableStats(DuckLakeSnapshot snapshot);
 	//! Get the record count of every table that has global stats
 	virtual map<TableIndex, idx_t> GetTableRecordCounts(DuckLakeSnapshot snapshot);
+	//! The projection are the columns (field ids of top-level columns) that the scan reads, all columns if it is not
+	//! set: metadata managers that return the inlined rows with the files only have to return these columns
 	virtual vector<DuckLakeFileListEntry> GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
 	                                                       const FilterPushdownInfo *filter_info = nullptr,
-	                                                       bool include_local_changes = true);
+	                                                       bool include_local_changes = true,
+	                                                       optional_ptr<const vector<FieldIndex>> projection = nullptr);
 	virtual vector<DuckLakeFileListEntry> GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
 	                                                         DuckLakeSnapshot snapshot);
 	virtual vector<DuckLakeDeleteScanEntry> GetTableDeletions(DuckLakeTableEntry &table,
@@ -378,7 +381,8 @@ public:
 	                                                          bool include_local_changes = true);
 	virtual vector<DuckLakeFileListExtendedEntry>
 	GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
-	                         const FilterPushdownInfo *filter_info = nullptr);
+	                         const FilterPushdownInfo *filter_info = nullptr,
+	                         optional_ptr<const vector<FieldIndex>> projection = nullptr);
 	virtual vector<DuckLakeCompactionFileEntry> GetFilesForCompaction(DuckLakeTableEntry &table, CompactionType type,
 	                                                                  double deletion_threshold,
 	                                                                  DuckLakeSnapshot snapshot,

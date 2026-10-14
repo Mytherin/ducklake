@@ -95,6 +95,32 @@ SELECT response->>'$.schema_versions' FROM ducklake_rest_request('{rest_server}'
 ----
 [1]
 
+# the client can ask for the columns it reads, by field id
+query I
+SELECT json_array_length(response->'$.inlined_data[0].columns') FROM ducklake_rest_request('{rest_server}', 'select',
+'{"table_id": 1, "include_inlined_data": true}')
+----
+5
+
+query II
+SELECT json_array_length(response->'$.inlined_data[0].columns'), response->>'$.inlined_data[0].columns[3].name'
+FROM ducklake_rest_request('{rest_server}', 'select', '{"table_id": 1, "include_inlined_data": true, "columns": [1]}')
+----
+4	i
+
+query II
+SELECT json_array_length(response->'$.inlined_data[0].columns'), json_array_length(response->'$.inlined_data[0].rows[0]')
+FROM ducklake_rest_request('{rest_server}', 'select', '{"table_id": 1, "include_inlined_data": true, "columns": [2, 1000]}')
+----
+4	4
+
+# no columns: only the row id and the snapshots
+query II
+SELECT json_array_length(response->'$.inlined_data[0].columns'), json_array_length(response->'$.inlined_data[0].rows')
+FROM ducklake_rest_request('{rest_server}', 'select', '{"table_id": 1, "include_inlined_data": true, "columns": []}')
+----
+3	2
+
 # the inlined rows that changed come with the change feed
 query II
 SELECT json_array_length(response->'$.inlined_data[0].rows'), response->>'$.inlined_data[0].schema_version'

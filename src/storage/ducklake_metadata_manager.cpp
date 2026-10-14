@@ -2158,10 +2158,10 @@ WHERE data.table_id=%d AND {SNAPSHOT_ID} >= data.begin_snapshot AND ({SNAPSHOT_I
 	return query + order_by_clause;
 }
 
-vector<DuckLakeFileListEntry> DuckLakeMetadataManager::GetFilesForTable(DuckLakeTableEntry &table,
-                                                                        DuckLakeSnapshot snapshot,
-                                                                        const FilterPushdownInfo *filter_info,
-                                                                        bool include_local_changes) {
+vector<DuckLakeFileListEntry>
+DuckLakeMetadataManager::GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
+                                          const FilterPushdownInfo *filter_info, bool include_local_changes,
+                                          optional_ptr<const vector<FieldIndex>> projection) {
 	auto table_id = table.GetTableId();
 
 	// Runtime filters are evaluated against file-level min/max stats before opening the file.
@@ -2511,7 +2511,8 @@ WHERE begin_snapshot < %d AND file_id IN (%s)
 
 vector<DuckLakeFileListExtendedEntry>
 DuckLakeMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
-                                                  const FilterPushdownInfo *filter_info) {
+                                                  const FilterPushdownInfo *filter_info,
+                                                  optional_ptr<const vector<FieldIndex>> projection) {
 	auto query = GenerateFileListQuery(table, filter_info, {}, {}, FileListType::EXTENDED);
 	auto result = Query(snapshot, query);
 	result->ThrowIfError("Failed to get extended data file list from DuckLake: ");
