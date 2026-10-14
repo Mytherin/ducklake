@@ -94,10 +94,13 @@ operation Select {
     }
 }
 
-/// Reads the rows that are inlined in the catalog for a table at a schema version.
-@http(method: "POST", uri: "/v1/read_inlined_data")
+/// Reads the inlined rows of a table that a flush writes.
+///
+/// These are all rows that were inserted up to the snapshot, including the rows that were deleted, in the order in
+/// which they are flushed. The rows that the transaction of the client deleted are not flushed.
+@http(method: "POST", uri: "/v1/inlined_data_for_flush")
 @readonly
-operation ReadInlinedData {
+operation InlinedDataForFlush {
     input := with [SnapshotReference] {
         /// The table.
         @required
@@ -107,25 +110,15 @@ operation ReadInlinedData {
         @required
         schema_version: UInt64
 
-        /// The columns to read, e.g. `["i"]`. Columns can be cast to the type to read them as, e.g.
-        /// `"i::BIGINT"`.
+        /// The columns to read, e.g. `["i"]`. Columns can be cast to the type to read them as, e.g. `"i::BIGINT"`.
         @required
         columns: StringList
 
-        /// Which rows to read.
-        mode: InlinedReadMode = "scan"
-
-        /// For `insertions` and `deletions`: the first snapshot of the range.
-        start_snapshot: Snapshot
-
-        /// For `insertions` and `deletions`: the id of the first snapshot of the range.
-        start_snapshot_id: UInt64
-
-        /// For `flush`: the sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are
-        /// ordered by it, then by their row id.
+        /// The sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are ordered by it,
+        /// then by their row id.
         order_by: String = ""
 
-        /// For `flush`: rows that the transaction of the client deleted, which are not flushed.
+        /// Rows that the transaction of the client deleted, which are not flushed.
         @cppType("set<idx_t>")
         deleted_row_ids: UInt64List = []
     }
@@ -280,7 +273,7 @@ operation InlinedTables {
 
     output := {
         /// The schema versions of the table whose columns inlined rows have. Rows are inlined per schema version
-        /// and read with `read_inlined_data`.
+        /// and read with `select`.
         schema_versions: UInt64List = []
     }
 }
@@ -375,7 +368,9 @@ operation ColumnMappings {
 
 /// Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 ///
-/// Inlined changes are read with `read_inlined_data` in `insertions` / `deletions` mode.
+/// With `include_inlined_data`, `inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted
+/// (`deletions`) in the range for each schema version that the table has inlined rows for, with the row id, the begin
+/// and end snapshot and all columns of the table at that schema version.
 @http(method: "POST", uri: "/v1/table_changes")
 @readonly
 operation TableChanges {
@@ -393,6 +388,9 @@ operation TableChanges {
         /// The changes to return.
         @required
         changes: TableChangeType
+
+        /// Also return the inlined rows that changed.
+        include_inlined_data: Boolean = false
     }
 
     output := {
@@ -401,6 +399,9 @@ operation TableChanges {
 
         /// For `deletions`: the files with deleted rows.
         deletions: DeleteScanEntryList = []
+
+        /// The inlined rows that changed, for `include_inlined_data`.
+        inlined_data: InlinedTableRowsList
     }
 }
 
@@ -503,21 +504,6 @@ structure ScanFilters {
 
     /// The columns to return the min/max statistics of.
     runtime_filter_columns: UInt64List = []
-}
-
-/// Which inlined rows to read.
-enum InlinedReadMode {
-    /// The rows visible in the snapshot.
-    SCAN = "scan"
-
-    /// The rows inserted between the start snapshot and the snapshot.
-    INSERTIONS = "insertions"
-
-    /// The rows deleted between the start snapshot and the snapshot.
-    DELETIONS = "deletions"
-
-    /// All rows that were inserted up to the snapshot (including deleted rows), in the order in which they are flushed.
-    FLUSH = "flush"
 }
 
 /// A deleted version of an inlined row.

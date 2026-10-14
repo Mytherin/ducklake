@@ -95,8 +95,29 @@ SELECT response->>'$.schema_versions' FROM ducklake_rest_request('{rest_server}'
 ----
 [1]
 
+# the inlined rows that changed come with the change feed
 query II
-SELECT json_array_length(response->'$.rows'), response->>'$.columns[0].type.id' FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
+SELECT json_array_length(response->'$.inlined_data[0].rows'), response->>'$.inlined_data[0].schema_version'
+FROM ducklake_rest_request('{rest_server}', 'table_changes',
+'{"table_id": 1, "start_snapshot_id": 0, "changes": "insertions", "include_inlined_data": true}')
+----
+2	1
+
+query I
+SELECT json_array_length(response->'$.inlined_data[0].rows') FROM ducklake_rest_request('{rest_server}', 'table_changes',
+'{"table_id": 1, "start_snapshot_id": 0, "changes": "deletions", "include_inlined_data": true}')
+----
+0
+
+query I
+SELECT (response->'$.inlined_data') IS NULL FROM ducklake_rest_request('{rest_server}', 'table_changes',
+'{"table_id": 1, "start_snapshot_id": 0, "changes": "insertions"}')
+----
+true
+
+# the inlined rows that a flush writes
+query II
+SELECT json_array_length(response->'$.rows'), response->>'$.columns[0].type.id' FROM ducklake_rest_request('{rest_server}', 'inlined_data_for_flush',
 '{"table_id": 1, "schema_version": 1, "columns": ["i"]}')
 ----
 2	INTEGER
@@ -114,7 +135,7 @@ SELECT response->>'$.inlined_data[0].schema_version' FROM ducklake_rest_request(
 
 # the schema version has to have inlined data
 query II
-SELECT status, response->>'$.error.message' LIKE '%has no inlined data for schema version 7%' FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
+SELECT status, response->>'$.error.message' LIKE '%has no inlined data for schema version 7%' FROM ducklake_rest_request('{rest_server}', 'inlined_data_for_flush',
 '{"table_id": 1, "schema_version": 7, "columns": ["i"]}')
 ----
 404	true
@@ -126,15 +147,15 @@ SELECT status FROM ducklake_rest_request('{rest_server}', 'row_count', '{"table_
 
 # the columns to read cannot inject SQL into the queries of the server
 query I
-SELECT status FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
+SELECT status FROM ducklake_rest_request('{rest_server}', 'inlined_data_for_flush',
 '{"table_id": 1, "schema_version": 1, "columns": ["(SELECT 42)"]}')
 ----
 400
 
 # requests are validated against the specification of the API
 query II
-SELECT status, response->>'$.error.message' LIKE '%not a valid InlinedReadMode%' FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
-'{"table_id": 1, "schema_version": 1, "columns": ["i"], "mode": "everything"}')
+SELECT status, response->>'$.error.message' LIKE '%not a valid TableChangeType%' FROM ducklake_rest_request('{rest_server}', 'table_changes',
+'{"table_id": 1, "start_snapshot_id": 0, "changes": "everything"}')
 ----
 400	true
 

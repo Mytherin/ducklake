@@ -269,6 +269,27 @@ Response:
 |-------|------|-------------|
 | `files` | list of [`CompactionFileEntry`](#compactionfileentry) (default `[]`) | The candidates. |
 
+### `inlined_data_for_flush`
+
+Reads the inlined rows of a table that a flush writes.
+
+These are all rows that were inserted up to the snapshot, including the rows that were deleted, in the order in
+which they are flushed. The rows that the transaction of the client deleted are not flushed.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `table_id` | `uint64` | The table. |
+| `schema_version` | `uint64` | The schema version of the table whose columns the rows have (see `inlined_tables`). |
+| `columns` | list of `string` | The columns to read, e.g. `["i"]`. Columns can be cast to the type to read them as, e.g. `"i::BIGINT"`. |
+| `order_by` | `string` (default `""`) | The sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are ordered by it, then by their row id. |
+| `deleted_row_ids` | list of `uint64` (default `[]`) | Rows that the transaction of the client deleted, which are not flushed. |
+
+Response: [`InlinedRows`](#inlinedrows).
+
 ### `inlined_file_deletions`
 
 Returns the deletions of rows of data files that are inlined in the catalog.
@@ -305,7 +326,7 @@ Response:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_versions` | list of `uint64` (default `[]`) | The schema versions of the table whose columns inlined rows have. Rows are inlined per schema version and read with `read_inlined_data`. |
+| `schema_versions` | list of `uint64` (default `[]`) | The schema versions of the table whose columns inlined rows have. Rows are inlined per schema version and read with `select`. |
 
 ### `list_snapshots`
 
@@ -340,27 +361,6 @@ Response:
 | Field | Type | Description |
 |-------|------|-------------|
 | `next_column_id` | `uint64` | The next free column id. |
-
-### `read_inlined_data`
-
-Reads the rows that are inlined in the catalog for a table at a schema version.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
-| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `table_id` | `uint64` | The table. |
-| `schema_version` | `uint64` | The schema version of the table whose columns the rows have (see `inlined_tables`). |
-| `columns` | list of `string` | The columns to read, e.g. `["i"]`. Columns can be cast to the type to read them as, e.g. `"i::BIGINT"`. |
-| `mode` | [`InlinedReadMode`](#inlinedreadmode) (default `"scan"`) | Which rows to read. |
-| `start_snapshot` | [`Snapshot`](#snapshot) (optional) | For `insertions` and `deletions`: the first snapshot of the range. |
-| `start_snapshot_id` | `uint64` (optional) | For `insertions` and `deletions`: the id of the first snapshot of the range. |
-| `order_by` | `string` (default `""`) | For `flush`: the sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are ordered by it, then by their row id. |
-| `deleted_row_ids` | list of `uint64` (default `[]`) | For `flush`: rows that the transaction of the client deleted, which are not flushed. |
-
-Response: [`InlinedRows`](#inlinedrows).
 
 ### `row_count`
 
@@ -442,7 +442,9 @@ Response:
 
 Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 
-Inlined changes are read with `read_inlined_data` in `insertions` / `deletions` mode.
+With `include_inlined_data`, `inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted
+(`deletions`) in the range for each schema version that the table has inlined rows for, with the row id, the begin
+and end snapshot and all columns of the table at that schema version.
 
 Request:
 
@@ -454,6 +456,7 @@ Request:
 | `start_snapshot` | [`Snapshot`](#snapshot) (optional) | The first snapshot of the range. |
 | `start_snapshot_id` | `uint64` (optional) | The id of the first snapshot of the range. |
 | `changes` | [`TableChangeType`](#tablechangetype) | The changes to return. |
+| `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows that changed. |
 
 Response:
 
@@ -461,6 +464,7 @@ Response:
 |-------|------|-------------|
 | `insertions` | list of [`FileListEntry`](#filelistentry) (default `[]`) | For `insertions`: the files with inserted rows. |
 | `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | For `deletions`: the files with deleted rows. |
+| `inlined_data` | list of [`InlinedTableRows`](#inlinedtablerows) (optional) | The inlined rows that changed, for `include_inlined_data`. |
 
 ### `table_schema_versions`
 
@@ -1426,17 +1430,6 @@ A deletion of a row of a data file that is inlined in the catalog.
 | `delete_file_id` | `uint64` (optional) | The current delete file of the data file. |
 | `delete_file` | [`FileData`](#filedata) (optional) | The current delete file. |
 | `delete_file_begin_snapshot` | `uint64` (default `0`) | The snapshot that added the current delete file. |
-
-### `InlinedReadMode`
-
-Which inlined rows to read.
-
-| Value | Description |
-|-------|-------------|
-| `scan` | The rows visible in the snapshot. |
-| `insertions` | The rows inserted between the start snapshot and the snapshot. |
-| `deletions` | The rows deleted between the start snapshot and the snapshot. |
-| `flush` | All rows that were inserted up to the snapshot (including deleted rows), in the order in which they are flushed. |
 
 ### `InlinedRowDeletes`
 

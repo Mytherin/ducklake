@@ -18,6 +18,12 @@ class DuckLakeSchemaEntry;
 struct CreateTableInfo;
 struct CreateSchemaInfo;
 
+//! Which inlined rows the cache of the inlined rows of a table at a schema version holds
+enum class RESTInlinedRowsKind : uint8_t { SCAN, INSERTIONS, DELETIONS };
+
+//! The kind of rows, the snapshots they are for (the start snapshot is 0 for scans) and the inlined data
+using InlinedRowsKey = std::tuple<RESTInlinedRowsKind, idx_t, idx_t, string>;
+
 //! Communicates with a DuckLake REST server instead of a metadata database
 class RESTMetadataManager : public DuckLakeMetadataManager {
 public:
@@ -137,10 +143,15 @@ private:
 		return result;
 	}
 	unique_ptr<QueryResult> ToQueryResult(RESTInlinedRows rows);
-	//! Keeps the inlined rows that came along with a file list, until the scan reads them
-	void CacheInlinedRows(DuckLakeSnapshot snapshot, TableIndex table_id, vector<RESTInlinedTableRows> &inlined_data);
-	unique_ptr<QueryResult> TryReadCachedInlinedRows(DuckLakeSnapshot snapshot, const string &inlined_table_name,
-	                                                 const vector<string> &columns_to_read);
+	//! Keeps the inlined rows that came along with a file list for the transaction: the scans read the columns they
+	//! need from them
+	void CacheInlinedRows(RESTInlinedRowsKind kind, idx_t start_snapshot_id, DuckLakeSnapshot snapshot,
+	                      TableIndex table_id, vector<RESTInlinedTableRows> &inlined_data);
+	//! Reads the columns from the cached rows of the inlined data, or fetches the rows from the server
+	unique_ptr<QueryResult> ReadCachedInlinedRows(RESTInlinedRowsKind kind, DuckLakeSnapshot start_snapshot,
+	                                              DuckLakeSnapshot snapshot, const string &inlined_table_name,
+	                                              const vector<string> &columns_to_read);
+	shared_ptr<RESTInlinedRows> GetCachedInlinedRows(const InlinedRowsKey &key);
 	RESTSnapshotDataResponse GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot, bool include_catalog,
 	                                         bool include_stats);
 	void AddDeletes(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
@@ -162,7 +173,7 @@ private:
 	unique_ptr<DuckLakeCatalogInfo> prefetched_catalog;
 	idx_t prefetched_metadata_version = DConstants::INVALID_INDEX;
 	//! The inlined rows of file lists that were not read yet, by snapshot and inlined data table
-	map<pair<idx_t, string>, RESTInlinedRows> inlined_rows;
+	map<InlinedRowsKey, shared_ptr<RESTInlinedRows>> inlined_rows;
 	//! The schema versions that tables have inlined rows for, by snapshot and table, which came along with a file list
 	map<pair<idx_t, idx_t>, vector<idx_t>> inlined_table_versions;
 	//! The table statistics read by the transaction, by snapshot

@@ -73,7 +73,7 @@ service DuckLake {
         Config
         SnapshotData
         Select
-        ReadInlinedData
+        InlinedDataForFlush
         DeletedInlinedRows
         InlinedFileDeletions
         FilesForCompaction

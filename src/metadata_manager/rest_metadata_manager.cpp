@@ -249,7 +249,7 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 			file.inlined_file_deletions.clear();
 		}
 	}
-	CacheInlinedRows(snapshot, table.GetTableId(), response.inlined_data);
+	CacheInlinedRows(RESTInlinedRowsKind::SCAN, 0, snapshot, table.GetTableId(), response.inlined_data);
 	return std::move(response.files);
 }
 
@@ -268,7 +268,7 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 		request.filters = make_uniq<RESTScanFilters>(DuckLakeRESTFilters::Write(*filter_info, table));
 	}
 	auto response = GetClient().Select(request);
-	CacheInlinedRows(snapshot, table.GetTableId(), response.inlined_data);
+	CacheInlinedRows(RESTInlinedRowsKind::SCAN, 0, snapshot, table.GetTableId(), response.inlined_data);
 	return std::move(response.extended_files);
 }
 
@@ -314,34 +314,66 @@ unique_ptr<QueryResult> RESTMetadataManager::ToQueryResult(RESTInlinedRows rows)
 	                              std::move(rows.rows.owned_rows), context->GetClientProperties());
 }
 
-void RESTMetadataManager::CacheInlinedRows(DuckLakeSnapshot snapshot, TableIndex table_id,
-                                           vector<RESTInlinedTableRows> &inlined_data) {
+void RESTMetadataManager::CacheInlinedRows(RESTInlinedRowsKind kind, idx_t start_snapshot_id, DuckLakeSnapshot snapshot,
+                                           TableIndex table_id, vector<RESTInlinedTableRows> &inlined_data) {
 	lock_guard<mutex> guard(cache_lock);
 	auto &versions = inlined_table_versions[make_pair(snapshot.snapshot_id, table_id.index)];
 	versions.clear();
 	for (auto &inlined_table : inlined_data) {
-		RESTInlinedRows rows;
-		rows.columns = std::move(inlined_table.columns);
-		rows.rows = std::move(inlined_table.rows);
+		auto rows = make_shared_ptr<RESTInlinedRows>();
+		rows->columns = std::move(inlined_table.columns);
+		rows->rows = std::move(inlined_table.rows);
 		versions.push_back(inlined_table.schema_version);
-		inlined_rows[make_pair(snapshot.snapshot_id, InlinedTableName(table_id, inlined_table.schema_version))] =
-		    std::move(rows);
+		InlinedRowsKey key(kind, start_snapshot_id, snapshot.snapshot_id,
+		                   InlinedTableName(table_id, inlined_table.schema_version));
+		inlined_rows[key] = std::move(rows);
 	}
 }
 
-unique_ptr<QueryResult> RESTMetadataManager::TryReadCachedInlinedRows(DuckLakeSnapshot snapshot,
-                                                                      const string &inlined_table_name,
-                                                                      const vector<string> &columns_to_read) {
-	RESTInlinedRows rows;
-	{
-		lock_guard<mutex> guard(cache_lock);
-		auto entry = inlined_rows.find(make_pair(snapshot.snapshot_id, inlined_table_name));
-		if (entry == inlined_rows.end()) {
-			return nullptr;
-		}
-		rows = std::move(entry->second);
-		inlined_rows.erase(entry);
+shared_ptr<RESTInlinedRows> RESTMetadataManager::GetCachedInlinedRows(const InlinedRowsKey &key) {
+	lock_guard<mutex> guard(cache_lock);
+	auto entry = inlined_rows.find(key);
+	if (entry == inlined_rows.end()) {
+		return nullptr;
 	}
+	return entry->second;
+}
+
+unique_ptr<QueryResult> RESTMetadataManager::ReadCachedInlinedRows(RESTInlinedRowsKind kind,
+                                                                   DuckLakeSnapshot start_snapshot,
+                                                                   DuckLakeSnapshot snapshot,
+                                                                   const string &inlined_table_name,
+                                                                   const vector<string> &columns_to_read) {
+	idx_t start_snapshot_id = kind == RESTInlinedRowsKind::SCAN ? 0 : start_snapshot.snapshot_id;
+	InlinedRowsKey key(kind, start_snapshot_id, snapshot.snapshot_id, inlined_table_name);
+	auto rows_ptr = GetCachedInlinedRows(key);
+	if (!rows_ptr) {
+		// the rows usually came along with the file list of the scan, otherwise the server returns them again
+		auto table_id = ParseInlinedTableName(inlined_table_name).table_id;
+		if (kind == RESTInlinedRowsKind::SCAN) {
+			RESTSelectRequest request;
+			request.snapshot = snapshot;
+			request.table_id = table_id.index;
+			request.include_inlined_data = true;
+			auto response = GetClient().Select(request);
+			CacheInlinedRows(kind, start_snapshot_id, snapshot, table_id, response.inlined_data);
+		} else {
+			RESTTableChangesRequest request;
+			request.table_id = table_id.index;
+			request.start_snapshot = start_snapshot;
+			request.snapshot = snapshot;
+			request.changes = kind == RESTInlinedRowsKind::INSERTIONS ? "insertions" : "deletions";
+			request.include_inlined_data = true;
+			auto response = GetClient().TableChanges(request);
+			CacheInlinedRows(kind, start_snapshot_id, snapshot, table_id, response.inlined_data);
+		}
+		rows_ptr = GetCachedInlinedRows(key);
+		if (!rows_ptr) {
+			throw InvalidInputException("DuckLake REST: the server did not return the inlined rows of \"%s\"",
+			                            inlined_table_name);
+		}
+	}
+	auto &rows = *rows_ptr;
 	// the columns to read are column names, optionally cast to the type to read them as
 	auto context = transaction.context.lock();
 	vector<idx_t> column_indexes;
@@ -349,7 +381,7 @@ unique_ptr<QueryResult> RESTMetadataManager::TryReadCachedInlinedRows(DuckLakeSn
 	for (auto &column : columns_to_read) {
 		auto expressions = Parser::GetBuiltinParser().ParseExpressionList(column);
 		if (expressions.size() != 1) {
-			return nullptr;
+			throw InvalidInputException("DuckLake REST: \"%s\" is not a column of the inlined rows", column);
 		}
 		optional_ptr<const ParsedExpression> column_ref = expressions[0].get();
 		optional<LogicalType> cast_type;
@@ -360,7 +392,7 @@ unique_ptr<QueryResult> RESTMetadataManager::TryReadCachedInlinedRows(DuckLakeSn
 		}
 		if (column_ref->GetExpressionClass() != ExpressionClass::COLUMN_REF ||
 		    column_ref->Cast<ColumnRefExpression>().IsQualified()) {
-			return nullptr;
+			throw InvalidInputException("DuckLake REST: \"%s\" is not a column of the inlined rows", column);
 		}
 		auto &name = column_ref->Cast<ColumnRefExpression>().GetColumnName();
 		optional_idx column_index;
@@ -370,7 +402,7 @@ unique_ptr<QueryResult> RESTMetadataManager::TryReadCachedInlinedRows(DuckLakeSn
 			}
 		}
 		if (!column_index.IsValid()) {
-			return nullptr;
+			throw InvalidInputException("DuckLake REST: the inlined rows have no column \"%s\"", column);
 		}
 		column_indexes.push_back(column_index.GetIndex());
 		types.push_back(cast_type ? *cast_type : rows.columns[column_index.GetIndex()].type);
@@ -413,47 +445,26 @@ set<idx_t> RESTMetadataManager::GetTransactionDeletes(const DuckLakeTableEntry &
 	return deletes->rows;
 }
 
-static RESTReadInlinedDataRequest InlinedReadRequest(DuckLakeSnapshot snapshot, const string &mode,
-                                                     const string &inlined_table_name,
-                                                     const vector<string> &columns_to_read) {
-	RESTReadInlinedDataRequest request;
-	request.snapshot = snapshot;
-	request.mode = mode;
-	auto handle = ParseInlinedTableName(inlined_table_name);
-	request.table_id = handle.table_id.index;
-	request.schema_version = handle.schema_version;
-	request.columns = columns_to_read;
-	return request;
-}
-
 unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedData(DuckLakeSnapshot snapshot,
                                                              const string &inlined_table_name,
                                                              const vector<string> &columns_to_read) {
-	// the rows usually came along with the file list of the scan
-	auto cached = TryReadCachedInlinedRows(snapshot, inlined_table_name, columns_to_read);
-	if (cached) {
-		return cached;
-	}
-	auto request = InlinedReadRequest(snapshot, "scan", inlined_table_name, columns_to_read);
-	return ToQueryResult(GetClient().ReadInlinedData(request));
+	return ReadCachedInlinedRows(RESTInlinedRowsKind::SCAN, snapshot, snapshot, inlined_table_name, columns_to_read);
 }
 
 unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedDataInsertions(DuckLakeSnapshot start_snapshot,
                                                                        DuckLakeSnapshot end_snapshot,
                                                                        const string &inlined_table_name,
                                                                        const vector<string> &columns_to_read) {
-	auto request = InlinedReadRequest(end_snapshot, "insertions", inlined_table_name, columns_to_read);
-	request.start_snapshot = start_snapshot;
-	return ToQueryResult(GetClient().ReadInlinedData(request));
+	return ReadCachedInlinedRows(RESTInlinedRowsKind::INSERTIONS, start_snapshot, end_snapshot, inlined_table_name,
+	                             columns_to_read);
 }
 
 unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedDataDeletions(DuckLakeSnapshot start_snapshot,
                                                                       DuckLakeSnapshot end_snapshot,
                                                                       const string &inlined_table_name,
                                                                       const vector<string> &columns_to_read) {
-	auto request = InlinedReadRequest(end_snapshot, "deletions", inlined_table_name, columns_to_read);
-	request.start_snapshot = start_snapshot;
-	return ToQueryResult(GetClient().ReadInlinedData(request));
+	return ReadCachedInlinedRows(RESTInlinedRowsKind::DELETIONS, start_snapshot, end_snapshot, inlined_table_name,
+	                             columns_to_read);
 }
 
 unique_ptr<QueryResult> RESTMetadataManager::ReadAllInlinedDataForFlush(DuckLakeSnapshot snapshot,
@@ -461,10 +472,15 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadAllInlinedDataForFlush(DuckLake
                                                                         const DuckLakeTableEntry &table,
                                                                         const string &sort_order_sql,
                                                                         const vector<string> &columns_to_read) {
-	auto request = InlinedReadRequest(snapshot, "flush", inlined_table_name, columns_to_read);
+	RESTInlinedDataForFlushRequest request;
+	request.snapshot = snapshot;
+	auto handle = ParseInlinedTableName(inlined_table_name);
+	request.table_id = handle.table_id.index;
+	request.schema_version = handle.schema_version;
+	request.columns = columns_to_read;
 	request.order_by = sort_order_sql;
 	request.deleted_row_ids = GetTransactionDeletes(table, inlined_table_name);
-	return ToQueryResult(GetClient().ReadInlinedData(request));
+	return ToQueryResult(GetClient().InlinedDataForFlush(request));
 }
 
 DuckLakeDeletedRowVersions RESTMetadataManager::GetDeletedInlinedRowVersions(DuckLakeTableEntry &table,
@@ -685,7 +701,11 @@ RESTTableChangesResponse RESTMetadataManager::GetTableChanges(DuckLakeTableEntry
 	request.start_snapshot = start_snapshot;
 	request.snapshot = snapshot;
 	request.changes = changes;
-	return GetClient().TableChanges(request);
+	request.include_inlined_data = true;
+	auto response = GetClient().TableChanges(request);
+	auto kind = changes == "insertions" ? RESTInlinedRowsKind::INSERTIONS : RESTInlinedRowsKind::DELETIONS;
+	CacheInlinedRows(kind, start_snapshot.snapshot_id, snapshot, table.GetTableId(), response.inlined_data);
+	return response;
 }
 
 vector<DuckLakeFileListEntry> RESTMetadataManager::GetTableInsertions(DuckLakeTableEntry &table,

@@ -137,6 +137,40 @@ RESTSnapshotDataResponse DuckLakeRESTEndpoints::SnapshotData(DuckLakeRESTRequest
 	return result;
 }
 
+//! Reads the inlined rows of a table for every schema version that it has inlined rows for, with the row id, the begin
+//! and end snapshot and all columns of the table at that schema version
+static vector<RESTInlinedTableRows>
+ReadInlinedTableRows(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
+                     const std::function<unique_ptr<QueryResult>(const string &, const vector<string> &)> &read_rows) {
+	auto &metadata_manager = request.GetMetadataManager();
+	auto col_names = metadata_manager.InlinedColNames();
+	vector<RESTInlinedTableRows> result;
+	for (auto &inlined_table : table.GetInlinedDataTables(*request.transaction, snapshot)) {
+		auto table_at_version = request.catalog->GetTableAtSchemaVersion(*request.transaction, table.GetTableId(),
+		                                                                 inlined_table.schema_version);
+		if (!table_at_version) {
+			continue;
+		}
+		vector<string> names {col_names.row_id, col_names.begin_snapshot, col_names.end_snapshot};
+		vector<string> columns;
+		for (auto &name : names) {
+			columns.push_back(SQLIdentifier::ToString(name));
+		}
+		for (auto &column : table_at_version->GetColumns().Physical()) {
+			names.push_back(column.Name().GetIdentifierName());
+			columns.push_back(
+			    metadata_manager.CastColumnToTarget(SQLIdentifier::ToString(names.back()), column.Type()));
+		}
+		auto query_result = read_rows(inlined_table.table_name, columns);
+		query_result->ThrowIfError("Failed to read inlined data: ");
+		RESTInlinedTableRows rows;
+		rows.schema_version = inlined_table.schema_version;
+		ReadQueryResult(rows, *query_result, names);
+		result.push_back(std::move(rows));
+	}
+	return result;
+}
+
 RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, const RESTSelectRequest &parameters) {
 	auto snapshot = request.GetSnapshot(parameters);
 	auto &table = GetTableEntry(request, snapshot, TableIndex(parameters.table_id));
@@ -154,31 +188,10 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	if (!parameters.include_inlined_data) {
 		return result;
 	}
-	// the rows of the table that are inlined in the catalog, with all columns of their inlined data tables
-	auto col_names = metadata_manager.InlinedColNames();
-	for (auto &inlined_table : table.GetInlinedDataTables(*request.transaction, snapshot)) {
-		auto table_at_version = request.catalog->GetTableAtSchemaVersion(*request.transaction, table.GetTableId(),
-		                                                                 inlined_table.schema_version);
-		if (!table_at_version) {
-			continue;
-		}
-		vector<string> names {col_names.row_id, col_names.begin_snapshot, col_names.end_snapshot};
-		vector<string> columns;
-		for (auto &name : names) {
-			columns.push_back(SQLIdentifier::ToString(name));
-		}
-		for (auto &column : table_at_version->GetColumns().Physical()) {
-			names.push_back(column.Name().GetIdentifierName());
-			columns.push_back(
-			    metadata_manager.CastColumnToTarget(SQLIdentifier::ToString(names.back()), column.Type()));
-		}
-		auto query_result = metadata_manager.ReadInlinedData(snapshot, inlined_table.table_name, columns);
-		query_result->ThrowIfError("Failed to read inlined data: ");
-		RESTInlinedTableRows rows;
-		rows.schema_version = inlined_table.schema_version;
-		ReadQueryResult(rows, *query_result, names);
-		result.inlined_data.push_back(std::move(rows));
-	}
+	result.inlined_data = ReadInlinedTableRows(
+	    request, table, snapshot, [&](const string &inlined_table_name, const vector<string> &columns) {
+		    return metadata_manager.ReadInlinedData(snapshot, inlined_table_name, columns);
+	    });
 	return result;
 }
 
@@ -215,33 +228,16 @@ static string GetFlushOrder(const string &order_by) {
 	return result;
 }
 
-RESTInlinedRows DuckLakeRESTEndpoints::ReadInlinedData(DuckLakeRESTRequest &request,
-                                                       const RESTReadInlinedDataRequest &parameters) {
+RESTInlinedRows DuckLakeRESTEndpoints::InlinedDataForFlush(DuckLakeRESTRequest &request,
+                                                           const RESTInlinedDataForFlushRequest &parameters) {
 	auto snapshot = request.GetSnapshot(parameters);
-	auto table_id = TableIndex(parameters.table_id);
-	auto table_name = GetInlinedTableName(*request.transaction, GetTableEntry(request, snapshot, table_id), snapshot,
-	                                      parameters.schema_version);
 	auto columns = GetColumnsToRead(parameters.columns);
-	auto &metadata_manager = request.GetMetadataManager();
-	auto &mode = parameters.mode;
-	unique_ptr<QueryResult> query_result;
-	if (mode == "scan") {
-		query_result = metadata_manager.ReadInlinedData(snapshot, table_name, columns);
-	} else if (mode == "insertions" || mode == "deletions") {
-		auto start_snapshot = request.GetSnapshot(parameters.start_snapshot, parameters.start_snapshot_id);
-		if (mode == "insertions") {
-			query_result = metadata_manager.ReadInlinedDataInsertions(start_snapshot, snapshot, table_name, columns);
-		} else {
-			query_result = metadata_manager.ReadInlinedDataDeletions(start_snapshot, snapshot, table_name, columns);
-		}
-	} else {
-		D_ASSERT(mode == "flush");
-		string flush_table_name;
-		auto &table = GetInlinedTableEntry(request, snapshot, table_id, parameters.schema_version, flush_table_name);
-		AddFlushDeletes(request, parameters.deleted_row_ids, table, table_name);
-		query_result = metadata_manager.ReadAllInlinedDataForFlush(snapshot, table_name, table,
-		                                                           GetFlushOrder(parameters.order_by), columns);
-	}
+	string inlined_table_name;
+	auto &table = GetInlinedTableEntry(request, snapshot, TableIndex(parameters.table_id), parameters.schema_version,
+	                                   inlined_table_name);
+	AddFlushDeletes(request, parameters.deleted_row_ids, table, inlined_table_name);
+	auto query_result = request.GetMetadataManager().ReadAllInlinedDataForFlush(
+	    snapshot, inlined_table_name, table, GetFlushOrder(parameters.order_by), columns);
 	query_result->ThrowIfError("Failed to read inlined data: ");
 	RESTInlinedRows result;
 	ReadQueryResult(result, *query_result);
@@ -382,10 +378,22 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 	auto &table = GetTableEntry(request, snapshot, TableIndex(parameters.table_id));
 	auto &metadata_manager = request.GetMetadataManager();
 	RESTTableChangesResponse result;
-	if (parameters.changes == "deletions") {
+	bool deletions = parameters.changes == "deletions";
+	if (deletions) {
 		result.deletions = metadata_manager.GetTableDeletions(table, start_snapshot, snapshot);
 	} else {
 		result.insertions = metadata_manager.GetTableInsertions(table, start_snapshot, snapshot);
+	}
+	if (parameters.include_inlined_data) {
+		result.inlined_data = ReadInlinedTableRows(
+		    request, table, snapshot, [&](const string &inlined_table_name, const vector<string> &columns) {
+			    if (deletions) {
+				    return metadata_manager.ReadInlinedDataDeletions(start_snapshot, snapshot, inlined_table_name,
+				                                                     columns);
+			    }
+			    return metadata_manager.ReadInlinedDataInsertions(start_snapshot, snapshot, inlined_table_name,
+			                                                      columns);
+		    });
 	}
 	return result;
 }
