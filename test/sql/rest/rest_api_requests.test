@@ -89,23 +89,52 @@ SELECT status FROM ducklake_rest_request('{rest_server}', 'create_table',
 ----
 404
 
-# names in requests cannot inject SQL into the queries of the server
+# inlined data is identified by the table and the schema version
 query I
-SELECT status FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
-'{"table_name": "ducklake_snapshot; DROP TABLE ducklake_table", "columns": ["i"]}')
+SELECT response->>'$.schema_versions' FROM ducklake_rest_request('{rest_server}', 'inlined_tables', '{"table_id": 1}')
+----
+[1]
+
+query II
+SELECT json_array_length(response->'$.rows'), response->>'$.columns[0].type.id' FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
+'{"table_id": 1, "schema_version": 1, "columns": ["i"]}')
+----
+2	INTEGER
+
+query I
+SELECT response->>'$.row_count' FROM ducklake_rest_request('{rest_server}', 'row_count',
+'{"table_id": 1, "schema_version": 1, "count": "inlined"}')
+----
+2
+
+query I
+SELECT response->>'$.inlined_data[0].schema_version' FROM ducklake_rest_request('{rest_server}', 'select', '{"table_id": 1, "include_inlined_data": true}')
+----
+1
+
+# the schema version has to have inlined data
+query II
+SELECT status, response->>'$.error.message' LIKE '%has no inlined data for schema version 7%' FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
+'{"table_id": 1, "schema_version": 7, "columns": ["i"]}')
+----
+404	true
+
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'row_count', '{"table_id": 1, "count": "inlined"}')
 ----
 400
 
+# the columns to read cannot inject SQL into the queries of the server
 query I
 SELECT status FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
-'{"table_name": "ducklake_inlined_data_1_1", "columns": ["(SELECT 42)"]}')
+'{"table_id": 1, "schema_version": 1, "columns": ["(SELECT 42)"]}')
 ----
 400
 
 # requests are validated against the specification of the API
 query II
 SELECT status, response->>'$.error.message' LIKE '%not a valid InlinedReadMode%' FROM ducklake_rest_request('{rest_server}', 'read_inlined_data',
-'{"table_name": "ducklake_inlined_data_1_1", "columns": ["i"], "mode": "everything"}')
+'{"table_id": 1, "schema_version": 1, "columns": ["i"], "mode": "everything"}')
 ----
 400	true
 

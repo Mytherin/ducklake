@@ -195,7 +195,7 @@ Response: [`Metadata`](#metadata).
 
 ### `deleted_inlined_rows`
 
-Returns the deleted versions of the rows of an inlined data table that a flush writes.
+Returns the deleted versions of the inlined rows of a table that a flush writes.
 
 The client writes delete files for the flushed rows with them.
 
@@ -206,7 +206,7 @@ Request:
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `table_id` | `uint64` | The table. |
-| `table_name` | `string` | The inlined data table. |
+| `schema_version` | `uint64` | The schema version of the inlined rows. |
 | `deleted_row_ids` | list of `uint64` (default `[]`) | Rows that the transaction of the client deleted, which are not flushed. |
 
 Response:
@@ -291,19 +291,21 @@ Response:
 
 ### `inlined_tables`
 
-Returns the names of all inlined data tables of a table (of any schema version).
+Returns the schema versions that a table has inlined rows for.
 
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `table_id` | `uint64` | The table. |
 
 Response:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `table_names` | list of `string` (default `[]`) | The inlined data tables. |
+| `schema_versions` | list of `uint64` (default `[]`) | The schema versions of the table whose columns inlined rows have. Rows are inlined per schema version and read with `read_inlined_data`. |
 
 ### `list_snapshots`
 
@@ -341,7 +343,7 @@ Response:
 
 ### `read_inlined_data`
 
-Reads the rows of an inlined data table.
+Reads the rows that are inlined in the catalog for a table at a schema version.
 
 Request:
 
@@ -349,12 +351,12 @@ Request:
 |-------|------|-------------|
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `table_name` | `string` | The inlined data table (from `inlined_data_tables` of the table). |
-| `columns` | list of `string` | The columns to read, e.g. `["row_id", "i"]`. Columns can be cast to the type to read them as, e.g. `"i::BIGINT"`. |
+| `table_id` | `uint64` | The table. |
+| `schema_version` | `uint64` | The schema version of the table whose columns the rows have (see `inlined_tables`). |
+| `columns` | list of `string` | The columns to read, e.g. `["i"]`. Columns can be cast to the type to read them as, e.g. `"i::BIGINT"`. |
 | `mode` | [`InlinedReadMode`](#inlinedreadmode) (default `"scan"`) | Which rows to read. |
 | `start_snapshot` | [`Snapshot`](#snapshot) (optional) | For `insertions` and `deletions`: the first snapshot of the range. |
 | `start_snapshot_id` | `uint64` (optional) | For `insertions` and `deletions`: the id of the first snapshot of the range. |
-| `table_id` | `uint64` (optional) | For `flush`: the table of the inlined data table. |
 | `order_by` | `string` (default `""`) | For `flush`: the sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are ordered by it, then by their row id. |
 | `deleted_row_ids` | list of `uint64` (default `[]`) | For `flush`: rows that the transaction of the client deleted, which are not flushed. |
 
@@ -371,8 +373,8 @@ Request:
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `count` | [`RowCountType`](#rowcounttype) | What to count. |
-| `table_id` | `uint64` (optional) | The table, for data file counts. |
-| `table_name` | `string` (default `""`) | The inlined data table, for inlined counts. |
+| `table_id` | `uint64` | The table. |
+| `schema_version` | `uint64` (optional) | For inlined counts: the schema version of the inlined rows. |
 
 Response:
 
@@ -386,8 +388,8 @@ Plans a scan of a table.
 
 Returns the data files of the table that are visible in a snapshot, together with their delete files and
 inlined deletions, and optionally the rows of the table that are inlined in the catalog. With
-`include_inlined_data`, `inlined_data` holds the visible rows of each inlined data table of the table, with the
-row id, the begin and end snapshot and all columns of the table at the schema version of the inlined data table.
+`include_inlined_data`, `inlined_data` holds the visible rows of the table for each schema version that it has
+inlined rows for, with the row id, the begin and end snapshot and all columns of the table at that schema version.
 
 Request:
 
@@ -629,7 +631,6 @@ Request:
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `commit_info` | [`CommitInfo`](#commitinfo) (optional) | The commit information of the snapshot. |
 | `retry` | [`RetryConfig`](#retryconfig) (optional) | How the server retries the commit on conflicts. |
-| `requires_new_inlined_table` | `bool` (default `false`) | Whether the commit inlines rows into a table that has no inlined data table yet. |
 | `requests` | list of `commit_request` (default `[]`) | The changes, applied in order, e.g. `[{"create_table": {...}}, {"insert_rows": {...}}]`. |
 
 Response:
@@ -1211,7 +1212,7 @@ A data file whose rows were deleted between two snapshots.
 
 ### `DeletedRowVersion`
 
-A deleted version of a row of an inlined data table.
+A deleted version of an inlined row.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1376,12 +1377,12 @@ The inlined deletions of rows of data files of a table that were flushed.
 
 ### `FlushedInlinedTable`
 
-An inlined data table whose rows were flushed.
+The inlined rows of a table at a schema version that were flushed.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `table_name` | `string` | The inlined data table. |
-| `schema_version` | `uint64` | The schema version of the inlined data table. |
+| `table_id` | `int64` | The table. |
+| `schema_version` | `uint64` | The schema version of the inlined rows. |
 | `flush_snapshot_id` | `uint64` | The rows up to this snapshot were flushed. |
 
 ### `GlobalColumnStats`
@@ -1428,7 +1429,7 @@ A deletion of a row of a data file that is inlined in the catalog.
 
 ### `InlinedReadMode`
 
-Which rows of an inlined data table to read.
+Which inlined rows to read.
 
 | Value | Description |
 |-------|-------------|
@@ -1443,7 +1444,7 @@ Deletes of inlined rows.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `table_name` | `string` | The inlined data table. |
+| `schema_version` | `uint64` | The schema version of the inlined rows. |
 | `row_ids` | list of `uint64` | The row ids of the deleted rows. |
 
 ### `InlinedRows`
@@ -1457,25 +1458,15 @@ A set of rows, e.g. the rows of an inlined data table.
 
 Has the fields of [`RowSet`](#rowset).
 
-### `InlinedTableInfo`
-
-An inlined data table of a table, which holds rows that are inlined in the catalog.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_name` | `string` | The name of the inlined data table. |
-| `schema_version` | `uint64` | The schema version of the table whose columns the inlined data table has. |
-
 ### `InlinedTableRows`
 
-The rows of an inlined data table.
+The rows of the inlined data of a table at a schema version.
 
 Has the fields of [`RowSet`](#rowset), and:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `table_name` | `string` | The inlined data table. |
-| `schema_version` | `uint64` | The schema version of the inlined data table. |
+| `schema_version` | `uint64` | The schema version of the table whose columns the rows have. |
 
 ### `MacroImplementation`
 
@@ -1676,7 +1667,7 @@ What `row_count` counts.
 |-------|-------------|
 | `data_files` | The rows in data files minus the deleted rows. |
 | `data_files_exact` | The same, absent if it cannot be computed exactly. |
-| `inlined` | The rows of an inlined data table. |
+| `inlined` | The inlined rows of a table at a schema version. |
 
 ### `RowSet`
 
@@ -1882,7 +1873,6 @@ A table of the catalog.
 | `path` | `path` (default `""`) | The data path of the table. |
 | `columns` | list of [`ColumnInfo`](#columninfo) (default `[]`) | The columns of the table. |
 | `tags` | list of [`Tag`](#tag) (default `[]`) | The tags of the table. |
-| `inlined_data_tables` | list of [`InlinedTableInfo`](#inlinedtableinfo) (default `[]`) | The inlined data tables of the table. |
 
 ### `TableSetting`
 

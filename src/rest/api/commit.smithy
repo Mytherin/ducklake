@@ -23,9 +23,6 @@ operation CommitTransaction {
         /// How the server retries the commit on conflicts.
         retry: RetryConfig
 
-        /// Whether the commit inlines rows into a table that has no inlined data table yet.
-        requires_new_inlined_table: Boolean = false
-
         /// The changes, applied in order, e.g. `[{"create_table": {...}}, {"insert_rows": {...}}]`.
         requests: CommitRequestList = []
     }
@@ -490,9 +487,9 @@ structure OptionSetting {
 
 /// Deletes of inlined rows.
 structure InlinedRowDeletes {
-    /// The inlined data table.
+    /// The schema version of the inlined rows.
     @required
-    table_name: String
+    schema_version: UInt64
 
     /// The row ids of the deleted rows.
     @required
@@ -531,13 +528,13 @@ structure DroppedFile {
     file_size_bytes: UInt64
 }
 
-/// An inlined data table whose rows were flushed.
+/// The inlined rows of a table at a schema version that were flushed.
 structure FlushedInlinedTable {
-    /// The inlined data table.
+    /// The table.
     @required
-    table_name: String
+    table_id: Long
 
-    /// The schema version of the inlined data table.
+    /// The schema version of the inlined rows.
     @required
     schema_version: UInt64
 

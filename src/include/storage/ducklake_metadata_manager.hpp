@@ -402,6 +402,10 @@ public:
 	//! The inserts of the given rows, in batches
 	static string InsertValuesSql(const string &table_name, const vector<string> &values);
 	virtual unordered_set<string> GetInlinedTableNames(TableIndex table_id);
+	//! The inlined data tables of a table at a snapshot: the tables that the catalog entry of the table holds, without
+	//! the tables that another attach dropped
+	virtual vector<DuckLakeInlinedTableInfo> GetInlinedDataTables(const DuckLakeTableEntry &table,
+	                                                              DuckLakeSnapshot snapshot);
 	//! The files scheduled for deletion before an ISO 8601 timestamp (all of them if it is empty)
 	virtual vector<DuckLakeFileForCleanup> GetOldFilesForCleanup(const string &older_than);
 	//! The files in the data path that are not referenced by the metadata

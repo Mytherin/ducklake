@@ -2029,7 +2029,7 @@ RESTFlushedFileDeletions DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFlushedInlinedTable &value) {
 	auto result = writer.CreateObject();
-	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
+	result.Add("table_id", RESTWriteValue<RESTInt64Codec>(writer, value.table_id));
 	result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
 	result.Add("flush_snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.flush_snapshot_id));
 	return result;
@@ -2041,7 +2041,7 @@ RESTFlushedInlinedTable DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for FlushedInlinedTable");
 	}
 	RESTFlushedInlinedTable result;
-	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
+	RESTReadValue<RESTInt64Codec>(in.Get("table_id"), result.table_id);
 	RESTReadValue<RESTUInt64Codec>(in.Get("schema_version"), result.schema_version);
 	RESTReadValue<RESTUInt64Codec>(in.Get("flush_snapshot_id"), result.flush_snapshot_id);
 	return result;
@@ -2258,7 +2258,7 @@ DuckLakeInlinedFileDeletionEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTInlinedRowDeletes &value) {
 	auto result = writer.CreateObject();
-	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
+	result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
 	result.Add("row_ids", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.row_ids));
 	return result;
 }
@@ -2269,7 +2269,7 @@ RESTInlinedRowDeletes DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for InlinedRowDeletes");
 	}
 	RESTInlinedRowDeletes result;
-	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
+	RESTReadValue<RESTUInt64Codec>(in.Get("schema_version"), result.schema_version);
 	RESTReadValue<RESTListCodec<RESTUInt64Codec>>(in.Get("row_ids"), result.row_ids);
 	return result;
 }
@@ -2292,29 +2292,10 @@ RESTInlinedRows DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeInlinedTableInfo &value) {
-	auto result = writer.CreateObject();
-	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
-	result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
-	return result;
-}
-
-template <>
-DuckLakeInlinedTableInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for InlinedTableInfo");
-	}
-	DuckLakeInlinedTableInfo result;
-	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
-	RESTReadValue<RESTUInt64Codec>(in.Get("schema_version"), result.schema_version);
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTInlinedTableRows &value) {
 	auto result = writer.CreateObject();
 	result.Add("columns", RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTResultColumn>>>(writer, value.columns));
 	result.Add("rows", RESTRowsCodec::Write(writer, value.rows));
-	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
 	result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
 	return result;
 }
@@ -2327,7 +2308,6 @@ RESTInlinedTableRows DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	RESTInlinedTableRows result;
 	RESTReadValue<RESTListCodec<RESTObjectCodec<RESTResultColumn>>>(in.Get("columns"), result.columns);
 	RESTRowsCodec::Read(in.Get("rows"), result.rows, RESTRowTypes(result.columns, &RESTResultColumn::type));
-	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
 	RESTReadValue<RESTUInt64Codec>(in.Get("schema_version"), result.schema_version);
 	return result;
 }
@@ -3387,8 +3367,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.path));
 	result.Add("columns", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnInfo>>>(writer, value.columns));
 	result.Add("tags", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeTag>>>(writer, value.tags));
-	result.Add("inlined_data_tables", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeInlinedTableInfo>>>(
-	                                      writer, value.inlined_data_tables));
 	return result;
 }
 
@@ -3437,12 +3415,6 @@ DuckLakeTableInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("tags");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeTag>>>(entry, result.tags);
-		}
-	}
-	{
-		auto entry = in.TryGet("inlined_data_tables");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeInlinedTableInfo>>>(entry, result.inlined_data_tables);
 		}
 	}
 	return result;
@@ -3791,7 +3763,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDel
 		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
 	}
 	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
-	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
+	result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
 	result.Add("deleted_row_ids", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.deleted_row_ids));
 	return result;
 }
@@ -3815,7 +3787,7 @@ RESTDeletedInlinedRowsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		}
 	}
 	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
-	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
+	RESTReadValue<RESTUInt64Codec>(in.Get("schema_version"), result.schema_version);
 	{
 		auto entry = in.TryGet("deleted_row_ids");
 		if (!entry.IsNull()) {
@@ -4060,6 +4032,12 @@ RESTInlinedFileDeletionsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTInlinedTablesRequest &value) {
 	auto result = writer.CreateObject();
+	if (!RESTIsNull(value.snapshot)) {
+		result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
+	}
+	if (!RESTIsNull(value.snapshot_id)) {
+		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
+	}
 	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
 	return result;
 }
@@ -4070,13 +4048,25 @@ RESTInlinedTablesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for InlinedTablesRequest");
 	}
 	RESTInlinedTablesRequest result;
+	{
+		auto entry = in.TryGet("snapshot");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(entry, result.snapshot);
+		}
+	}
+	{
+		auto entry = in.TryGet("snapshot_id");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.snapshot_id);
+		}
+	}
 	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
 	return result;
 }
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTInlinedTablesResponse &value) {
 	auto result = writer.CreateObject();
-	result.Add("table_names", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.table_names));
+	result.Add("schema_versions", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.schema_versions));
 	return result;
 }
 
@@ -4087,9 +4077,9 @@ RESTInlinedTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	}
 	RESTInlinedTablesResponse result;
 	{
-		auto entry = in.TryGet("table_names");
+		auto entry = in.TryGet("schema_versions");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.table_names);
+			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.schema_versions);
 		}
 	}
 	return result;
@@ -4198,7 +4188,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTRea
 	if (!RESTIsNull(value.snapshot_id)) {
 		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
 	}
-	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
+	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
+	result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
 	result.Add("columns", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.columns));
 	result.Add("mode", RESTWriteValue<RESTInlinedReadModeCodec>(writer, value.mode));
 	if (!RESTIsNull(value.start_snapshot)) {
@@ -4206,9 +4197,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTRea
 	}
 	if (!RESTIsNull(value.start_snapshot_id)) {
 		result.Add("start_snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.start_snapshot_id));
-	}
-	if (!RESTIsNull(value.table_id)) {
-		result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
 	}
 	result.Add("order_by", RESTWriteValue<RESTStringCodec>(writer, value.order_by));
 	result.Add("deleted_row_ids", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.deleted_row_ids));
@@ -4233,7 +4221,8 @@ RESTReadInlinedDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 			RESTReadValue<RESTUInt64Codec>(entry, result.snapshot_id);
 		}
 	}
-	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
+	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
+	RESTReadValue<RESTUInt64Codec>(in.Get("schema_version"), result.schema_version);
 	RESTReadValue<RESTListCodec<RESTStringCodec>>(in.Get("columns"), result.columns);
 	{
 		auto entry = in.TryGet("mode");
@@ -4253,12 +4242,6 @@ RESTReadInlinedDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("start_snapshot_id");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTUInt64Codec>(entry, result.start_snapshot_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("table_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.table_id);
 		}
 	}
 	{
@@ -4287,10 +4270,10 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTRow
 		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
 	}
 	result.Add("count", RESTWriteValue<RESTRowCountTypeCodec>(writer, value.count));
-	if (!RESTIsNull(value.table_id)) {
-		result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
+	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
+	if (!RESTIsNull(value.schema_version)) {
+		result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
 	}
-	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
 	return result;
 }
 
@@ -4313,18 +4296,11 @@ RESTRowCountRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		}
 	}
 	RESTReadValue<RESTRowCountTypeCodec>(in.Get("count"), result.count);
+	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
 	{
-		auto entry = in.TryGet("table_id");
+		auto entry = in.TryGet("schema_version");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.table_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("table_name");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.table_name);
-		} else {
-			result.table_name = string("");
+			RESTReadValue<RESTUInt64Codec>(entry, result.schema_version);
 		}
 	}
 	return result;
@@ -5000,7 +4976,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCom
 	if (!RESTIsNull(value.retry)) {
 		result.Add("retry", RESTWriteValue<RESTObjectCodec<RESTRetryConfig>>(writer, value.retry));
 	}
-	result.Add("requires_new_inlined_table", RESTWriteValue<RESTBoolCodec>(writer, value.requires_new_inlined_table));
 	result.Add("requests", RESTWriteValue<RESTListCodec<RESTCommitRequestCodec>>(writer, value.requests));
 	return result;
 }
@@ -5033,14 +5008,6 @@ RESTCommitTransactionRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("retry");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTObjectCodec<RESTRetryConfig>>(entry, result.retry);
-		}
-	}
-	{
-		auto entry = in.TryGet("requires_new_inlined_table");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTBoolCodec>(entry, result.requires_new_inlined_table);
-		} else {
-			result.requires_new_inlined_table = false;
 		}
 	}
 	{

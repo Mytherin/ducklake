@@ -62,8 +62,8 @@ operation SnapshotData {
 ///
 /// Returns the data files of the table that are visible in a snapshot, together with their delete files and
 /// inlined deletions, and optionally the rows of the table that are inlined in the catalog. With
-/// `include_inlined_data`, `inlined_data` holds the visible rows of each inlined data table of the table, with the
-/// row id, the begin and end snapshot and all columns of the table at the schema version of the inlined data table.
+/// `include_inlined_data`, `inlined_data` holds the visible rows of the table for each schema version that it has
+/// inlined rows for, with the row id, the begin and end snapshot and all columns of the table at that schema version.
 @http(method: "POST", uri: "/v1/select")
 @readonly
 operation Select {
@@ -94,16 +94,20 @@ operation Select {
     }
 }
 
-/// Reads the rows of an inlined data table.
+/// Reads the rows that are inlined in the catalog for a table at a schema version.
 @http(method: "POST", uri: "/v1/read_inlined_data")
 @readonly
 operation ReadInlinedData {
     input := with [SnapshotReference] {
-        /// The inlined data table (from `inlined_data_tables` of the table).
+        /// The table.
         @required
-        table_name: String
+        table_id: UInt64
 
-        /// The columns to read, e.g. `["row_id", "i"]`. Columns can be cast to the type to read them as, e.g.
+        /// The schema version of the table whose columns the rows have (see `inlined_tables`).
+        @required
+        schema_version: UInt64
+
+        /// The columns to read, e.g. `["i"]`. Columns can be cast to the type to read them as, e.g.
         /// `"i::BIGINT"`.
         @required
         columns: StringList
@@ -117,9 +121,6 @@ operation ReadInlinedData {
         /// For `insertions` and `deletions`: the id of the first snapshot of the range.
         start_snapshot_id: UInt64
 
-        /// For `flush`: the table of the inlined data table.
-        table_id: UInt64
-
         /// For `flush`: the sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are
         /// ordered by it, then by their row id.
         order_by: String = ""
@@ -132,7 +133,7 @@ operation ReadInlinedData {
     output: InlinedRows
 }
 
-/// Returns the deleted versions of the rows of an inlined data table that a flush writes.
+/// Returns the deleted versions of the inlined rows of a table that a flush writes.
 ///
 /// The client writes delete files for the flushed rows with them.
 @http(method: "POST", uri: "/v1/deleted_inlined_rows")
@@ -143,9 +144,9 @@ operation DeletedInlinedRows {
         @required
         table_id: UInt64
 
-        /// The inlined data table.
+        /// The schema version of the inlined rows.
         @required
-        table_name: String
+        schema_version: UInt64
 
         /// Rows that the transaction of the client deleted, which are not flushed.
         @cppType("set<idx_t>")
@@ -253,11 +254,12 @@ operation RowCount {
         @required
         count: RowCountType
 
-        /// The table, for data file counts.
+        /// The table.
+        @required
         table_id: UInt64
 
-        /// The inlined data table, for inlined counts.
-        table_name: String = ""
+        /// For inlined counts: the schema version of the inlined rows.
+        schema_version: UInt64
     }
 
     output := {
@@ -266,19 +268,20 @@ operation RowCount {
     }
 }
 
-/// Returns the names of all inlined data tables of a table (of any schema version).
+/// Returns the schema versions that a table has inlined rows for.
 @http(method: "POST", uri: "/v1/inlined_tables")
 @readonly
 operation InlinedTables {
-    input := {
+    input := with [SnapshotReference] {
         /// The table.
         @required
         table_id: UInt64
     }
 
     output := {
-        /// The inlined data tables.
-        table_names: StringList = []
+        /// The schema versions of the table whose columns inlined rows have. Rows are inlined per schema version
+        /// and read with `read_inlined_data`.
+        schema_versions: UInt64List = []
     }
 }
 
@@ -502,7 +505,7 @@ structure ScanFilters {
     runtime_filter_columns: UInt64List = []
 }
 
-/// Which rows of an inlined data table to read.
+/// Which inlined rows to read.
 enum InlinedReadMode {
     /// The rows visible in the snapshot.
     SCAN = "scan"
@@ -517,7 +520,7 @@ enum InlinedReadMode {
     FLUSH = "flush"
 }
 
-/// A deleted version of a row of an inlined data table.
+/// A deleted version of an inlined row.
 structure DeletedRowVersion {
     /// The row id.
     @required
@@ -540,7 +543,7 @@ enum RowCountType {
     /// The same, absent if it cannot be computed exactly.
     DATA_FILES_EXACT = "data_files_exact"
 
-    /// The rows of an inlined data table.
+    /// The inlined rows of a table at a schema version.
     INLINED = "inlined"
 }
 

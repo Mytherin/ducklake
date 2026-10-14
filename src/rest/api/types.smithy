@@ -172,18 +172,6 @@ structure ColumnInfo {
     children: ColumnInfoList = []
 }
 
-/// An inlined data table of a table, which holds rows that are inlined in the catalog.
-@cppClass("DuckLakeInlinedTableInfo")
-structure InlinedTableInfo {
-    /// The name of the inlined data table.
-    @required
-    table_name: String
-
-    /// The schema version of the table whose columns the inlined data table has.
-    @required
-    schema_version: UInt64
-}
-
 /// A table of the catalog.
 @cppClass("DuckLakeTableInfo")
 structure TableInfo {
@@ -211,9 +199,6 @@ structure TableInfo {
 
     /// The tags of the table.
     tags: TagList = []
-
-    /// The inlined data tables of the table.
-    inlined_data_tables: InlinedTableInfoList = []
 }
 
 /// A tag of a column of a view.
@@ -1169,13 +1154,9 @@ structure RowSet {
 /// ```
 structure InlinedRows with [RowSet] {}
 
-/// The rows of an inlined data table.
+/// The rows of the inlined data of a table at a schema version.
 structure InlinedTableRows with [RowSet] {
-    /// The inlined data table.
-    @required
-    table_name: String
-
-    /// The schema version of the inlined data table.
+    /// The schema version of the table whose columns the rows have.
     @required
     schema_version: UInt64
 }
@@ -1332,10 +1313,6 @@ list InlinedFileDeletionsEntryList {
 
 list InlinedRowDeletesList {
     member: InlinedRowDeletes
-}
-
-list InlinedTableInfoList {
-    member: InlinedTableInfo
 }
 
 list InlinedTableRowsList {

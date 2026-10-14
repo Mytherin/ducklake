@@ -30,6 +30,30 @@ RESTMetadataManager::RESTMetadataManager(DuckLakeTransaction &transaction) : Duc
 RESTMetadataManager::~RESTMetadataManager() {
 }
 
+//! The core refers to the inlined data of a table at a schema version by the name that the inlined data table has in a
+//! metadata database (users see it as the filename of the rows). The REST API only knows the table and the version.
+static const char *INLINED_TABLE_PREFIX = "ducklake_inlined_data_";
+
+static string InlinedTableName(TableIndex table_id, idx_t schema_version) {
+	return DuckLakeMetadataManager::InlinedTableNameFor(table_id.index, schema_version);
+}
+
+struct RESTInlinedTableHandle {
+	TableIndex table_id;
+	idx_t schema_version;
+};
+
+static RESTInlinedTableHandle ParseInlinedTableName(const string &name) {
+	if (!StringUtil::StartsWith(name, INLINED_TABLE_PREFIX)) {
+		throw InternalException("\"%s\" is not the name of the inlined data of a REST catalog", name);
+	}
+	auto parts = StringUtil::Split(name.substr(strlen(INLINED_TABLE_PREFIX)), '_');
+	if (parts.size() != 2) {
+		throw InternalException("\"%s\" is not the name of the inlined data of a REST catalog", name);
+	}
+	return {TableIndex(std::stoull(parts[0])), std::stoull(parts[1])};
+}
+
 //! Entries created by the transaction are referred to by negative placeholder ids
 static int64_t ToRequestId(idx_t id) {
 	if (DuckLakeTransaction::IsTransactionLocal(id)) {
@@ -225,7 +249,7 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 			file.inlined_file_deletions.clear();
 		}
 	}
-	CacheInlinedRows(snapshot, response.inlined_data);
+	CacheInlinedRows(snapshot, table.GetTableId(), response.inlined_data);
 	return std::move(response.files);
 }
 
@@ -244,7 +268,7 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 		request.filters = make_uniq<RESTScanFilters>(DuckLakeRESTFilters::Write(*filter_info, table));
 	}
 	auto response = GetClient().Select(request);
-	CacheInlinedRows(snapshot, response.inlined_data);
+	CacheInlinedRows(snapshot, table.GetTableId(), response.inlined_data);
 	return std::move(response.extended_files);
 }
 
@@ -290,13 +314,18 @@ unique_ptr<QueryResult> RESTMetadataManager::ToQueryResult(RESTInlinedRows rows)
 	                              std::move(rows.rows.owned_rows), context->GetClientProperties());
 }
 
-void RESTMetadataManager::CacheInlinedRows(DuckLakeSnapshot snapshot, vector<RESTInlinedTableRows> &inlined_data) {
+void RESTMetadataManager::CacheInlinedRows(DuckLakeSnapshot snapshot, TableIndex table_id,
+                                           vector<RESTInlinedTableRows> &inlined_data) {
 	lock_guard<mutex> guard(cache_lock);
+	auto &versions = inlined_table_versions[make_pair(snapshot.snapshot_id, table_id.index)];
+	versions.clear();
 	for (auto &inlined_table : inlined_data) {
 		RESTInlinedRows rows;
 		rows.columns = std::move(inlined_table.columns);
 		rows.rows = std::move(inlined_table.rows);
-		inlined_rows[make_pair(snapshot.snapshot_id, inlined_table.table_name)] = std::move(rows);
+		versions.push_back(inlined_table.schema_version);
+		inlined_rows[make_pair(snapshot.snapshot_id, InlinedTableName(table_id, inlined_table.schema_version))] =
+		    std::move(rows);
 	}
 }
 
@@ -390,7 +419,9 @@ static RESTReadInlinedDataRequest InlinedReadRequest(DuckLakeSnapshot snapshot, 
 	RESTReadInlinedDataRequest request;
 	request.snapshot = snapshot;
 	request.mode = mode;
-	request.table_name = inlined_table_name;
+	auto handle = ParseInlinedTableName(inlined_table_name);
+	request.table_id = handle.table_id.index;
+	request.schema_version = handle.schema_version;
 	request.columns = columns_to_read;
 	return request;
 }
@@ -431,7 +462,6 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadAllInlinedDataForFlush(DuckLake
                                                                         const string &sort_order_sql,
                                                                         const vector<string> &columns_to_read) {
 	auto request = InlinedReadRequest(snapshot, "flush", inlined_table_name, columns_to_read);
-	request.table_id = table.GetTableId().index;
 	request.order_by = sort_order_sql;
 	request.deleted_row_ids = GetTransactionDeletes(table, inlined_table_name);
 	return ToQueryResult(GetClient().ReadInlinedData(request));
@@ -443,7 +473,7 @@ DuckLakeDeletedRowVersions RESTMetadataManager::GetDeletedInlinedRowVersions(Duc
 	RESTDeletedInlinedRowsRequest request;
 	request.snapshot = snapshot;
 	request.table_id = table.GetTableId().index;
-	request.table_name = inlined_table_name;
+	request.schema_version = ParseInlinedTableName(inlined_table_name).schema_version;
 	request.deleted_row_ids = GetTransactionDeletes(table, inlined_table_name);
 	DuckLakeDeletedRowVersions result;
 	for (auto &row : GetClient().DeletedInlinedRows(request).rows) {
@@ -501,30 +531,29 @@ DuckLakeTableSchemaVersions RESTMetadataManager::GetTableSchemaVersions(TableInd
 }
 
 optional_idx RESTMetadataManager::GetRowCount(DuckLakeSnapshot snapshot, const string &count, TableIndex table_id,
-                                              const string &table_name) {
-	if (table_id.IsValid() && IsTransactionLocal(table_id)) {
+                                              optional_idx schema_version) {
+	if (IsTransactionLocal(table_id)) {
 		return 0;
 	}
 	RESTRowCountRequest request;
 	request.snapshot = snapshot;
 	request.count = count;
-	if (table_id.IsValid()) {
-		request.table_id = table_id.index;
-	}
-	request.table_name = table_name;
+	request.table_id = table_id.index;
+	request.schema_version = schema_version;
 	return GetClient().RowCount(request).row_count;
 }
 
 idx_t RESTMetadataManager::GetNetDataFileRowCount(TableIndex table_id, DuckLakeSnapshot snapshot) {
-	return GetRowCount(snapshot, "data_files", table_id, string()).GetIndex();
+	return GetRowCount(snapshot, "data_files", table_id).GetIndex();
 }
 
 optional_idx RESTMetadataManager::GetNetDataFileRowCountForStats(TableIndex table_id, DuckLakeSnapshot snapshot) {
-	return GetRowCount(snapshot, "data_files_exact", table_id, string());
+	return GetRowCount(snapshot, "data_files_exact", table_id);
 }
 
 idx_t RESTMetadataManager::GetNetInlinedRowCount(const string &inlined_table_name, DuckLakeSnapshot snapshot) {
-	return GetRowCount(snapshot, "inlined", TableIndex(), inlined_table_name).GetIndex();
+	auto handle = ParseInlinedTableName(inlined_table_name);
+	return GetRowCount(snapshot, "inlined", handle.table_id, handle.schema_version).GetIndex();
 }
 
 unordered_set<string> RESTMetadataManager::GetInlinedTableNames(TableIndex table_id) {
@@ -534,8 +563,41 @@ unordered_set<string> RESTMetadataManager::GetInlinedTableNames(TableIndex table
 	RESTInlinedTablesRequest request;
 	request.table_id = table_id.index;
 	unordered_set<string> result;
-	for (auto &name : GetClient().InlinedTables(request).table_names) {
-		result.insert(name);
+	for (auto schema_version : GetClient().InlinedTables(request).schema_versions) {
+		result.insert(InlinedTableName(table_id, schema_version));
+	}
+	return result;
+}
+
+vector<DuckLakeInlinedTableInfo> RESTMetadataManager::GetInlinedDataTables(const DuckLakeTableEntry &table,
+                                                                           DuckLakeSnapshot snapshot) {
+	auto table_id = table.GetTableId();
+	if (IsTransactionLocal(table_id)) {
+		return {};
+	}
+	vector<idx_t> schema_versions;
+	bool cached = false;
+	{
+		// the scan of the table came with the schema versions it has inlined rows for
+		lock_guard<mutex> guard(cache_lock);
+		auto entry = inlined_table_versions.find(make_pair(snapshot.snapshot_id, table_id.index));
+		if (entry != inlined_table_versions.end()) {
+			schema_versions = entry->second;
+			cached = true;
+		}
+	}
+	if (!cached) {
+		RESTInlinedTablesRequest request;
+		request.snapshot = snapshot;
+		request.table_id = table_id.index;
+		schema_versions = GetClient().InlinedTables(request).schema_versions;
+	}
+	vector<DuckLakeInlinedTableInfo> result;
+	for (auto schema_version : schema_versions) {
+		DuckLakeInlinedTableInfo inlined_table;
+		inlined_table.table_name = InlinedTableName(table_id, schema_version);
+		inlined_table.schema_version = schema_version;
+		result.push_back(std::move(inlined_table));
 	}
 	return result;
 }
@@ -877,7 +939,7 @@ void RESTMetadataManager::AddDeletes(const TransactionChangeInformation &transac
 		}
 		for (auto &inlined_entry : changes.new_inlined_data_deletes) {
 			RESTInlinedRowDeletes deletes;
-			deletes.table_name = inlined_entry.first;
+			deletes.schema_version = ParseInlinedTableName(inlined_entry.first).schema_version;
 			deletes.row_ids = inlined_entry.second->rows;
 			request.inlined_deletes.push_back(std::move(deletes));
 		}
@@ -994,7 +1056,7 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 		auto &flush = AddRequest<RESTFlushInlinedDataRequest>(requests);
 		for (auto &flushed_table : flushed_tables) {
 			RESTFlushedInlinedTable table;
-			table.table_name = flushed_table.inlined_table.table_name;
+			table.table_id = ToRequestId(ParseInlinedTableName(flushed_table.inlined_table.table_name).table_id.index);
 			table.schema_version = flushed_table.inlined_table.schema_version;
 			table.flush_snapshot_id = flushed_table.flush_snapshot_id;
 			flush.inlined_tables.push_back(std::move(table));
@@ -1014,7 +1076,6 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 	request.retry->max_retry_count = retry_config.max_retry_count;
 	request.retry->retry_wait_ms = retry_config.retry_wait_ms;
 	request.retry->retry_backoff = retry_config.retry_backoff;
-	request.requires_new_inlined_table = flush_transaction.GetRequiresNewInlinedTable();
 	auto response = GetClient().CommitTransaction(request);
 	if (!response.snapshot_id.IsValid()) {
 		// nothing was written that creates a snapshot (e.g. only options were set)

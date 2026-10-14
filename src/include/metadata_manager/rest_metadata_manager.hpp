@@ -112,6 +112,8 @@ public:
 	optional_idx GetNetDataFileRowCountForStats(TableIndex table_id, DuckLakeSnapshot snapshot) override;
 	idx_t GetNetInlinedRowCount(const string &inlined_table_name, DuckLakeSnapshot snapshot) override;
 	unordered_set<string> GetInlinedTableNames(TableIndex table_id) override;
+	vector<DuckLakeInlinedTableInfo> GetInlinedDataTables(const DuckLakeTableEntry &table,
+	                                                      DuckLakeSnapshot snapshot) override;
 
 	void OnCreateSchema(DuckLakeSchemaEntry &schema) override;
 	void OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info,
@@ -136,7 +138,7 @@ private:
 	}
 	unique_ptr<QueryResult> ToQueryResult(RESTInlinedRows rows);
 	//! Keeps the inlined rows that came along with a file list, until the scan reads them
-	void CacheInlinedRows(DuckLakeSnapshot snapshot, vector<RESTInlinedTableRows> &inlined_data);
+	void CacheInlinedRows(DuckLakeSnapshot snapshot, TableIndex table_id, vector<RESTInlinedTableRows> &inlined_data);
 	unique_ptr<QueryResult> TryReadCachedInlinedRows(DuckLakeSnapshot snapshot, const string &inlined_table_name,
 	                                                 const vector<string> &columns_to_read);
 	RESTSnapshotDataResponse GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot, bool include_catalog,
@@ -150,7 +152,7 @@ private:
 	                                         DuckLakeSnapshot snapshot, const string &changes);
 	vector<RESTDroppedFile> GetDroppedFiles(TableIndex table_id);
 	optional_idx GetRowCount(DuckLakeSnapshot snapshot, const string &count, TableIndex table_id,
-	                         const string &table_name);
+	                         optional_idx schema_version = optional_idx());
 
 private:
 	//! The catalog changes of the transaction, in the order in which they were made
@@ -161,6 +163,8 @@ private:
 	idx_t prefetched_metadata_version = DConstants::INVALID_INDEX;
 	//! The inlined rows of file lists that were not read yet, by snapshot and inlined data table
 	map<pair<idx_t, string>, RESTInlinedRows> inlined_rows;
+	//! The schema versions that tables have inlined rows for, by snapshot and table, which came along with a file list
+	map<pair<idx_t, idx_t>, vector<idx_t>> inlined_table_versions;
 	//! The table statistics read by the transaction, by snapshot
 	unordered_map<idx_t, vector<DuckLakeGlobalStatsInfo>> table_stats;
 	//! The data files dropped by the transaction, by table

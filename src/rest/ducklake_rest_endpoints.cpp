@@ -58,16 +58,17 @@ static void ReadQueryResult(RESTRowSet &rows, QueryResult &result, const vector<
 	rows.rows = RESTRows(std::move(collection));
 }
 
-//! The name of an inlined data or deletion table of a request, which ends up in metadata queries
-static string GetInlinedTableName(const string &name) {
-	bool valid = StringUtil::StartsWith(name, "ducklake_inlined_");
-	for (auto c : name) {
-		valid = valid && (StringUtil::CharacterIsAlphaNumeric(c) || c == '_');
+//! The name of the inlined data table of a table at a schema version. Requests refer to inlined data by the table and
+//! the schema version, the names are the ones of the catalog.
+static string GetInlinedTableName(DuckLakeTransaction &transaction, const DuckLakeTableEntry &table,
+                                  DuckLakeSnapshot snapshot, idx_t schema_version) {
+	for (auto &inlined_table : table.GetInlinedDataTables(transaction, snapshot, false)) {
+		if (inlined_table.schema_version == schema_version) {
+			return inlined_table.table_name;
+		}
 	}
-	if (!valid) {
-		throw InvalidInputException("\"%s\" is not the name of an inlined data table", name);
-	}
-	return name;
+	throw CatalogException("Table %llu has no inlined data for schema version %llu", table.GetTableId().index,
+	                       schema_version);
 }
 
 static bool IsColumnName(const ParsedExpression &expression) {
@@ -174,7 +175,6 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 		auto query_result = metadata_manager.ReadInlinedData(snapshot, inlined_table.table_name, columns);
 		query_result->ThrowIfError("Failed to read inlined data: ");
 		RESTInlinedTableRows rows;
-		rows.table_name = inlined_table.table_name;
 		rows.schema_version = inlined_table.schema_version;
 		ReadQueryResult(rows, *query_result, names);
 		result.inlined_data.push_back(std::move(rows));
@@ -182,21 +182,16 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	return result;
 }
 
-//! The table at the schema version of one of its inlined data tables
+//! The table at the schema version of its inlined data, and the name of the inlined data table
 static DuckLakeTableEntry &GetInlinedTableEntry(DuckLakeRESTRequest &request, DuckLakeSnapshot snapshot,
-                                                TableIndex table_id, const string &inlined_table_name) {
+                                                TableIndex table_id, idx_t schema_version, string &inlined_table_name) {
 	auto &table = GetTableEntry(request, snapshot, table_id);
-	for (auto &inlined_table : table.GetInlinedDataTables(*request.transaction, snapshot)) {
-		if (inlined_table.table_name != inlined_table_name) {
-			continue;
-		}
-		auto result =
-		    request.catalog->GetTableAtSchemaVersion(*request.transaction, table_id, inlined_table.schema_version);
-		if (result) {
-			return *result;
-		}
+	inlined_table_name = GetInlinedTableName(*request.transaction, table, snapshot, schema_version);
+	auto result = request.catalog->GetTableAtSchemaVersion(*request.transaction, table_id, schema_version);
+	if (!result) {
+		throw CatalogException("Table %llu has no schema version %llu", table_id.index, schema_version);
 	}
-	throw CatalogException("Table %llu has no inlined data table \"%s\"", table_id.index, inlined_table_name);
+	return *result;
 }
 
 //! Rows that the client transaction deleted are not flushed, the request transaction is rolled back afterwards
@@ -223,7 +218,9 @@ static string GetFlushOrder(const string &order_by) {
 RESTInlinedRows DuckLakeRESTEndpoints::ReadInlinedData(DuckLakeRESTRequest &request,
                                                        const RESTReadInlinedDataRequest &parameters) {
 	auto snapshot = request.GetSnapshot(parameters);
-	auto table_name = GetInlinedTableName(parameters.table_name);
+	auto table_id = TableIndex(parameters.table_id);
+	auto table_name = GetInlinedTableName(*request.transaction, GetTableEntry(request, snapshot, table_id), snapshot,
+	                                      parameters.schema_version);
 	auto columns = GetColumnsToRead(parameters.columns);
 	auto &metadata_manager = request.GetMetadataManager();
 	auto &mode = parameters.mode;
@@ -239,10 +236,8 @@ RESTInlinedRows DuckLakeRESTEndpoints::ReadInlinedData(DuckLakeRESTRequest &requ
 		}
 	} else {
 		D_ASSERT(mode == "flush");
-		if (!parameters.table_id.IsValid()) {
-			throw InvalidInputException("read_inlined_data: a flush requires a table_id");
-		}
-		auto &table = GetInlinedTableEntry(request, snapshot, TableIndex(parameters.table_id.GetIndex()), table_name);
+		string flush_table_name;
+		auto &table = GetInlinedTableEntry(request, snapshot, table_id, parameters.schema_version, flush_table_name);
 		AddFlushDeletes(request, parameters.deleted_row_ids, table, table_name);
 		query_result = metadata_manager.ReadAllInlinedDataForFlush(snapshot, table_name, table,
 		                                                           GetFlushOrder(parameters.order_by), columns);
@@ -258,11 +253,12 @@ RESTDeletedInlinedRowsResponse
 DuckLakeRESTEndpoints::DeletedInlinedRows(DuckLakeRESTRequest &request,
                                           const RESTDeletedInlinedRowsRequest &parameters) {
 	auto snapshot = request.GetSnapshot(parameters);
-	auto &table = GetInlinedTableEntry(request, snapshot, TableIndex(parameters.table_id), parameters.table_name);
-	AddFlushDeletes(request, parameters.deleted_row_ids, table, parameters.table_name);
+	string inlined_table_name;
+	auto &table = GetInlinedTableEntry(request, snapshot, TableIndex(parameters.table_id), parameters.schema_version,
+	                                   inlined_table_name);
+	AddFlushDeletes(request, parameters.deleted_row_ids, table, inlined_table_name);
 	RESTDeletedInlinedRowsResponse result;
-	for (auto &row :
-	     request.GetMetadataManager().GetDeletedInlinedRowVersions(table, parameters.table_name, snapshot)) {
+	for (auto &row : request.GetMetadataManager().GetDeletedInlinedRowVersions(table, inlined_table_name, snapshot)) {
 		RESTDeletedRowVersion version;
 		version.row_id = row.first.first;
 		version.begin_snapshot = row.first.second;
@@ -307,14 +303,16 @@ RESTRowCountResponse DuckLakeRESTEndpoints::RowCount(DuckLakeRESTRequest &reques
 	auto &metadata_manager = request.GetMetadataManager();
 	auto snapshot = request.GetSnapshot(parameters);
 	RESTRowCountResponse result;
+	auto table_id = TableIndex(parameters.table_id);
 	if (parameters.count == "inlined") {
-		result.row_count = metadata_manager.GetNetInlinedRowCount(GetInlinedTableName(parameters.table_name), snapshot);
+		if (!parameters.schema_version.IsValid()) {
+			throw InvalidInputException("row_count: counting inlined rows requires a schema_version");
+		}
+		auto table_name = GetInlinedTableName(*request.transaction, GetTableEntry(request, snapshot, table_id),
+		                                      snapshot, parameters.schema_version.GetIndex());
+		result.row_count = metadata_manager.GetNetInlinedRowCount(table_name, snapshot);
 		return result;
 	}
-	if (!parameters.table_id.IsValid()) {
-		throw InvalidInputException("row_count: counting the rows of data files requires a table_id");
-	}
-	auto table_id = TableIndex(parameters.table_id.GetIndex());
 	if (parameters.count == "data_files") {
 		result.row_count = metadata_manager.GetNetDataFileRowCount(table_id, snapshot);
 	} else {
@@ -326,9 +324,11 @@ RESTRowCountResponse DuckLakeRESTEndpoints::RowCount(DuckLakeRESTRequest &reques
 
 RESTInlinedTablesResponse DuckLakeRESTEndpoints::InlinedTables(DuckLakeRESTRequest &request,
                                                                const RESTInlinedTablesRequest &parameters) {
+	auto snapshot = request.GetSnapshot(parameters);
+	auto &table = GetTableEntry(request, snapshot, TableIndex(parameters.table_id));
 	RESTInlinedTablesResponse result;
-	for (auto &name : request.GetMetadataManager().GetInlinedTableNames(TableIndex(parameters.table_id))) {
-		result.table_names.push_back(name);
+	for (auto &inlined_table : table.GetInlinedDataTables(*request.transaction, snapshot, false)) {
+		result.schema_versions.push_back(inlined_table.schema_version);
 	}
 	return result;
 }
@@ -746,12 +746,15 @@ void DuckLakeRESTCommit::DropMacro(RESTDropMacroRequest &parameters) {
 }
 
 void DuckLakeRESTCommit::DeleteData(RESTDeleteDataRequest &parameters) {
-	auto table_id = GetTable(GetTableId(parameters.table_id)).GetTableId();
+	auto &table = GetTable(GetTableId(parameters.table_id));
+	auto table_id = table.GetTableId();
 	if (!parameters.delete_files.empty()) {
 		transaction.AddDeletes(table_id, std::move(parameters.delete_files));
 	}
 	for (auto &deletes : parameters.inlined_deletes) {
-		transaction.AddNewInlinedDeletes(table_id, GetInlinedTableName(deletes.table_name), std::move(deletes.row_ids));
+		auto inlined_table_name =
+		    GetInlinedTableName(transaction, table, transaction.GetSnapshot(), deletes.schema_version);
+		transaction.AddNewInlinedDeletes(table_id, inlined_table_name, std::move(deletes.row_ids));
 	}
 	for (auto &deletes : parameters.file_row_deletes) {
 		transaction.AddNewInlinedFileDeletes(table_id, deletes.data_file_id, std::move(deletes.row_ids));
@@ -768,7 +771,9 @@ void DuckLakeRESTCommit::DeleteData(RESTDeleteDataRequest &parameters) {
 void DuckLakeRESTCommit::FlushInlinedData(RESTFlushInlinedDataRequest &parameters) {
 	for (auto &flushed_table : parameters.inlined_tables) {
 		DuckLakeInlinedTableInfo inlined_table;
-		inlined_table.table_name = GetInlinedTableName(flushed_table.table_name);
+		auto &table = GetTable(GetTableId(flushed_table.table_id));
+		inlined_table.table_name =
+		    GetInlinedTableName(transaction, table, transaction.GetSnapshot(), flushed_table.schema_version);
 		inlined_table.schema_version = flushed_table.schema_version;
 		transaction.MarkInlinedDataForDeletion(std::move(inlined_table), flushed_table.flush_snapshot_id);
 	}
@@ -882,7 +887,6 @@ RESTCommitTransactionResponse DuckLakeRESTCommit::Run(const RESTCommitTransactio
 	if (parameters.commit_info) {
 		transaction.SetCommitMessage(*parameters.commit_info);
 	}
-	transaction.SetRequiresNewInlinedTable(parameters.requires_new_inlined_table);
 	for (auto &commit_request : parameters.requests) {
 		Apply(*commit_request);
 	}
