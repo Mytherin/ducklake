@@ -394,14 +394,16 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 	}
 	if (parameters.include_inlined_data) {
 		result.inlined_data = ReadInlinedTableRows(
-		    request, table, snapshot, [&](const string &inlined_table_name, const vector<string> &columns) {
+		    request, table, snapshot,
+		    [&](const string &inlined_table_name, const vector<string> &columns) {
 			    if (deletions) {
 				    return metadata_manager.ReadInlinedDataDeletions(start_snapshot, snapshot, inlined_table_name,
 				                                                     columns);
 			    }
 			    return metadata_manager.ReadInlinedDataInsertions(start_snapshot, snapshot, inlined_table_name,
 			                                                      columns);
-		    });
+		    },
+		    parameters.columns);
 	}
 	return result;
 }

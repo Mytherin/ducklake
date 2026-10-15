@@ -10,6 +10,7 @@
 
 #include "storage/ducklake_metadata_manager.hpp"
 #include "rest/ducklake_rest_client.hpp"
+#include "metadata_manager/rest_inlined_rows_cache.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 
 namespace duckdb {
@@ -17,22 +18,6 @@ class DuckLakeTableEntry;
 class DuckLakeSchemaEntry;
 struct CreateTableInfo;
 struct CreateSchemaInfo;
-
-//! Which inlined rows the cache of the inlined rows of a table at a schema version holds
-enum class RESTInlinedRowsKind : uint8_t { SCAN, INSERTIONS, DELETIONS };
-
-//! The columns that the cached inlined rows of a table have: all columns, or the field ids of top-level columns
-struct RESTInlinedProjection {
-	static RESTInlinedProjection From(optional_ptr<const vector<FieldIndex>> projection);
-
-	bool Covers(const RESTInlinedProjection &other) const;
-
-	bool all = true;
-	unordered_set<idx_t> columns;
-};
-
-//! The kind of rows, the snapshots they are for (the start snapshot is 0 for scans) and the inlined data
-using InlinedRowsKey = std::tuple<RESTInlinedRowsKind, idx_t, idx_t, string>;
 
 //! Communicates with a DuckLake REST server instead of a metadata database
 class RESTMetadataManager : public DuckLakeMetadataManager {
@@ -120,11 +105,13 @@ public:
 	bool ResetConfigOption(const DuckLakeConfigOption &option) override;
 	vector<DuckLakeTableSizeInfo> GetTableSizes(DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeColumnMappingInfo> GetColumnMappings(optional_idx start_from) override;
-	vector<DuckLakeFileListEntry> GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
-	                                                 DuckLakeSnapshot snapshot) override;
-	vector<DuckLakeDeleteScanEntry> GetTableDeletions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
-	                                                  DuckLakeSnapshot snapshot,
-	                                                  bool include_local_changes = true) override;
+	vector<DuckLakeFileListEntry>
+	GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot,
+	                   optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
+	vector<DuckLakeDeleteScanEntry>
+	GetTableDeletions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot,
+	                  bool include_local_changes = true,
+	                  optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
 	void RemoveFilesScheduledForCleanup(const vector<DuckLakeFileForCleanup> &cleaned_up_files) override;
 	idx_t GetNetDataFileRowCount(TableIndex table_id, DuckLakeSnapshot snapshot) override;
 	optional_idx GetNetDataFileRowCountForStats(TableIndex table_id, DuckLakeSnapshot snapshot) override;
@@ -155,18 +142,20 @@ private:
 		return result;
 	}
 	unique_ptr<QueryResult> ToQueryResult(RESTInlinedRows rows);
-	//! Keeps the inlined rows that came along with a file list for the transaction: the scans read the columns they
-	//! need from them
-	void CacheInlinedRows(RESTInlinedRowsKind kind, idx_t start_snapshot_id, DuckLakeSnapshot snapshot,
-	                      TableIndex table_id, vector<RESTInlinedTableRows> &inlined_data,
-	                      const RESTInlinedProjection &projection = RESTInlinedProjection());
-	//! Whether the rows that came along with a scan of the table have the columns
-	bool InlinedRowsCached(DuckLakeSnapshot snapshot, TableIndex table_id, const RESTInlinedProjection &projection);
+	//! Whether a scan has to ask the server for the inlined rows, and for which columns: other scans of the table at
+	//! the snapshot can have the rows already, and scans that need other columns ask for all columns
+	struct InlinedRowsPlan {
+		bool fetch;
+		RESTInlinedProjection projection;
+	};
+	InlinedRowsPlan PlanInlinedRows(const RESTInlinedRowsKey &key, optional_ptr<const vector<FieldIndex>> projection);
+	//! Fetches the inlined rows of a table with all columns, if a scan needs rows that the cache does not have
+	shared_ptr<RESTInlinedRowsResponse> FetchInlinedRows(const RESTInlinedRowsKey &key, DuckLakeSnapshot start_snapshot,
+	                                                     DuckLakeSnapshot snapshot);
 	//! Reads the columns from the cached rows of the inlined data, or fetches the rows from the server
 	unique_ptr<QueryResult> ReadCachedInlinedRows(RESTInlinedRowsKind kind, DuckLakeSnapshot start_snapshot,
 	                                              DuckLakeSnapshot snapshot, const string &inlined_table_name,
 	                                              const vector<string> &columns_to_read);
-	shared_ptr<RESTInlinedRows> GetCachedInlinedRows(const InlinedRowsKey &key);
 	RESTSnapshotDataResponse GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot, bool include_catalog,
 	                                         bool include_stats);
 	void AddDeletes(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
@@ -175,7 +164,8 @@ private:
 	//! The inlined rows the transaction deleted, which are not flushed
 	set<idx_t> GetTransactionDeletes(const DuckLakeTableEntry &table, const string &inlined_table_name);
 	RESTTableChangesResponse GetTableChanges(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
-	                                         DuckLakeSnapshot snapshot, const string &changes);
+	                                         DuckLakeSnapshot snapshot, const string &changes,
+	                                         optional_ptr<const vector<FieldIndex>> projection);
 	vector<RESTDroppedFile> GetDroppedFiles(TableIndex table_id);
 	optional_idx GetRowCount(DuckLakeSnapshot snapshot, const string &count, TableIndex table_id,
 	                         optional_idx schema_version = optional_idx());
@@ -187,12 +177,8 @@ private:
 	//! The catalog of a snapshot that the transaction loaded, which came along with the snapshot
 	unique_ptr<DuckLakeCatalogInfo> prefetched_catalog;
 	idx_t prefetched_metadata_version = DConstants::INVALID_INDEX;
-	//! The inlined rows of file lists that were not read yet, by snapshot and inlined data table
-	map<InlinedRowsKey, shared_ptr<RESTInlinedRows>> inlined_rows;
-	//! The schema versions that tables have inlined rows for, by snapshot and table, which came along with a file list
-	map<pair<idx_t, idx_t>, vector<idx_t>> inlined_table_versions;
-	//! The columns of the rows that came along with a scan, by snapshot and table
-	map<pair<idx_t, idx_t>, RESTInlinedProjection> inlined_projections;
+	//! The inlined rows that came along with file lists, which scans read the columns they need from
+	RESTInlinedRowsCache inlined_rows_cache;
 	//! The table statistics read by the transaction, by snapshot
 	unordered_map<idx_t, vector<DuckLakeGlobalStatsInfo>> table_stats;
 	//! The data files dropped by the transaction, by table

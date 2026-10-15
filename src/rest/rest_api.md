@@ -458,6 +458,7 @@ Request:
 | `start_snapshot_id` | `uint64` (optional) | The id of the first snapshot of the range. |
 | `changes` | [`TableChangeType`](#tablechangetype) | The changes to return. |
 | `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows that changed. |
+| `columns` | list of `uint64` (optional) | The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
 
 Response:
 

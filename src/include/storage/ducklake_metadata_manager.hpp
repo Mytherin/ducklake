@@ -373,12 +373,12 @@ public:
 	                                                       const FilterPushdownInfo *filter_info = nullptr,
 	                                                       bool include_local_changes = true,
 	                                                       optional_ptr<const vector<FieldIndex>> projection = nullptr);
-	virtual vector<DuckLakeFileListEntry> GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
-	                                                         DuckLakeSnapshot snapshot);
-	virtual vector<DuckLakeDeleteScanEntry> GetTableDeletions(DuckLakeTableEntry &table,
-	                                                          DuckLakeSnapshot start_snapshot,
-	                                                          DuckLakeSnapshot snapshot,
-	                                                          bool include_local_changes = true);
+	virtual vector<DuckLakeFileListEntry>
+	GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot,
+	                   optional_ptr<const vector<FieldIndex>> projection = nullptr);
+	virtual vector<DuckLakeDeleteScanEntry>
+	GetTableDeletions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot,
+	                  bool include_local_changes = true, optional_ptr<const vector<FieldIndex>> projection = nullptr);
 	virtual vector<DuckLakeFileListExtendedEntry>
 	GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
 	                         const FilterPushdownInfo *filter_info = nullptr,

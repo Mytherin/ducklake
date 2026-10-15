@@ -4509,6 +4509,9 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTab
 	}
 	result.Add("changes", RESTWriteValue<RESTTableChangeTypeCodec>(writer, value.changes));
 	result.Add("include_inlined_data", RESTWriteValue<RESTBoolCodec>(writer, value.include_inlined_data));
+	if (!RESTIsNull(value.columns)) {
+		result.Add("columns", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.columns));
+	}
 	return result;
 }
 
@@ -4550,6 +4553,12 @@ RESTTableChangesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 			RESTReadValue<RESTBoolCodec>(entry, result.include_inlined_data);
 		} else {
 			result.include_inlined_data = false;
+		}
+	}
+	{
+		auto entry = in.TryGet("columns");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.columns);
 		}
 	}
 	return result;

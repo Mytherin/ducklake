@@ -1391,6 +1391,8 @@ struct RESTTableChangesRequest : public RESTSnapshotReference {
 	string changes;
 	//! Also return the inlined rows that changed.
 	bool include_inlined_data = false;
+	//! The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
+	RESTOptional<vector<idx_t>> columns;
 };
 
 struct RESTTableChangesResponse {

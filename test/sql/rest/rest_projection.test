@@ -221,6 +221,62 @@ SELECT count(*) FROM dl.table_changes('t', 0, getvariable('latest')) WHERE chang
 ----
 5
 
+query I
+SELECT count(*) FROM dl.table_insertions('t', 0, getvariable('latest'))
+----
+5
+
+query II
+SELECT s, i FROM dl.table_insertions('t', 0, getvariable('latest')) WHERE i >= 4 ORDER BY i
+----
+four	4
+five	5
+
+query II
+SELECT d, e FROM dl.table_insertions('t', 0, getvariable('latest')) WHERE i >= 4 ORDER BY i
+----
+4.5	40
+5.5	50
+
+# change feeds that are scanned at the same time with other columns
+query I
+SELECT count(*) FROM (
+	SELECT s FROM dl.table_insertions('t', 0, getvariable('latest'))
+	UNION ALL SELECT CAST(d AS VARCHAR) FROM dl.table_insertions('t', 0, getvariable('latest'))
+	UNION ALL SELECT CAST(e AS VARCHAR) FROM dl.table_insertions('t', 0, getvariable('latest'))
+	UNION ALL SELECT CAST(i AS VARCHAR) FROM dl.table_insertions('t', 0, getvariable('latest'))
+)
+----
+20
+
+# scans that run at the same time read the same cached rows: many scans with other columns, many times
+statement ok
+SET threads=4
+
+loop n 0 25
+
+query II
+SELECT count(*), count(s) + count(d) + count(e) + count(i) FROM (
+	SELECT s, NULL::DOUBLE AS d, NULL::INTEGER AS e, NULL::INTEGER AS i FROM dl.t
+	UNION ALL SELECT NULL, d, NULL, NULL FROM dl.t
+	UNION ALL SELECT NULL, NULL, e, NULL FROM dl.t
+	UNION ALL SELECT NULL, NULL, NULL, i FROM dl.t
+	UNION ALL SELECT s, NULL, NULL, NULL FROM dl.t
+)
+----
+20	19
+
+query I
+SELECT sum(e) + sum(i) + sum(length(s)) FROM (
+	SELECT e, 0 AS i, 0 AS s_len, NULL AS s FROM dl.t
+	UNION ALL SELECT 0, i, 0, NULL FROM dl.t
+	UNION ALL SELECT 0, 0, 0, s FROM dl.t
+) t(e, i, s_len, s)
+----
+133
+
+endloop
+
 statement ok
 DETACH dl
 
