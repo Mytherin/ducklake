@@ -1,4 +1,5 @@
 #include "storage/ducklake_catalog.hpp"
+#include "rest/ducklake_rest_client.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -332,6 +333,29 @@ DuckLakeCatalog::~DuckLakeCatalog() {
 	UnregisterCatalog();
 }
 
+void DuckLakeCatalog::ConnectREST() {
+	if (rest_client) {
+		return;
+	}
+	auto url = MetadataPath();
+	if (StringUtil::StartsWith(url, "rest:")) {
+		url = url.substr(5);
+	}
+	string token;
+	auto entry = options.metadata_parameters.find("token");
+	if (entry != options.metadata_parameters.end()) {
+		token = entry->second.ToString();
+	}
+	rest_client = make_uniq<DuckLakeRESTClient>(std::move(url), std::move(token));
+}
+
+DuckLakeRESTClient &DuckLakeCatalog::GetRESTClient() {
+	if (!rest_client) {
+		throw InternalException("The REST catalog is not connected to its server");
+	}
+	return *rest_client;
+}
+
 void DuckLakeCatalog::FinalizeLoad(optional_ptr<ClientContext> context) {
 	// initialize the metadata database
 	unique_ptr<Connection> con;
@@ -407,6 +431,7 @@ optional_ptr<CatalogEntry> DuckLakeCatalog::CreateSchema(CatalogTransaction tran
 	                                                   std::move(schema_data_path), parent);
 	auto result = schema_entry.get();
 	duck_transaction.CreateEntry(std::move(schema_entry));
+	duck_transaction.GetMetadataManager().OnCreateSchema(*result);
 	return result;
 }
 
@@ -1105,11 +1130,11 @@ optional_ptr<BoundAtClause> DuckLakeCatalog::CatalogSnapshot() const {
 }
 
 void DuckLakeCatalog::OnDetach(ClientContext &context) {
+	auto &db_manager = DatabaseManager::Get(context);
 	// the metadata database stays attached while another DuckLake uses it
-	if (!UnregisterCatalog()) {
+	if (!UnregisterCatalog() || !OwnsMetadataDatabase()) {
 		return;
 	}
-	auto &db_manager = DatabaseManager::Get(context);
 	db_manager.DetachDatabase(context, Identifier(MetadataDatabaseName()), OnEntryNotFound::RETURN_NULL);
 }
 
@@ -1462,7 +1487,8 @@ void DuckLakeCatalog::RegisterCatalog() {
 			continue;
 		}
 		// only DuckLakes with the same metadata database share their metadata catalog
-		if (StringUtil::CIEquals(other.MetadataDatabaseName(), MetadataDatabaseName()) &&
+		if (OwnsMetadataDatabase() && other.OwnsMetadataDatabase() &&
+		    StringUtil::CIEquals(other.MetadataDatabaseName(), MetadataDatabaseName()) &&
 		    (other.MetadataType() != MetadataType() || other.MetadataPath() != MetadataPath())) {
 			throw BinderException(
 			    "Failed to attach database: metadata catalog \"%s\" is already used by database \"%s\"",
@@ -1483,7 +1509,8 @@ bool DuckLakeCatalog::UnregisterCatalog() {
 		auto &other = catalogs[i - 1].get();
 		if (&other == this) {
 			catalogs.erase_at(i - 1);
-		} else if (StringUtil::CIEquals(other.MetadataDatabaseName(), MetadataDatabaseName())) {
+		} else if (other.OwnsMetadataDatabase() &&
+		           StringUtil::CIEquals(other.MetadataDatabaseName(), MetadataDatabaseName())) {
 			metadata_catalog_unused = false;
 		}
 	}

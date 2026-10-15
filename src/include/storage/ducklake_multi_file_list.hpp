@@ -43,6 +43,9 @@ public:
 	unique_ptr<MultiFileList> Copy() const override;
 	vector<DuckLakeFileListExtendedEntry> GetFilesExtended() const;
 	const vector<DuckLakeFileListEntry> &GetFiles() const;
+	//! Sets the columns that the scan reads (field ids of top-level columns), before the file list is read: metadata
+	//! managers that return the inlined rows with the file list only have to return these columns
+	void SetProjection(vector<FieldIndex> columns) const;
 	const DuckLakeFileListEntry &GetFileEntry(idx_t file_idx) const;
 	optional_ptr<const FilterPushdownInfo> GetFilterInfo() const {
 		return filter_info.get();
@@ -117,6 +120,9 @@ private:
 	shared_ptr<DuckLakeInlinedData> transaction_local_data;
 	//! Inlined data tables
 	mutable vector<DuckLakeInlinedTableInfo> inlined_data_tables;
+	//! The columns that the scan reads, if known when the file list is read
+	mutable bool has_projection = false;
+	mutable vector<FieldIndex> projection;
 	//! The set of delete scans, only used when scanning deleted tuples using ducklake_table_deletions
 	mutable vector<DuckLakeDeleteScanEntry> delete_scans;
 	//! Filter pushdown information

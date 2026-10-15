@@ -1,0 +1,80 @@
+//===----------------------------------------------------------------------===//
+//                         DuckDB
+//
+// metadata_manager/rest_inlined_rows_cache.hpp
+//
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
+
+#include "rest/ducklake_rest_api.hpp"
+#include "common/index.hpp"
+#include "duckdb/common/mutex.hpp"
+#include "duckdb/common/unordered_set.hpp"
+
+namespace duckdb {
+
+//! Which inlined rows a response holds: the rows of a scan, or the rows that were inserted or deleted in a range
+enum class RESTInlinedRowsKind : uint8_t { SCAN, INSERTIONS, DELETIONS };
+
+//! The columns of inlined rows: all columns, or the field ids of top-level columns
+struct RESTInlinedProjection {
+	static RESTInlinedProjection From(optional_ptr<const vector<FieldIndex>> projection);
+
+	bool Covers(const RESTInlinedProjection &other) const;
+
+	bool all = true;
+	unordered_set<idx_t> columns;
+};
+
+//! The inlined rows of a table at a schema version
+struct RESTCachedInlinedRows {
+	RESTInlinedRows rows;
+	//! Scans of the same table read the rows at the same time
+	mutex read_lock;
+};
+
+//! One response of the server: the inlined rows of every schema version that the table has inlined rows for
+struct RESTInlinedRowsResponse {
+	RESTInlinedProjection projection;
+	vector<idx_t> schema_versions;
+	map<idx_t, shared_ptr<RESTCachedInlinedRows>> rows;
+};
+
+//! The rows to be read: the table at a snapshot, or the changes of the table in a range of snapshots
+struct RESTInlinedRowsKey {
+	RESTInlinedRowsKind kind;
+	//! The first snapshot of the range, 0 for scans
+	idx_t start_snapshot_id;
+	idx_t snapshot_id;
+	idx_t table_id;
+
+	bool operator<(const RESTInlinedRowsKey &other) const;
+};
+
+//! The inlined rows that came along with the file lists of the scans of a transaction. Scans read the columns they
+//! need from them. The rows at a snapshot do not change, so the responses are only added to the cache: a response
+//! is never replaced, and a scan that holds one can always finish reading it.
+class RESTInlinedRowsCache {
+public:
+	//! Whether a response has the columns
+	bool Covers(const RESTInlinedRowsKey &key, const RESTInlinedProjection &projection) const;
+	//! Whether any response is known
+	bool HasResponse(const RESTInlinedRowsKey &key) const;
+	//! The schema versions that a table has inlined rows for at a snapshot, if a response of any kind knows them
+	bool GetSchemaVersions(idx_t snapshot_id, idx_t table_id, vector<idx_t> &schema_versions) const;
+	//! Adds a response, which takes over the responses that have a subset of its columns
+	shared_ptr<RESTInlinedRowsResponse> Add(const RESTInlinedRowsKey &key, const RESTInlinedProjection &projection,
+	                                        vector<RESTInlinedTableRows> &inlined_data);
+	//! The rows of a schema version of a response that has the columns to read, which are column names that are
+	//! optionally cast
+	shared_ptr<RESTCachedInlinedRows> Find(const RESTInlinedRowsKey &key, idx_t schema_version,
+	                                       const vector<string> &columns_to_read) const;
+
+private:
+	mutable mutex lock;
+	map<RESTInlinedRowsKey, vector<shared_ptr<RESTInlinedRowsResponse>>> responses;
+};
+
+} // namespace duckdb

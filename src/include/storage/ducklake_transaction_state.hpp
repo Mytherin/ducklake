@@ -13,6 +13,7 @@
 
 namespace duckdb {
 struct DuckLakeAddedFields;
+class MacroCatalogEntry;
 
 struct DuckLakeColumnSchemaEntry {
 	FieldIndex field_index;
@@ -229,6 +230,8 @@ public:
 	                                       TableIndex table_id, optional_idx row_id_start);
 
 	static void DropEmptySupersededInlinedTables(const DuckLakeCommitContext &context);
+	//! The definition of a macro, without its ids
+	static DuckLakeMacroInfo GetMacroInfo(const MacroCatalogEntry &macro_entry);
 
 	void CleanupFiles();
 
@@ -273,6 +276,10 @@ public:
 	set<TableIndex> refreshed_table_sizes;
 	//! The tables other transactions changed after the snapshot of a retried commit
 	set<TableIndex> tables_changed_by_others;
+	//! The ids that the commit gave the tables and views the transaction created, by their transaction-local id
+	map<TableIndex, TableIndex> committed_tables;
+	//! The oids of the entries the commit created, by their committed id
+	ducklake_entry_oids_t committed_entry_oids;
 };
 
 } // namespace duckdb

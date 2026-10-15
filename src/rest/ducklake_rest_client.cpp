@@ -1,0 +1,103 @@
+#include "rest/ducklake_rest_client.hpp"
+
+#include "duckdb/common/error_data.hpp"
+#include "duckdb/common/exception.hpp"
+
+#include "httplib.hpp"
+
+namespace duckdb {
+
+DuckLakeRESTClient::DuckLakeRESTClient(string base_url_p, string token_p)
+    : base_url(std::move(base_url_p)), token(std::move(token_p)) {
+	StringUtil::RTrim(base_url, "/");
+}
+
+DuckLakeRESTClient::~DuckLakeRESTClient() {
+}
+
+//! Servers close connections that are idle for a while (5 seconds for the reference server) - a connection that has
+//! been idle for most of that time is not used anymore
+static constexpr int64_t MAX_IDLE_SECONDS = 3;
+
+unique_ptr<duckdb_httplib::Client> DuckLakeRESTClient::GetConnection(bool &reused) {
+	{
+		lock_guard<mutex> guard(lock);
+		auto now = std::chrono::steady_clock::now();
+		while (!idle_connections.empty()) {
+			auto idle = std::move(idle_connections.back());
+			idle_connections.pop_back();
+			if (now - idle.idle_since > std::chrono::seconds(MAX_IDLE_SECONDS)) {
+				// the older connections have been idle for longer
+				idle_connections.clear();
+				break;
+			}
+			reused = true;
+			return std::move(idle.connection);
+		}
+	}
+	reused = false;
+	auto connection = make_uniq<duckdb_httplib::Client>(base_url);
+	connection->set_keep_alive(true);
+	connection->set_read_timeout(300, 0);
+	connection->set_write_timeout(300, 0);
+	return connection;
+}
+
+void DuckLakeRESTClient::ReturnConnection(unique_ptr<duckdb_httplib::Client> connection) {
+	lock_guard<mutex> guard(lock);
+	idle_connections.push_back({std::move(connection), std::chrono::steady_clock::now()});
+}
+
+int32_t DuckLakeRESTClient::Send(const string &endpoint, const string &body, bool idempotent, string &response) {
+	duckdb_httplib::Headers headers;
+	if (!token.empty()) {
+		headers.emplace("Authorization", "Bearer " + token);
+	}
+	for (idx_t attempt = 0;; attempt++) {
+		bool reused;
+		auto connection = GetConnection(reused);
+		auto result = connection->Post("/v1/" + endpoint, headers, body, "application/json");
+		if (result) {
+			ReturnConnection(std::move(connection));
+			response = result->body;
+			return result->status;
+		}
+		auto error = result.error();
+		bool closed = error == duckdb_httplib::Error::Read || error == duckdb_httplib::Error::Write ||
+		              error == duckdb_httplib::Error::Connection;
+		if (attempt == 0 && reused && closed && idempotent) {
+			// the server closed the connection while it was idle: the request is sent again on a new connection. Other
+			// requests are not, as the server might have applied them
+			continue;
+		}
+		throw IOException("Failed to send DuckLake REST request \"%s\" to %s: %s", endpoint, base_url,
+		                  duckdb_httplib::to_string(error));
+	}
+}
+
+int32_t DuckLakeRESTClient::PostRaw(const string &endpoint, const string &body, string &response) {
+	return Send(endpoint, body, false, response);
+}
+
+void DuckLakeRESTClient::SetPathMapping(string client_path, string server_path) {
+	path_mapper = make_uniq<RESTPathMapper>(std::move(client_path), std::move(server_path));
+}
+
+string DuckLakeRESTClient::Post(const string &endpoint, const string &body, bool idempotent) {
+	string response;
+	auto status = Send(endpoint, body, idempotent, response);
+	if (status != 200) {
+		RESTErrorResponse error;
+		try {
+			RESTJsonReader document(response);
+			error = DuckLakeRESTSerializer::Read<RESTErrorResponse>(document.Root());
+		} catch (std::exception &) {
+			throw IOException("DuckLake REST request \"%s\" failed with status %d", endpoint, status);
+		}
+		auto type = Exception::StringToExceptionType(error.error.type);
+		ErrorData(type, error.error.message).Throw();
+	}
+	return response;
+}
+
+} // namespace duckdb

@@ -270,6 +270,20 @@ DuckLakeMultiFileReader::InitializeGlobalState(ClientContext &context, const Mul
 	// Materialize the file list here, while we are still single-threaded. It is otherwise first touched from
 	// the scan tasks, where every worker piles into DuckLakeMultiFileList::GetFiles() and blocks on its lock
 	// while one of them runs the metadata query - which costs far more in scheduler churn than the scan itself.
+	// The columns that the scan reads come along, so that the metadata manager can leave out the others.
+	vector<FieldIndex> projection;
+	for (auto &column_id : global_column_ids) {
+		auto index = column_id.GetPrimaryIndex();
+		if (index >= global_columns.size()) {
+			continue;
+		}
+		auto &identifier = global_columns[index].identifier;
+		if (!identifier.IsNull() && identifier.type().id() == LogicalTypeId::INTEGER &&
+		    IntegerValue::Get(identifier) >= 0) {
+			projection.emplace_back(NumericCast<idx_t>(IntegerValue::Get(identifier)));
+		}
+	}
+	file_list.Cast<DuckLakeMultiFileList>().SetProjection(std::move(projection));
 	file_list.Cast<DuckLakeMultiFileList>().GetFiles();
 
 	optional_idx deletion_scan_snapshot_col;

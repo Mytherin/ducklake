@@ -1,0 +1,130 @@
+# name: test/sql/rest/rest_maintenance.test
+# description: Compaction, snapshot expiration and file cleanup through the DuckLake REST API
+# group: [rest]
+
+include test/template/rest_setup.test_template
+
+statement ok
+ATTACH 'ducklake:rest:{rest_server}' AS dl (DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE dl.t(i INTEGER)
+
+statement ok
+INSERT INTO dl.t VALUES (1)
+
+statement ok
+INSERT INTO dl.t VALUES (2)
+
+statement ok
+INSERT INTO dl.t VALUES (3)
+
+query I
+SELECT count(*) FROM ducklake_list_files('dl', 't')
+----
+3
+
+# merge the files
+statement ok
+CALL ducklake_merge_adjacent_files('dl')
+
+query I
+SELECT count(*) FROM ducklake_list_files('dl', 't')
+----
+1
+
+query I
+FROM dl.t ORDER BY ALL
+----
+1
+2
+3
+
+# rewrite files with many deletes
+statement ok
+INSERT INTO dl.t SELECT range FROM range(4, 100)
+
+statement ok
+CALL ducklake_merge_adjacent_files('dl')
+
+statement ok
+DELETE FROM dl.t WHERE i > 10
+
+statement ok
+CALL ducklake_rewrite_data_files('dl', delete_threshold := 0.5)
+
+query II
+SELECT count(*), sum(i) FROM dl.t
+----
+10	55
+
+query I
+SELECT count(*) FROM ducklake_list_files('dl', 't') WHERE delete_file IS NOT NULL
+----
+0
+
+# expire snapshots
+query I
+SELECT count(*) > 0 FROM ducklake_expire_snapshots('dl', older_than => now())
+----
+true
+
+query I
+SELECT count(*) FROM dl.snapshots()
+----
+1
+
+# the files of the expired snapshots can be cleaned up
+query I
+SELECT count(*) > 0 FROM ducklake_cleanup_old_files('dl', cleanup_all => true)
+----
+true
+
+query I
+SELECT count(*) FROM ducklake_cleanup_old_files('dl', cleanup_all => true)
+----
+0
+
+query II
+SELECT count(*), sum(i) FROM dl.t
+----
+10	55
+
+# orphaned files are deleted
+statement ok
+COPY (SELECT 42 i) TO '{TEST_DIR}/{BASE_TEST_NAME}_rest_files/main/t/orphan.parquet'
+
+query I
+SELECT count(*) FROM ducklake_delete_orphaned_files('dl', cleanup_all => true)
+----
+1
+
+query II
+SELECT count(*), sum(i) FROM dl.t
+----
+10	55
+
+# expire specific snapshots
+statement ok
+INSERT INTO dl.t VALUES (100)
+
+statement ok
+INSERT INTO dl.t VALUES (101)
+
+statement ok
+SET VARIABLE oldest_snapshot = (SELECT min(snapshot_id) FROM dl.snapshots())
+
+query I
+SELECT count(*) FROM ducklake_expire_snapshots('dl', versions => [getvariable('oldest_snapshot')])
+----
+1
+
+query I
+SELECT count(*) FROM dl.snapshots()
+----
+2
+
+statement ok
+DETACH dl
+
+include test/template/rest_teardown.test_template
