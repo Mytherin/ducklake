@@ -11,6 +11,7 @@
 #include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/common/vector/map_vector.hpp"
+#include "duckdb/common/types/variant/parquet_variant_iterator.hpp"
 
 namespace duckdb {
 
@@ -320,6 +321,70 @@ void SetFinalStats(DuckLakeBaseColumnStats &stats, DuckLakeInlinedData &result) 
 	}
 }
 
+static vector<DuckLakeBaseColumnStats> GetColumnStats(DuckLakeTableEntry &table, ColumnDataCollection &data,
+                                                      idx_t column_count) {
+	vector<DuckLakeBaseColumnStats> result;
+	auto &field_data = table.GetFieldData();
+	auto skipped_fields = table.GetSkippedStatsFields();
+	for (auto &chunk : data.Chunks()) {
+		for (idx_t c = 0; c < column_count; c++) {
+			UpdateStats(result, c, chunk.data[c], chunk.size(), field_data.GetByRootIndex(PhysicalIndex(c)),
+			            skipped_fields);
+		}
+	}
+	return result;
+}
+
+void DuckLakeInlineData::RecomputeColumnStats(DuckLakeTableEntry &table, DuckLakeInlinedData &inlined_data) {
+	auto &data = *inlined_data.data;
+	inlined_data.column_stats.clear();
+	for (auto &column_stats : GetColumnStats(table, data, data.ColumnCount())) {
+		SetFinalStats(column_stats, inlined_data);
+	}
+	inlined_data.outdated_stats_table = nullptr;
+}
+
+//! Refuse VARIANT values that a data file cannot store, such as INTERVAL members, so they never get stuck inlined
+static void VerifyParquetVariants(Vector &data, idx_t count) {
+	auto &type = data.GetType();
+	switch (type.id()) {
+	case LogicalTypeId::VARIANT: {
+		child_list_t<LogicalType> parquet_variant {{"metadata", LogicalType::BLOB}, {"value", LogicalType::BLOB}};
+		Vector encoded(LogicalType::STRUCT(std::move(parquet_variant)), count);
+		ParquetVariantConversion::ToParquetVariant(data, count, encoded);
+		break;
+	}
+	case LogicalTypeId::STRUCT:
+		for (auto &child : StructVector::GetEntries(data)) {
+			VerifyParquetVariants(child, count);
+		}
+		break;
+	case LogicalTypeId::LIST:
+	case LogicalTypeId::MAP:
+		VerifyParquetVariants(ListVector::GetChildMutable(data), ListVector::GetListSize(data));
+		break;
+	default:
+		break;
+	}
+}
+
+static void VerifyParquetVariants(ColumnDataCollection &data) {
+	vector<column_t> variant_columns;
+	for (idx_t c = 0; c < data.ColumnCount(); c++) {
+		if (TypeVisitor::Contains(data.Types()[c], LogicalTypeId::VARIANT)) {
+			variant_columns.push_back(c);
+		}
+	}
+	if (variant_columns.empty()) {
+		return;
+	}
+	for (auto &chunk : data.Chunks(variant_columns)) {
+		for (auto &column : chunk.data) {
+			VerifyParquetVariants(column, chunk.size());
+		}
+	}
+}
+
 OperatorFinalResultType DuckLakeInlineData::OperatorFinalize(Pipeline &pipeline, Event &event, ClientContext &context,
                                                              OperatorFinalizeInput &input) const {
 	// push inlined data to transaction
@@ -350,15 +415,7 @@ OperatorFinalResultType DuckLakeInlineData::OperatorFinalize(Pipeline &pipeline,
 	auto physical_col_count = table.GetColumns().PhysicalColumnCount();
 
 	// compute the column stats for the data
-	vector<DuckLakeBaseColumnStats> new_stats;
-	auto &field_data = table.GetFieldData();
-	auto skipped_fields = table.GetSkippedStatsFields();
-	for (auto &chunk : inlined_data.Chunks()) {
-		for (idx_t c = 0; c < physical_col_count; c++) {
-			UpdateStats(new_stats, c, chunk.data[c], chunk.size(), field_data.GetByRootIndex(PhysicalIndex(c)),
-			            skipped_fields);
-		}
-	}
+	auto new_stats = GetColumnStats(table, inlined_data, physical_col_count);
 	// set the final stats and verify NOT NULL constraints
 	auto not_null_fields = table.GetNotNullFields();
 	for (idx_t c = 0; c < new_stats.size(); c++) {
@@ -399,6 +456,10 @@ OperatorFinalResultType DuckLakeInlineData::OperatorFinalize(Pipeline &pipeline,
 
 	// push the inlined data into the transaction
 	auto &transaction = DuckLakeTransaction::Get(context, table.ParentCatalog());
+	// other catalogs store VARIANT in the Parquet encoding, which refuses such values at commit
+	if (transaction.GetMetadataManager().TypeIsNativelySupported(LogicalType::VARIANT())) {
+		VerifyParquetVariants(*result->data);
+	}
 	auto &catalog = table.ParentCatalog().Cast<DuckLakeCatalog>();
 	if (table.GetInlinedDataTables().empty() ||
 	    !table.HasCurrentInlinedDataTable(

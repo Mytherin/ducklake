@@ -56,6 +56,8 @@ public:
 struct FlushedInlinedTableInfo {
 	DuckLakeInlinedTableInfo inlined_table;
 	idx_t flush_snapshot_id;
+	//! A flush that writes no file leaves no rows to delete
+	bool wrote_files = true;
 };
 
 struct DroppedDataFileStats {
@@ -117,7 +119,10 @@ public:
 	void AppendDeleteFiles(TableIndex table_id, const string &data_file_path, vector<DuckLakeDeleteFile> files);
 	void AppendInlinedData(ClientContext &context, TableIndex table_id, unique_ptr<DuckLakeInlinedData> new_data);
 	void AddNewInlinedDeletes(TableIndex table_id, const string &table_name, set<idx_t> new_deletes);
-	void DeleteFromLocalInlinedData(ClientContext &context, TableIndex table_id, set<idx_t> new_deletes);
+	void DeleteFromLocalInlinedData(ClientContext &context, DuckLakeTableEntry &table, set<idx_t> new_deletes);
+	void SetOutdatedStatsTable(TableIndex table_id, DuckLakeTableEntry &table);
+	//! Recompute the inlined column stats that deletes left outdated
+	void RecomputeOutdatedStats(ClientContext &context);
 	void AddColumnToLocalInlinedData(ClientContext &context, TableIndex table_id, const LogicalType &new_column_type,
 	                                 FieldIndex new_field_index, const Value &default_value);
 	void RemoveColumnFromLocalInlinedData(ClientContext &context, TableIndex table_id,
@@ -219,8 +224,12 @@ public:
 	//! The ids that the commit gave the tables and views the transaction created, by their transaction-local id
 	const map<TableIndex, TableIndex> &GetCommittedTableIds() const;
 	const ducklake_entry_oids_t &GetCommittedEntryOids() const;
+	//! The options that the commit gave the tables the transaction created or altered
+	const vector<DuckLakeConfigOption> &GetCommittedTableOptions() const;
 	DuckLakeSnapshot GetSnapshot(optional_ptr<BoundAtClause> at_clause,
 	                             SnapshotBound bound = SnapshotBound::UPPER_BOUND);
+	//! The newest snapshot that the transaction sees, also when the catalog is opened at a fixed snapshot
+	idx_t GetNewestVisibleSnapshotId();
 
 	static DuckLakeTransaction &Get(ClientContext &context, Catalog &catalog);
 
@@ -262,7 +271,7 @@ public:
 	void SetRequiresNewInlinedTable(bool requires_new);
 	bool GetRequiresNewInlinedTable() const;
 	void AddNewInlinedDeletes(TableIndex table_id, const string &table_name, set<idx_t> new_deletes);
-	void DeleteFromLocalInlinedData(TableIndex table_id, set<idx_t> new_deletes);
+	void DeleteFromLocalInlinedData(DuckLakeTableEntry &table, set<idx_t> new_deletes);
 	void AddColumnToLocalInlinedData(TableIndex table_id, const LogicalType &new_column_type,
 	                                 FieldIndex new_field_index, const Value &default_value = Value());
 	void RemoveColumnFromLocalInlinedData(TableIndex table_id, LogicalIndex removed_column_index,
@@ -285,7 +294,7 @@ public:
 	void DeleteSnapshots(const vector<DuckLakeSnapshotInfo> &snapshots);
 	void DeleteInlinedData(const DuckLakeInlinedTableInfo &inlined_table);
 	//! Marks the inlined data flushed up to the snapshot, the commit deletes its rows
-	void MarkInlinedDataForDeletion(DuckLakeInlinedTableInfo inlined_table, idx_t flush_snapshot_id);
+	void MarkInlinedDataForDeletion(DuckLakeInlinedTableInfo inlined_table, idx_t flush_snapshot_id, bool wrote_files);
 	bool InlinedTableFlushed(const string &table_name);
 	//! Marks the inlined file deletions of the table flushed up to the snapshot, the commit deletes them
 	void MarkInlinedFileDeletionsFlushed(TableIndex table_id, idx_t flush_snapshot_id);
@@ -397,7 +406,9 @@ private:
 	mutex delete_attempted_lock;
 	//! The snapshots expired by this transaction, deleted when it commits
 	vector<DuckLakeSnapshotInfo> expired_snapshots;
-	//! The snapshot of the transaction (latest snapshot in DuckLake)
+	DuckLakeSnapshot GetLatestSnapshot();
+	//! The latest snapshot in DuckLake when the transaction first looked, the snapshot of the transaction unless the
+	//! catalog is opened at a fixed snapshot
 	mutex snapshot_lock;
 	unique_ptr<DuckLakeSnapshot> snapshot;
 	//! The snapshot written by the commit of this transaction

@@ -29,6 +29,10 @@ operation SnapshotData {
         /// Whether a timestamp of `at` finds the last snapshot before or the first snapshot after it.
         bound: SnapshotBound = "upper"
 
+        /// The newest snapshot that `at` can find, snapshots committed after a client's transaction started are not
+        /// visible to it.
+        newest_snapshot_id: UInt64
+
         /// Return the catalog of the snapshot.
         include_catalog: Boolean = false
 
@@ -300,27 +304,6 @@ operation NextColumnId {
     }
 }
 
-/// Returns whether a column was created together with its table (rather than added later).
-@http(method: "POST", uri: "/v1/column_created_with_table")
-@readonly
-operation ColumnCreatedWithTable {
-    input := {
-        /// The table.
-        @required
-        table_name: String
-
-        /// The column.
-        @required
-        column_name: String
-    }
-
-    output := {
-        /// Whether the column was created with the table.
-        @required
-        created_with_table: Boolean
-    }
-}
-
 /// Returns the snapshots, optionally filtered.
 @http(method: "POST", uri: "/v1/list_snapshots")
 @readonly
@@ -353,6 +336,18 @@ operation TableSizes {
     output := {
         /// The tables.
         tables: TableSizeList = []
+    }
+}
+
+/// Returns the tables that have data files that are not deleted.
+@http(method: "POST", uri: "/v1/tables_with_live_data_files")
+@readonly
+operation TablesWithLiveDataFiles {
+    input := {}
+
+    output := {
+        /// The tables.
+        table_ids: UInt64List = []
     }
 }
 

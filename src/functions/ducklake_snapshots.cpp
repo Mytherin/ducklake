@@ -139,6 +139,7 @@ vector<Value> DuckLakeSnapshotsFunction::GetSnapshotValues(const DuckLakeSnapsho
 	PushIDChangeList(change_keys, change_values, other_changes.tables_flushed_inlined, "flushed_inlined");
 	PushIDChangeList(change_keys, change_values, other_changes.tables_merge_adjacent, "merge_adjacent");
 	PushIDChangeList(change_keys, change_values, other_changes.tables_rewrite_delete, "rewrite_delete");
+	PushIDChangeList(change_keys, change_values, other_changes.tables_compacted, "compacted_table");
 
 	row_values.push_back(Value::MAP(LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR),
 	                                std::move(change_keys), std::move(change_values)));
@@ -155,8 +156,12 @@ static unique_ptr<FunctionData> DuckLakeSnapshotsBind(ClientContext &context, Ta
 
 	auto &metadata_manager = transaction.GetMetadataManager();
 	auto snapshots = metadata_manager.GetAllSnapshots();
+	auto newest_snapshot_id = transaction.GetNewestVisibleSnapshotId();
 	auto result = make_uniq<MetadataBindData>();
 	for (auto &snapshot : snapshots) {
+		if (snapshot.id > newest_snapshot_id) {
+			continue;
+		}
 		auto row_values = DuckLakeSnapshotsFunction::GetSnapshotValues(snapshot);
 		result->rows.push_back(std::move(row_values));
 	}

@@ -235,6 +235,8 @@ struct DuckLakePartitionInfo {
 	optional_idx id;
 	TableIndex table_id;
 	vector<DuckLakePartitionFieldInfo> fields;
+	//! Replaces the current spec even if it has the same fields
+	bool replaces_equal_spec = false;
 	bool operator==(const DuckLakePartitionInfo &new_partition) const {
 		return table_id == new_partition.table_id && fields == new_partition.fields;
 	}
@@ -449,6 +451,8 @@ struct DuckLakeDeleteScanEntry {
 	optional_idx row_id_start;
 	MappingIndex mapping_id;
 	optional_idx snapshot_id;
+	//! The snapshot that inserted every row of the data file, unset when its rows carry their own
+	optional_idx insert_snapshot;
 	//! Whether the data file itself was deleted at snapshot_id
 	bool file_deleted = false;
 	//! The start of the snapshot range for filtering

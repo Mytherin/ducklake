@@ -116,7 +116,9 @@ RESTSnapshotDataResponse DuckLakeRESTEndpoints::SnapshotData(DuckLakeRESTRequest
 	if (parameters.at) {
 		BoundAtClause at_clause(Identifier(parameters.at->unit), parameters.at->value);
 		auto bound = parameters.bound == "lower" ? SnapshotBound::LOWER_BOUND : SnapshotBound::UPPER_BOUND;
-		result.snapshot = *metadata_manager.GetSnapshot(at_clause, bound);
+		auto newest_snapshot_id = parameters.newest_snapshot_id.IsValid() ? parameters.newest_snapshot_id.GetIndex()
+		                                                                  : DConstants::INVALID_INDEX;
+		result.snapshot = *metadata_manager.GetSnapshot(at_clause, bound, newest_snapshot_id);
 	} else {
 		result.snapshot = request.GetSnapshot(parameters);
 	}
@@ -344,15 +346,6 @@ RESTNextColumnIdResponse DuckLakeRESTEndpoints::NextColumnId(DuckLakeRESTRequest
 	return result;
 }
 
-RESTColumnCreatedWithTableResponse
-DuckLakeRESTEndpoints::ColumnCreatedWithTable(DuckLakeRESTRequest &request,
-                                              const RESTColumnCreatedWithTableRequest &parameters) {
-	RESTColumnCreatedWithTableResponse result;
-	result.created_with_table =
-	    request.GetMetadataManager().IsColumnCreatedWithTable(parameters.table_name, parameters.column_name);
-	return result;
-}
-
 RESTListSnapshotsResponse DuckLakeRESTEndpoints::ListSnapshots(DuckLakeRESTRequest &request,
                                                                const RESTListSnapshotsRequest &parameters) {
 	DuckLakeSnapshotFilter filter;
@@ -369,6 +362,16 @@ RESTTableSizesResponse DuckLakeRESTEndpoints::TableSizes(DuckLakeRESTRequest &re
                                                          const RESTTableSizesRequest &parameters) {
 	RESTTableSizesResponse result;
 	result.tables = request.GetMetadataManager().GetTableSizes(request.GetSnapshot(parameters));
+	return result;
+}
+
+RESTTablesWithLiveDataFilesResponse
+DuckLakeRESTEndpoints::TablesWithLiveDataFiles(DuckLakeRESTRequest &request,
+                                               const RESTTablesWithLiveDataFilesRequest &parameters) {
+	RESTTablesWithLiveDataFilesResponse result;
+	for (auto table_id : request.GetMetadataManager().GetTablesWithLiveDataFiles()) {
+		result.table_ids.push_back(table_id);
+	}
 	return result;
 }
 
@@ -704,6 +707,9 @@ void DuckLakeRESTCommit::CreateView(RESTCreateViewRequest &parameters) {
 	if (parameters.comment.has_value) {
 		info->comment = Value(parameters.comment.value);
 	}
+	for (auto &entry : parameters.column_comments) {
+		info->column_comments_map[Identifier(entry.first)] = Value(entry.second);
+	}
 	AddEntryReference(schema.CreateView(catalog.GetCatalogTransaction(context), *info), parameters.entry_reference);
 }
 
@@ -793,7 +799,8 @@ void DuckLakeRESTCommit::FlushInlinedData(RESTFlushInlinedDataRequest &parameter
 		inlined_table.table_name =
 		    GetInlinedTableName(transaction, table, transaction.GetSnapshot(), flushed_table.schema_version);
 		inlined_table.schema_version = flushed_table.schema_version;
-		transaction.MarkInlinedDataForDeletion(std::move(inlined_table), flushed_table.flush_snapshot_id);
+		transaction.MarkInlinedDataForDeletion(std::move(inlined_table), flushed_table.flush_snapshot_id,
+		                                       flushed_table.wrote_files);
 	}
 	for (auto &file_deletions : parameters.file_deletions) {
 		auto table_id = GetTable(GetTableId(file_deletions.table_id)).GetTableId();
@@ -938,6 +945,13 @@ RESTCommitTransactionResponse DuckLakeRESTCommit::Run(const RESTCommitTransactio
 		created_entry.type = EnumUtil::ToString(entry.first.first);
 		created_entry.id = entry.first.second;
 		result.entry_ids.push_back(std::move(created_entry));
+	}
+	for (auto &option : transaction_ref->GetCommittedTableOptions()) {
+		RESTOptionSetting setting;
+		setting.key = option.option.key;
+		setting.value = option.option.value;
+		setting.table_id = option.table_id.index;
+		result.table_options.push_back(std::move(setting));
 	}
 	return result;
 }

@@ -18,7 +18,7 @@ static constexpr DuckLakeOptionMetadata DUCKLAKE_OPTIONS[] = {
     {"parquet_compression",
      "Compression algorithm for Parquet files (uncompressed, snappy, gzip, zstd, brotli, lz4, lz4_raw)"},
     {"parquet_version", "Parquet format version (1 or 2)"},
-    {"parquet_compression_level", "Compression level for Parquet files"},
+    {"parquet_compression_level", "Compression level for Parquet files written with zstd"},
     {"parquet_row_group_size", "Number of rows per row group in Parquet files"},
     {"parquet_row_group_size_bytes", "Number of bytes per row group in Parquet files"},
     {"hive_file_pattern", "If partitioned data should be written in a hive-like folder structure"},
@@ -111,7 +111,7 @@ unique_ptr<GlobalTableFunctionState> DuckLakeOptionsInit(ClientContext &context,
 	for (auto &schema_setting : metadata.schema_settings) {
 		string scope_entry;
 		auto schema_entry = ducklake_catalog.GetEntryById(transaction, snapshot, schema_setting.schema_id);
-		if (schema_entry) {
+		if (schema_entry && !transaction.IsDeleted(*schema_entry)) {
 			scope_entry = schema_entry->Cast<SchemaCatalogEntry>().GetSchemaName();
 		}
 		result->rows.push_back(GetOptionRow(schema_setting.tag, "SCHEMA", scope_entry));
@@ -120,8 +120,11 @@ unique_ptr<GlobalTableFunctionState> DuckLakeOptionsInit(ClientContext &context,
 	// Table options
 	for (auto &table_setting : metadata.table_settings) {
 		string scope_entry;
-		auto table_entry = ducklake_catalog.GetEntryById(transaction, snapshot, table_setting.table_id);
-		if (table_entry) {
+		auto table_entry = transaction.GetLocalEntryById(table_setting.table_id);
+		if (!table_entry) {
+			table_entry = ducklake_catalog.GetEntryById(transaction, snapshot, table_setting.table_id);
+		}
+		if (table_entry && !transaction.IsDeleted(*table_entry)) {
 			auto &table_catalog_entry = table_entry->Cast<TableCatalogEntry>();
 			scope_entry =
 			    QualifiedName(table_catalog_entry.ParentSchema().GetSchemaPath(), table_entry->name).ToString();

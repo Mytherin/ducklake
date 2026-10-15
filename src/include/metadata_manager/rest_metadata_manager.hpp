@@ -60,7 +60,8 @@ public:
 	unique_ptr<QueryResult> Query(string &query) override;
 
 	unique_ptr<DuckLakeSnapshot> GetSnapshot() override;
-	unique_ptr<DuckLakeSnapshot> GetSnapshot(BoundAtClause &at_clause, SnapshotBound bound) override;
+	unique_ptr<DuckLakeSnapshot> GetSnapshot(BoundAtClause &at_clause, SnapshotBound bound,
+	                                         idx_t newest_snapshot_id) override;
 	DuckLakeCatalogInfo GetCatalogForSnapshot(DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeGlobalStatsInfo> GetGlobalTableStats(DuckLakeSnapshot snapshot) override;
 	map<TableIndex, idx_t> GetTableRecordCounts(DuckLakeSnapshot snapshot) override;
@@ -89,7 +90,6 @@ public:
 	                                                        DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeInlinedFileDeletionEntry> GetInlinedFileDeletionsForFlush(DuckLakeTableEntry &table,
 	                                                                         DuckLakeSnapshot snapshot) override;
-	bool IsColumnCreatedWithTable(const string &table_name, const string &column_name) override;
 	unique_ptr<QueryResult> ReadInlinedData(DuckLakeSnapshot snapshot, const string &inlined_table_name,
 	                                        const vector<string> &columns_to_read) override;
 	idx_t GetBeginSnapshotForTable(TableIndex table_id) override;
@@ -104,6 +104,7 @@ public:
 	void SetConfigOption(const DuckLakeConfigOption &option) override;
 	bool ResetConfigOption(const DuckLakeConfigOption &option) override;
 	vector<DuckLakeTableSizeInfo> GetTableSizes(DuckLakeSnapshot snapshot) override;
+	unordered_set<idx_t> GetTablesWithLiveDataFiles() override;
 	vector<DuckLakeColumnMappingInfo> GetColumnMappings(optional_idx start_from) override;
 	vector<DuckLakeFileListEntry>
 	GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot,

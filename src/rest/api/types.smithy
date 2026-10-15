@@ -955,6 +955,9 @@ structure DeleteScanEntry {
     /// The snapshot of the deletes.
     snapshot_id: UInt64
 
+    /// The snapshot that inserted every row of the data file, unset when its rows carry their own.
+    insert_snapshot: UInt64
+
     /// Whether the data file was deleted entirely.
     file_deleted: Boolean = false
 
@@ -1345,6 +1348,10 @@ list NameMapColumnList {
 
 list NameMapList {
     member: NameMap
+}
+
+list OptionSettingList {
+    member: OptionSetting
 }
 
 list PartitionFieldList {

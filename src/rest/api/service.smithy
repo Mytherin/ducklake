@@ -81,9 +81,9 @@ service DuckLake {
         RowCount
         InlinedTables
         NextColumnId
-        ColumnCreatedWithTable
         ListSnapshots
         TableSizes
+        TablesWithLiveDataFiles
         ColumnMappings
         TableChanges
         DuckLakeTables

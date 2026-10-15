@@ -144,6 +144,16 @@ DuckLakeColumnStats DuckLakeInsert::ParseColumnStats(const LogicalType &type, co
 	return column_stats;
 }
 
+static bool IsLeafColumnStats(const vector<Value> &col_stats) {
+	// only leaf columns report a size
+	for (auto &stat : col_stats) {
+		if (StringValue::Get(StructValue::GetChildren(stat)[0]) == "column_size_bytes") {
+			return true;
+		}
+	}
+	return false;
+}
+
 void DuckLakeInsert::AddWrittenFiles(DuckLakeInsertGlobalState &global_state, DataChunk &chunk,
                                      const string &encryption_key, optional_idx partition_id, bool set_snapshot_id) {
 	auto skipped_fields = global_state.table.GetSkippedStatsFields();
@@ -179,6 +189,9 @@ void DuckLakeInsert::AddWrittenFiles(DuckLakeInsertGlobalState &global_state, Da
 			auto &struct_children = StructValue::GetChildren(map_children[col_idx]);
 			auto &col_name = StringValue::Get(struct_children[0]);
 			auto &col_stats = MapValue::GetChildren(struct_children[1]);
+			if (!IsLeafColumnStats(col_stats)) {
+				continue;
+			}
 			auto column_names = DuckLakeUtil::ParseQuotedList(col_name, '.');
 			// FIXME: this should be checked differently
 			if (column_names[0] == "_ducklake_internal_snapshot_id") {
@@ -226,6 +239,11 @@ void DuckLakeInsert::AddWrittenFiles(DuckLakeInsertGlobalState &global_state, Da
 				throw InvalidInputException("Top-level variant cannot have stats");
 			}
 			auto column_stats = ParseColumnStats(field_id.Type(), col_stats);
+			if (data_file.row_count > 0 && column_stats.has_num_values && column_stats.num_values == 0) {
+				// the writer only counts the values of columns it collects statistics for
+				column_stats.has_num_values = false;
+				column_stats.has_null_count = false;
+			}
 			if (column_stats.null_count > 0 && column_names.size() == 1) {
 				// we wrote NULL values to a base column - verify NOT NULL constraint
 				if (global_state.not_null_fields.count(column_names[0])) {
@@ -526,6 +544,11 @@ DuckLakeCopyOptions DuckLakeInsert::GetCopyOptions(ClientContext &context, DuckL
 			info->options[option.second].emplace_back(option_value);
 		}
 	}
+	// the writer accepts a compression level only for ZSTD, which a table can override
+	auto compression = info->options.find("compression");
+	if (compression == info->options.end() || !StringUtil::CIEquals(compression->second[0].ToString(), "zstd")) {
+		info->options.erase("compression_level");
+	}
 	string per_thread_output_str;
 	bool per_thread_output = false;
 	if (catalog.TryGetConfigOption("per_thread_output", per_thread_output_str, schema_id, table_id,
@@ -627,12 +650,19 @@ PhysicalOperator &DuckLakeInsert::PlanCopyForInsert(ClientContext &context, Phys
 	copy.SetEstimatedCardinality(1);
 	copy.ResolveOperatorTypes();
 	auto &physical_copy = planner.CreatePlan(copy, *plan).Cast<PhysicalCopyToFile>();
-	if (copy_input.ordered_input && copy.function.execution_mode) {
-		// the rows are sorted and the batch copy operator does not rotate files by size
-		auto execution_mode = copy.function.execution_mode(true, false);
-		physical_copy.parallel = execution_mode == CopyFunctionExecutionMode::PARALLEL_COPY_TO_FILE;
+	if (copy_input.ordered_input) {
+		PreserveSortedOrder(physical_copy);
 	}
 	return physical_copy;
+}
+
+void DuckLakeInsert::PreserveSortedOrder(PhysicalCopyToFile &physical_copy) {
+	if (!physical_copy.function.execution_mode) {
+		return;
+	}
+	// the rows are sorted and the batch copy operator does not rotate files by size
+	auto execution_mode = physical_copy.function.execution_mode(true, false);
+	physical_copy.parallel = execution_mode == CopyFunctionExecutionMode::PARALLEL_COPY_TO_FILE;
 }
 
 PhysicalOperator &DuckLakeInsert::PlanInsert(ClientContext &context, PhysicalPlanGenerator &planner,
@@ -733,8 +763,7 @@ PhysicalOperator &DuckLakeVerifyNotNull::Plan(PhysicalPlanGenerator &planner, Du
 	auto not_null_fields = table.GetNotNullFields();
 	vector<pair<idx_t, Identifier>> columns;
 	for (auto &col : table.GetColumns().Physical()) {
-		// the file statistics of a nested column are per field, so they do not show a NULL value of the column
-		if (col.Type().IsNested() && not_null_fields.count(col.Name().GetIdentifierName())) {
+		if (!FileStatsShowNulls(col.Type()) && not_null_fields.count(col.Name().GetIdentifierName())) {
 			columns.emplace_back(col.Physical().index, col.Name());
 		}
 	}

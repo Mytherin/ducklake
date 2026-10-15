@@ -161,8 +161,6 @@ struct RESTSetOptions;
 struct RESTSetPartitionedBy;
 struct RESTSetSortedBy;
 struct RESTSnapshotReference;
-struct RESTColumnCreatedWithTableRequest;
-struct RESTColumnCreatedWithTableResponse;
 struct RESTColumnMappingsRequest;
 struct RESTColumnMappingsResponse;
 struct RESTConfigRequest;
@@ -194,6 +192,8 @@ struct RESTTableSchemaVersionsRequest;
 struct RESTTableSchemaVersionsResponse;
 struct RESTTableSizesRequest;
 struct RESTTableSizesResponse;
+struct RESTTablesWithLiveDataFilesRequest;
+struct RESTTablesWithLiveDataFilesResponse;
 struct RESTExpireSnapshotsRequest;
 struct RESTExpireSnapshotsResponse;
 struct RESTFilesForCleanupRequest;
@@ -313,8 +313,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeTag &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeViewColumnTag &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeViewInfo &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnCreatedWithTableRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnCreatedWithTableResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnMappingsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnMappingsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTConfigRequest &value);
@@ -346,6 +344,8 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSchemaVersionsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesResponse &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTTablesWithLiveDataFilesRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTTablesWithLiveDataFilesResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTExpireSnapshotsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTExpireSnapshotsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTFilesForCleanupRequest &value);
@@ -535,10 +535,6 @@ DuckLakeViewColumnTag DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeViewInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTColumnCreatedWithTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTColumnCreatedWithTableResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
 RESTColumnMappingsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTColumnMappingsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
@@ -600,6 +596,10 @@ template <>
 RESTTableSizesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTTableSizesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTTablesWithLiveDataFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTTablesWithLiveDataFilesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTExpireSnapshotsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -954,6 +954,8 @@ struct RESTFlushedInlinedTable {
 	idx_t schema_version = 0;
 	//! The rows up to this snapshot were flushed.
 	idx_t flush_snapshot_id = 0;
+	//! Whether the flush wrote data files, the rows of a flush that wrote none are not deleted.
+	bool wrote_files = true;
 };
 
 //! Deletes of inlined rows.
@@ -1189,18 +1191,6 @@ struct RESTSnapshotReference {
 	optional_idx snapshot_id;
 };
 
-struct RESTColumnCreatedWithTableRequest {
-	//! The table.
-	string table_name;
-	//! The column.
-	string column_name;
-};
-
-struct RESTColumnCreatedWithTableResponse {
-	//! Whether the column was created with the table.
-	bool created_with_table = false;
-};
-
 struct RESTColumnMappingsRequest {
 	//! The first mapping id to return.
 	optional_idx start_from;
@@ -1361,6 +1351,8 @@ struct RESTSnapshotDataRequest : public RESTSnapshotReference {
 	unique_ptr<RESTAtClause> at;
 	//! Whether a timestamp of `at` finds the last snapshot before or the first snapshot after it.
 	string bound = string("upper");
+	//! The newest snapshot that `at` can find, snapshots committed after a client's transaction started are not
+	optional_idx newest_snapshot_id;
 	//! Return the catalog of the snapshot.
 	bool include_catalog = false;
 	//! Return the table statistics of the snapshot.
@@ -1427,6 +1419,13 @@ struct RESTTableSizesRequest : public RESTSnapshotReference {};
 struct RESTTableSizesResponse {
 	//! The tables.
 	vector<DuckLakeTableSizeInfo> tables;
+};
+
+struct RESTTablesWithLiveDataFilesRequest {};
+
+struct RESTTablesWithLiveDataFilesResponse {
+	//! The tables.
+	vector<idx_t> table_ids;
 };
 
 struct RESTExpireSnapshotsRequest {
@@ -1511,6 +1510,8 @@ struct RESTCommitTransactionResponse {
 	vector<RESTCreatedTable> table_ids;
 	//! The ids of the created entries whose requests had an `entry_reference`.
 	vector<RESTCreatedEntry> entry_ids;
+	//! The options of the tables the transaction created or altered, with the ids the commit gave the tables.
+	vector<RESTOptionSetting> table_options;
 };
 
 //! The parameters of `compact`.
@@ -1629,6 +1630,8 @@ struct RESTCreateViewRequest : public RESTCommitRequest {
 	vector<string> column_aliases;
 	//! The comment of the view.
 	RESTOptional<string> comment;
+	//! The comments of the columns of the view, by column name.
+	map<string, string> column_comments;
 };
 
 //! The parameters of `delete_data`.
@@ -1767,9 +1770,6 @@ struct RESTSetOptionRequest : public RESTCommitRequest {
 //===--------------------------------------------------------------------===//
 //! The handlers of the endpoints of the server, see ducklake_rest_endpoints.cpp
 struct DuckLakeRESTEndpoints {
-	//! Returns whether a column was created together with its table (rather than added later).
-	static RESTColumnCreatedWithTableResponse
-	ColumnCreatedWithTable(DuckLakeRESTRequest &request, const RESTColumnCreatedWithTableRequest &parameters);
 	//! Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
 	static RESTColumnMappingsResponse ColumnMappings(DuckLakeRESTRequest &request,
 	                                                 const RESTColumnMappingsRequest &parameters);
@@ -1816,6 +1816,9 @@ struct DuckLakeRESTEndpoints {
 	                                                           const RESTTableSchemaVersionsRequest &parameters);
 	//! Returns the storage used by each table at a snapshot.
 	static RESTTableSizesResponse TableSizes(DuckLakeRESTRequest &request, const RESTTableSizesRequest &parameters);
+	//! Returns the tables that have data files that are not deleted.
+	static RESTTablesWithLiveDataFilesResponse
+	TablesWithLiveDataFiles(DuckLakeRESTRequest &request, const RESTTablesWithLiveDataFilesRequest &parameters);
 	//! Expires snapshots.
 	static RESTExpireSnapshotsResponse ExpireSnapshots(DuckLakeRESTRequest &request,
 	                                                   const RESTExpireSnapshotsRequest &parameters);
@@ -1877,8 +1880,6 @@ public:
 	virtual ~DuckLakeRESTClientAPI() {
 	}
 
-	//! Returns whether a column was created together with its table (rather than added later).
-	RESTColumnCreatedWithTableResponse ColumnCreatedWithTable(const RESTColumnCreatedWithTableRequest &request);
 	//! Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
 	RESTColumnMappingsResponse ColumnMappings(const RESTColumnMappingsRequest &request);
 	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
@@ -1913,6 +1914,8 @@ public:
 	RESTTableSchemaVersionsResponse TableSchemaVersions(const RESTTableSchemaVersionsRequest &request);
 	//! Returns the storage used by each table at a snapshot.
 	RESTTableSizesResponse TableSizes(const RESTTableSizesRequest &request);
+	//! Returns the tables that have data files that are not deleted.
+	RESTTablesWithLiveDataFilesResponse TablesWithLiveDataFiles(const RESTTablesWithLiveDataFilesRequest &request);
 	//! Expires snapshots.
 	RESTExpireSnapshotsResponse ExpireSnapshots(const RESTExpireSnapshotsRequest &request);
 	//! Returns the files scheduled for deletion.

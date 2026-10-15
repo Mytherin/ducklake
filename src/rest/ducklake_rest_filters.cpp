@@ -115,7 +115,9 @@ static string FilterExpressionSQL(const Expression &expr, const string &column) 
 				if (children[i]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
 					return string();
 				}
-				auto value = ConstantSQL(children[i]->Cast<BoundConstantExpression>().GetValue());
+				auto &constant = children[i]->Cast<BoundConstantExpression>().GetValue();
+				// a NULL in an IN list never matches, but it stays part of the list
+				auto value = constant.IsNull() ? string("NULL") : ConstantSQL(constant);
 				if (value.empty()) {
 					return string();
 				}
@@ -227,7 +229,7 @@ RESTScanFilters DuckLakeRESTFilters::Write(const FilterPushdownInfo &filters, co
 		}
 		ExpressionType comparison_type;
 		{
-			lock_guard<mutex> guard(dynamic_filter_data->lock);
+			annotated_shared_lock<annotated_shared_mutex> guard(dynamic_filter_data->lock);
 			comparison_type = dynamic_filter_data->comparison_type;
 		}
 		RESTDynamicFilter dynamic_filter;
@@ -337,20 +339,27 @@ public:
 				    make_uniq<BoundReferenceExpression>(field.Type(), 0ULL), expr.GetExpressionType());
 			case ExpressionType::COMPARE_IN: {
 				vector<Value> values;
+				LogicalType type;
 				for (idx_t i = 1; i < children.size(); i++) {
 					auto value = FoldConstant(context, *children[i]);
 					if (value.IsNull()) {
-						return nullptr;
+						values.emplace_back();
+						continue;
 					}
-					if (!values.empty()) {
-						value = value.DefaultCastAs(values[0].type());
+					if (type.id() == LogicalTypeId::INVALID) {
+						type = value.type();
 					}
-					values.push_back(std::move(value));
+					values.push_back(value.DefaultCastAs(type));
 				}
-				if (values.empty()) {
+				if (type.id() == LogicalTypeId::INVALID) {
 					return nullptr;
 				}
-				auto column = make_uniq<BoundReferenceExpression>(values[0].type(), 0ULL);
+				for (auto &value : values) {
+					if (value.IsNull()) {
+						value = Value(type);
+					}
+				}
+				auto column = make_uniq<BoundReferenceExpression>(type, 0ULL);
 				return ExpressionFilter::CreateInExpression(std::move(column), std::move(values));
 			}
 			default:

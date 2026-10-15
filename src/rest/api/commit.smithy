@@ -39,6 +39,9 @@ operation CommitTransaction {
 
         /// The ids of the created entries whose requests had an `entry_reference`.
         entry_ids: CreatedEntryList = []
+
+        /// The options of the tables the transaction created or altered, with the ids the commit gave the tables.
+        table_options: OptionSettingList = []
     }
 }
 
@@ -154,6 +157,9 @@ structure CreateViewRequest {
     /// The comment of the view.
     @cppType("RESTOptional<string>")
     comment: String
+
+    /// The comments of the columns of the view, by column name.
+    column_comments: StringMap = {}
 }
 
 /// Creates a macro.
@@ -541,6 +547,9 @@ structure FlushedInlinedTable {
     /// The rows up to this snapshot were flushed.
     @required
     flush_snapshot_id: UInt64
+
+    /// Whether the flush wrote data files, the rows of a flush that wrote none are not deleted.
+    wrote_files: Boolean = true
 }
 
 /// The inlined deletions of rows of data files of a table that were flushed.

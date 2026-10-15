@@ -150,23 +150,6 @@ Members that are not `@required` and have no default are optional: they can be `
 
 These endpoints read the catalog. Each request runs in a transaction of its own on the server.
 
-### `column_created_with_table`
-
-Returns whether a column was created together with its table (rather than added later).
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_name` | `string` | The table. |
-| `column_name` | `string` | The column. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `created_with_table` | `bool` | Whether the column was created with the table. |
-
 ### `column_mappings`
 
 Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
@@ -426,6 +409,7 @@ Request:
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `at` | [`AtClause`](#atclause) (optional) | Find the snapshot of an `AT` clause instead. |
 | `bound` | [`SnapshotBound`](#snapshotbound) (default `"upper"`) | Whether a timestamp of `at` finds the last snapshot before or the first snapshot after it. |
+| `newest_snapshot_id` | `uint64` (optional) | The newest snapshot that `at` can find, snapshots committed after a client's transaction started are not visible to it. |
 | `include_catalog` | `bool` (default `false`) | Return the catalog of the snapshot. |
 | `include_stats` | `bool` (default `false`) | Return the table statistics of the snapshot. |
 | `cached_metadata_version` | `uint64` (optional) | The schema version of the latest catalog the client has loaded. If the snapshot has a different schema version, its catalog is returned. |
@@ -506,6 +490,18 @@ Response:
 | Field | Type | Description |
 |-------|------|-------------|
 | `tables` | list of [`TableSize`](#tablesize) (default `[]`) | The tables. |
+
+### `tables_with_live_data_files`
+
+Returns the tables that have data files that are not deleted.
+
+Request: an empty object.
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_ids` | list of `uint64` (default `[]`) | The tables. |
 
 ## Maintenance Endpoints
 
@@ -655,6 +651,7 @@ Response:
 | `schema_version` | `uint64` (optional) | The schema version of the committed snapshot. |
 | `table_ids` | list of [`CreatedTable`](#createdtable) (default `[]`) | The ids of the tables the transaction created. |
 | `entry_ids` | list of [`CreatedEntry`](#createdentry) (default `[]`) | The ids of the created entries whose requests had an `entry_reference`. |
+| `table_options` | list of [`OptionSetting`](#optionsetting) (default `[]`) | The options of the tables the transaction created or altered, with the ids the commit gave the tables. |
 
 ### `compact`
 
@@ -756,6 +753,7 @@ Request:
 | `sql` | `string` | The query of the view. |
 | `column_aliases` | list of `string` (default `[]`) | The names of the columns of the view. |
 | `comment` | `string` (optional) | The comment of the view. |
+| `column_comments` | object of `string` (default `{}`) | The comments of the columns of the view, by column name. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
@@ -1218,6 +1216,7 @@ A data file whose rows were deleted between two snapshots.
 | `row_id_start` | `uint64` (optional) | The row id of the first row. |
 | `mapping_id` | `uint64` (optional) | The name map of the file. |
 | `snapshot_id` | `uint64` (optional) | The snapshot of the deletes. |
+| `insert_snapshot` | `uint64` (optional) | The snapshot that inserted every row of the data file, unset when its rows carry their own. |
 | `file_deleted` | `bool` (default `false`) | Whether the data file was deleted entirely. |
 | `start_snapshot` | `uint64` (optional) | The first snapshot of the range. |
 | `end_snapshot` | `uint64` (optional) | The last snapshot of the range. |
@@ -1398,6 +1397,7 @@ The inlined rows of a table at a schema version that were flushed.
 | `table_id` | `int64` | The table. |
 | `schema_version` | `uint64` | The schema version of the inlined rows. |
 | `flush_snapshot_id` | `uint64` | The rows up to this snapshot were flushed. |
+| `wrote_files` | `bool` (default `true`) | Whether the flush wrote data files, the rows of a flush that wrote none are not deleted. |
 
 ### `GlobalColumnStats`
 

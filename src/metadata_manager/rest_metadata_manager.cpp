@@ -165,7 +165,8 @@ unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot() {
 	return make_uniq<DuckLakeSnapshot>(snapshot);
 }
 
-unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot(BoundAtClause &at_clause, SnapshotBound bound) {
+unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot(BoundAtClause &at_clause, SnapshotBound bound,
+                                                              idx_t newest_snapshot_id) {
 	auto value = at_clause.GetValue();
 	if (at_clause.Unit() == "timestamp") {
 		auto context = transaction.context.lock();
@@ -176,6 +177,7 @@ unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot(BoundAtClause &at_
 	request.at->unit = RESTAtUnitCodec::FromString(StringUtil::Lower(at_clause.Unit().GetIdentifierName()));
 	request.at->value = value;
 	request.bound = bound == SnapshotBound::LOWER_BOUND ? "lower" : "upper";
+	request.newest_snapshot_id = newest_snapshot_id;
 	auto response = GetClient().SnapshotData(request);
 	return make_uniq<DuckLakeSnapshot>(response.snapshot);
 }
@@ -332,13 +334,6 @@ idx_t RESTMetadataManager::GetNextColumnId(TableIndex table_id) {
 	RESTNextColumnIdRequest request;
 	request.table_id = table_id.index;
 	return GetClient().NextColumnId(request).next_column_id;
-}
-
-bool RESTMetadataManager::IsColumnCreatedWithTable(const string &table_name, const string &column_name) {
-	RESTColumnCreatedWithTableRequest request;
-	request.table_name = table_name;
-	request.column_name = column_name;
-	return GetClient().ColumnCreatedWithTable(request).created_with_table;
 }
 
 unique_ptr<QueryResult> RESTMetadataManager::ToQueryResult(RESTInlinedRows rows) {
@@ -702,6 +697,11 @@ vector<DuckLakeTableSizeInfo> RESTMetadataManager::GetTableSizes(DuckLakeSnapsho
 	return std::move(GetClient().TableSizes(request).tables);
 }
 
+unordered_set<idx_t> RESTMetadataManager::GetTablesWithLiveDataFiles() {
+	auto response = GetClient().TablesWithLiveDataFiles(RESTTablesWithLiveDataFilesRequest());
+	return unordered_set<idx_t>(response.table_ids.begin(), response.table_ids.end());
+}
+
 vector<DuckLakeColumnMappingInfo> RESTMetadataManager::GetColumnMappings(optional_idx start_from) {
 	RESTColumnMappingsRequest request;
 	request.start_from = start_from;
@@ -822,6 +822,12 @@ void RESTMetadataManager::OnCreateView(DuckLakeViewEntry &view) {
 	if (!view.comment.IsNull()) {
 		request.comment = view.comment.ToString();
 	}
+	auto view_info = view.GetInfo();
+	for (auto &entry : view_info->Cast<CreateViewInfo>().column_comments_map) {
+		if (!entry.second.IsNull()) {
+			request.column_comments[entry.first.GetIdentifierName()] = entry.second.ToString();
+		}
+	}
 }
 
 void RESTMetadataManager::OnCreateMacro(MacroCatalogEntry &macro) {
@@ -919,10 +925,6 @@ void RESTMetadataManager::OnEntryChanged(CatalogEntry &entry) {
 		return;
 	}
 	auto &table = entry.Cast<DuckLakeTableEntry>();
-	auto local_change = table.GetLocalChange().type;
-	if (local_change != LocalChangeType::CREATED && local_change != LocalChangeType::SET_PARTITION_KEY) {
-		return;
-	}
 	auto partition_data = table.GetPartitionData();
 	if (!partition_data || !DuckLakeTransaction::IsTransactionLocal(partition_data->partition_id)) {
 		return;
@@ -1100,6 +1102,7 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 			table.table_id = ToRequestId(ParseInlinedTableName(flushed_table.inlined_table.table_name).table_id.index);
 			table.schema_version = flushed_table.inlined_table.schema_version;
 			table.flush_snapshot_id = flushed_table.flush_snapshot_id;
+			table.wrote_files = flushed_table.wrote_files;
 			flush.inlined_tables.push_back(std::move(table));
 		}
 		for (auto &entry : flushed_file_deletions) {
@@ -1131,6 +1134,13 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 		entry_oids.emplace(make_pair(type, entry.id), entry.entry_reference);
 	}
 	catalog.SetEntryOids(entry_oids);
+	for (auto &setting : response.table_options) {
+		DuckLakeConfigOption option;
+		option.option.key = setting.key;
+		option.option.value = setting.value;
+		option.table_id = TableIndex(setting.table_id.value);
+		catalog.SetConfigOption(option);
+	}
 	catalog.SetCommittedSnapshotId(response.snapshot_id.GetIndex());
 	if (!response.schema_version.IsValid()) {
 		throw InvalidInputException("DuckLake REST: the server did not return the schema version of the commit");
