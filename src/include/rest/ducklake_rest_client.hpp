@@ -12,6 +12,8 @@
 #include "duckdb/common/mutex.hpp"
 #include "rest/ducklake_rest_api.hpp"
 
+#include <chrono>
+
 namespace duckdb_httplib {
 class Client;
 } // namespace duckdb_httplib
@@ -25,7 +27,7 @@ public:
 	DuckLakeRESTClient(string base_url, string token);
 	~DuckLakeRESTClient() override;
 
-	string Post(const string &endpoint, const string &body) override;
+	string Post(const string &endpoint, const string &body, bool idempotent) override;
 
 	//! The client has another view of the data path than the server: paths are mapped between the two
 	void SetPathMapping(string client_path, string server_path);
@@ -44,15 +46,24 @@ public:
 	atomic<idx_t> loaded_data_version {DConstants::INVALID_INDEX};
 
 private:
-	unique_ptr<duckdb_httplib::Client> GetConnection();
+	//! A connection that was used before and is kept for later requests
+	struct IdleConnection {
+		unique_ptr<duckdb_httplib::Client> connection;
+		std::chrono::steady_clock::time_point idle_since;
+	};
+
+	//! Returns an idle connection, if there is one that the server has not closed yet, or a new connection
+	unique_ptr<duckdb_httplib::Client> GetConnection(bool &reused);
 	void ReturnConnection(unique_ptr<duckdb_httplib::Client> connection);
+	//! Sends a request, returns the status code and the body of the response
+	int32_t Send(const string &endpoint, const string &body, bool idempotent, string &response);
 
 private:
 	unique_ptr<RESTPathMapper> path_mapper;
 	string base_url;
 	string token;
 	mutex lock;
-	vector<unique_ptr<duckdb_httplib::Client>> idle_connections;
+	vector<IdleConnection> idle_connections;
 };
 
 } // namespace duckdb

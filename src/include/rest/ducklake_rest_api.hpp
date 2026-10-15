@@ -1965,7 +1965,8 @@ public:
 
 	//! Sends the JSON body of a request to an endpoint, returns the JSON body of the response
 	//! Rethrows the error reported by the server
-	virtual string Post(const string &endpoint, const string &body) = 0;
+	//! Requests of idempotent endpoints can be sent again, e.g. if the connection was closed by the server
+	virtual string Post(const string &endpoint, const string &body, bool idempotent) = 0;
 };
 
 } // namespace duckdb

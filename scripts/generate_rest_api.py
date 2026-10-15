@@ -267,6 +267,7 @@ class Endpoint:
         if self.kind not in ENDPOINT_KINDS:
             raise SpecError(f'{self.name}: kind has to be one of {ENDPOINT_KINDS}')
         self.summary = spec.get('summary', '')
+        self.idempotent = spec.get('idempotent', False)
         self.description = description_text(spec)
         self.cpp_name = spec.get('cpp_name', pascal_case(self.name))
         self.request = self.body(spec.get('request', {}), 'Request', section)
@@ -276,7 +277,7 @@ class Endpoint:
             if not isinstance(self.request, ObjectType):
                 raise SpecError(f'{self.name}: commit requests need a request structure of their own')
             self.request.commit_request = self
-        known = {'name', 'kind', 'summary', 'description', 'cpp_name', 'request', 'response'}
+        known = {'name', 'kind', 'summary', 'description', 'cpp_name', 'request', 'response', 'idempotent'}
         unknown = set(spec.keys()) - known
         if unknown:
             raise SpecError(f'{self.name}: unknown endpoint properties {sorted(unknown)}')
@@ -750,6 +751,8 @@ class SmithyModel:
             'name': name,
             'cpp_name': self.local_name(shape_id),
             'kind': self.kind(operation),
+            'idempotent': 'smithy.api#readonly' in operation.get('traits', {})
+            or 'smithy.api#idempotent' in operation.get('traits', {}),
             'summary': summary,
             'description': description,
         }
@@ -1235,7 +1238,10 @@ def generate_header(spec):
     lines.append('')
     lines.append('\t//! Sends the JSON body of a request to an endpoint, returns the JSON body of the response')
     lines.append('\t//! Rethrows the error reported by the server')
-    lines.append('\tvirtual string Post(const string &endpoint, const string &body) = 0;')
+    lines.append(
+        '\t//! Requests of idempotent endpoints can be sent again, e.g. if the connection was closed by the server'
+    )
+    lines.append('\tvirtual string Post(const string &endpoint, const string &body, bool idempotent) = 0;')
     lines.append('};')
     lines.append('')
     lines.append('} // namespace duckdb')
@@ -1500,7 +1506,8 @@ def generate_source(spec):
             f'{result} DuckLakeRESTClientAPI::{endpoint.cpp_name}(const {endpoint.request.cpp_name} &request) {{'
         )
         lines.append('\tRESTPathScope paths(GetPathMapper());')
-        post = f'Post({cpp_string(endpoint.name)}, DuckLakeRESTSerializer::ToJSON(request))'
+        idempotent = 'true' if endpoint.idempotent else 'false'
+        post = f'Post({cpp_string(endpoint.name)}, DuckLakeRESTSerializer::ToJSON(request), {idempotent})'
         if response:
             lines.append(f'\tRESTJsonReader document({post});')
             lines.append(f'\treturn DuckLakeRESTSerializer::Read<{response.cpp_name}>(document.Root());')
@@ -1560,6 +1567,9 @@ def generate_docs(spec):
                 lines.append('')
             if endpoint.description:
                 lines.append(endpoint.description)
+                lines.append('')
+            if endpoint.idempotent and endpoint.kind != 'read':
+                lines.append('The request is idempotent: clients can send it again if they did not get a response.')
                 lines.append('')
             if endpoint.request in endpoint.own_bodies():
                 if spec.fields_of(endpoint.request):

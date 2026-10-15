@@ -12,6 +12,7 @@ use ducklake.rest.codegen#cppType
 ///
 /// Removes the snapshots, together with the catalog entries and files that are only visible in them. The data files are
 /// scheduled for deletion.
+@idempotent
 @http(method: "POST", uri: "/v1/expire_snapshots")
 operation ExpireSnapshots {
     input := {
@@ -28,6 +29,7 @@ operation ExpireSnapshots {
 }
 
 /// Returns the files scheduled for deletion.
+@idempotent
 @http(method: "POST", uri: "/v1/files_for_cleanup")
 operation FilesForCleanup {
     input := {
@@ -43,6 +45,7 @@ operation FilesForCleanup {
 }
 
 /// Removes files from the files scheduled for deletion, after the client deleted them.
+@idempotent
 @http(method: "POST", uri: "/v1/remove_cleaned_up_files")
 operation RemoveCleanedUpFiles {
     input := {
@@ -56,6 +59,7 @@ operation RemoveCleanedUpFiles {
 ///
 /// These are the data files, delete files and files scheduled for deletion, so a client can find orphaned files in the
 /// data path.
+@idempotent
 @http(method: "POST", uri: "/v1/known_files")
 operation KnownFiles {
     output := {

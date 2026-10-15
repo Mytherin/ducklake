@@ -518,6 +518,8 @@ Expires snapshots.
 Removes the snapshots, together with the catalog entries and files that are only visible in them. The data files are
 scheduled for deletion.
 
+The request is idempotent: clients can send it again if they did not get a response.
+
 Request:
 
 | Field | Type | Description |
@@ -533,6 +535,8 @@ Response:
 ### `files_for_cleanup`
 
 Returns the files scheduled for deletion.
+
+The request is idempotent: clients can send it again if they did not get a response.
 
 Request:
 
@@ -553,6 +557,8 @@ Returns the paths of all files that the catalog refers to.
 These are the data files, delete files and files scheduled for deletion, so a client can find orphaned files in the
 data path.
 
+The request is idempotent: clients can send it again if they did not get a response.
+
 Request: an empty object.
 
 Response:
@@ -564,6 +570,8 @@ Response:
 ### `remove_cleaned_up_files`
 
 Removes files from the files scheduled for deletion, after the client deleted them.
+
+The request is idempotent: clients can send it again if they did not get a response.
 
 Request:
 
