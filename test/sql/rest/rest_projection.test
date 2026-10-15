@@ -141,6 +141,72 @@ SELECT i, e FROM dl.t ORDER BY i
 4	40
 5	50
 
+# the same table is scanned twice in a query, with other columns
+query II
+SELECT a.i, b.s FROM dl.t a JOIN dl.t b ON a.i = b.i ORDER BY a.i
+----
+1	one
+3	three
+4	four
+5	five
+
+query III
+SELECT a.i, b.d, c.e FROM dl.t a JOIN dl.t b ON a.i = b.i JOIN dl.t c ON a.i = c.i ORDER BY a.i
+----
+1	1.5	7
+3	NULL	7
+4	4.5	40
+5	5.5	50
+
+query I
+SELECT count(*) FROM dl.t a, dl.t b WHERE a.i < b.i AND a.s IS NOT NULL
+----
+6
+
+query I
+SELECT (SELECT sum(e) FROM dl.t) + (SELECT count(s) FROM dl.t)
+----
+108
+
+# scans of the same table that run at the same time, with other columns
+query I
+SELECT s FROM dl.t UNION ALL SELECT CAST(d AS VARCHAR) FROM dl.t UNION ALL SELECT CAST(e AS VARCHAR) FROM dl.t ORDER BY 1 NULLS FIRST
+----
+NULL
+1.5
+4.5
+40
+5.5
+50
+7
+7
+five
+four
+one
+three
+
+statement ok
+BEGIN
+
+query II
+SELECT a.i, b.e FROM dl.t a JOIN dl.t b ON a.i = b.i ORDER BY a.i
+----
+1	7
+3	7
+4	40
+5	50
+
+query II
+SELECT a.s, b.d FROM dl.t a JOIN dl.t b ON a.i = b.i ORDER BY a.i
+----
+one	1.5
+three	NULL
+four	4.5
+five	5.5
+
+statement ok
+COMMIT
+
 # the change feed reads the columns it needs
 statement ok
 SET VARIABLE latest = (SELECT max(snapshot_id) FROM dl.snapshots())
