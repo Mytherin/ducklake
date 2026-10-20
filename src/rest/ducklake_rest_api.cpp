@@ -5706,7 +5706,7 @@ void RESTCommitRequestCodec::Read(RESTJsonIn in, unique_ptr<RESTCommitRequest> &
 	auto &path = members[0].first;
 	auto type = RESTCommitRequest::TypeFromPath(path);
 	if (!type.IsValid()) {
-		throw NotImplementedException("Unsupported request \"%s\" in commit_transaction", path);
+		throw InvalidInputException("Unsupported request \"%s\" in commit_transaction", path);
 	}
 	result = ReadCommitRequest(static_cast<RESTCommitRequestType>(type.GetIndex()), members[0].second);
 }
