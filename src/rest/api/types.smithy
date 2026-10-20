@@ -1270,10 +1270,6 @@ list FileColumnStatsEntryList {
     member: FileColumnStatsEntry
 }
 
-list FileForCleanupList {
-    member: FileForCleanup
-}
-
 list FileListEntryList {
     member: FileListEntry
 }
@@ -1388,10 +1384,6 @@ list SortInfoList {
 
 list StringList {
     member: String
-}
-
-list DataPathList {
-    member: DataPath
 }
 
 list TableInfoList {

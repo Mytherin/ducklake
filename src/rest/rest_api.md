@@ -122,7 +122,8 @@ response structures of the server and the client, and their JSON conversions are
 `--check` verifies that the generated files are up to date. To change the API, change the model and run the script.
 
 Operations that are `@readonly` read the catalog, the members of the `CommitRequest` union are the requests of a commit
-(`commit_transaction`), and the other operations are maintenance endpoints. The traits of `src/rest/api/codegen.smithy`
+(`commit_transaction`). Maintenance (expiring snapshots and deleting files) is not part of the API: it is performed on the
+server, by running the maintenance functions on the DuckLake that the server serves. The traits of `src/rest/api/codegen.smithy`
 bind shapes to the C++ classes of DuckLake; they do not change the JSON of the API. Members are encoded as follows:
 
 | Type           | Smithy shape     | JSON                                                                         |
@@ -502,80 +503,6 @@ Response:
 | Field | Type | Description |
 |-------|------|-------------|
 | `table_ids` | list of `uint64` (default `[]`) | The tables. |
-
-## Maintenance Endpoints
-
-These endpoints change the catalog directly, outside of a transaction.
-
-### `expire_snapshots`
-
-Expires snapshots.
-
-Removes the snapshots, together with the catalog entries and files that are only visible in them. The data files are
-scheduled for deletion.
-
-The request is idempotent: clients can send it again if they did not get a response.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot_ids` | list of `uint64` | The snapshots to expire. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `expired_snapshots` | `uint64` | The number of expired snapshots. |
-
-### `files_for_cleanup`
-
-Returns the files scheduled for deletion.
-
-The request is idempotent: clients can send it again if they did not get a response.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `older_than` | `timestamp` (optional) | Only files scheduled for deletion before this timestamp. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `files` | list of [`FileForCleanup`](#fileforcleanup) (default `[]`) | The files. |
-
-### `known_files`
-
-Returns the paths of all files that the catalog refers to.
-
-These are the data files, delete files and files scheduled for deletion, so a client can find orphaned files in the
-data path.
-
-The request is idempotent: clients can send it again if they did not get a response.
-
-Request: an empty object.
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `paths` | list of `path` (default `[]`) | The paths. |
-
-### `remove_cleaned_up_files`
-
-Removes files from the files scheduled for deletion, after the client deleted them.
-
-The request is idempotent: clients can send it again if they did not get a response.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `data_file_ids` | list of `uint64` | The files. |
-
-Response: an empty object.
 
 ## Committing Transactions
 
@@ -1303,16 +1230,6 @@ A file that a client reads.
 | `file_size_bytes` | `uint64` (default `0`) | The size of the file. |
 | `footer_size` | `uint64` (optional) | The size of the footer of the file. |
 | `format` | [`FileFormat`](#fileformat) (default `"parquet"`) | The format of the file. |
-
-### `FileForCleanup`
-
-A file that is scheduled for deletion.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `data_file_id` | `uint64` | The id of the file. |
-| `path` | `path` | The path of the file. |
-| `schedule_start` | `timestamp` | When the file was scheduled for deletion. |
 
 ### `FileFormat`
 

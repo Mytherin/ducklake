@@ -363,6 +363,10 @@ public:
 
 	//! Connects to the REST server that serves the metadata, for REST catalogs
 	void ConnectREST();
+	//! Whether the metadata is served by a REST server
+	bool IsREST() const {
+		return rest_client != nullptr;
+	}
 	//! The client of the REST server that serves the metadata, for REST catalogs
 	DuckLakeRESTClient &GetRESTClient();
 	DuckLakeOptions &GetOptions() {

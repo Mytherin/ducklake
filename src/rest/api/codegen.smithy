@@ -77,7 +77,7 @@ structure DocSection {
     @required
     title: String
 
-    /// The endpoints (`read`, `maintenance`, `commit`) or the `types` of the section.
+    /// The endpoints (`read`, `commit`) or the `types` of the section.
     @required
     kind: String
 

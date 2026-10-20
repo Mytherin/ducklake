@@ -64,18 +64,18 @@ SELECT response->>'$.files[0].file.path' LIKE '%{BASE_TEST_NAME}_rest_files%' FR
 ----
 true
 
-# rows can be deleted and the files expired and cleaned up through the mapping
+# rows can be deleted, the server expires the snapshots and cleans up the files
 statement ok
 DELETE FROM dl.t
 
-statement ok
-CALL ducklake_expire_snapshots('dl', versions => [1])
+statement ok rest_db:rest_server_con
+CALL ducklake_expire_snapshots('rest_lake', versions => [1])
 
-statement ok
-CALL ducklake_cleanup_old_files('dl', cleanup_all => true)
+statement ok rest_db:rest_server_con
+CALL ducklake_cleanup_old_files('rest_lake', cleanup_all => true)
 
 query I
-SELECT count(*) FROM glob('{TEST_DIR}/rest_connect_client_files/**/*.parquet')
+SELECT count(*) FROM glob('{TEST_DIR}/{BASE_TEST_NAME}_rest_files/**/*.parquet')
 ----
 0
 

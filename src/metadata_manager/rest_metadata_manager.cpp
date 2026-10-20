@@ -638,18 +638,19 @@ vector<DuckLakeSnapshotInfo> RESTMetadataManager::GetAllSnapshots(const DuckLake
 	return std::move(GetClient().ListSnapshots(request).snapshots);
 }
 
+//! Expiring snapshots and deleting files is performed on the server
+[[noreturn]] static void ThrowMaintenanceOnServer(const char *what) {
+	throw NotImplementedException("DuckLake REST catalogs do not support %s: run the maintenance functions on the "
+	                              "DuckLake that the server serves",
+	                              what);
+}
+
 void RESTMetadataManager::DeleteSnapshots(const vector<DuckLakeSnapshotInfo> &snapshots) {
-	RESTExpireSnapshotsRequest request;
-	for (auto &snapshot : snapshots) {
-		request.snapshot_ids.push_back(snapshot.id);
-	}
-	GetClient().ExpireSnapshots(request);
+	ThrowMaintenanceOnServer("expiring snapshots");
 }
 
 vector<DuckLakeFileForCleanup> RESTMetadataManager::GetOldFilesForCleanup(const string &older_than) {
-	RESTFilesForCleanupRequest request;
-	request.older_than = older_than;
-	return std::move(GetClient().FilesForCleanup(request).files);
+	ThrowMaintenanceOnServer("cleaning up files");
 }
 
 vector<string> RESTMetadataManager::GetMetadataTableNames() {
@@ -663,7 +664,7 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadMetadataTable(const string &tab
 }
 
 vector<string> RESTMetadataManager::GetKnownFilePaths() {
-	return std::move(GetClient().KnownFiles(RESTKnownFilesRequest()).paths);
+	ThrowMaintenanceOnServer("deleting orphaned files");
 }
 
 static RESTOptionSetting GetOptionSetting(const DuckLakeConfigOption &option) {
@@ -749,11 +750,7 @@ RESTMetadataManager::GetTableDeletions(DuckLakeTableEntry &table, DuckLakeSnapsh
 }
 
 void RESTMetadataManager::RemoveFilesScheduledForCleanup(const vector<DuckLakeFileForCleanup> &cleaned_up_files) {
-	RESTRemoveCleanedUpFilesRequest request;
-	for (auto &file : cleaned_up_files) {
-		request.data_file_ids.push_back(file.id.index);
-	}
-	GetClient().RemoveCleanedUpFiles(request);
+	ThrowMaintenanceOnServer("cleaning up files");
 }
 
 //===--------------------------------------------------------------------===//

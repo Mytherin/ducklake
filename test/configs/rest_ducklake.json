@@ -45,6 +45,37 @@
       ]
     },
     {
+      "reason": "Expires snapshots or deletes files, which is maintenance of the REST server and not part of the REST API",
+      "paths": [
+        "test/sql/add_files/add_files_compaction.test",
+        "test/sql/cleanup/cleanup_old_files.test",
+        "test/sql/compaction/cleanup_old_files_global_option.test",
+        "test/sql/compaction/compaction_alter_table.test",
+        "test/sql/compaction/compaction_cleanup_global.test",
+        "test/sql/compaction/compaction_hive_structure.test",
+        "test/sql/compaction/compaction_size_limit.test",
+        "test/sql/compaction/merge_adjacent_cross_schema.test",
+        "test/sql/compaction/merge_adjacent_cross_schema_isolation.test",
+        "test/sql/compaction/merge_files_expired_snapshots.test",
+        "test/sql/compaction/mix_large_small_insertions.test",
+        "test/sql/compaction/multi_compaction.test",
+        "test/sql/compaction/small_insert_compaction.test",
+        "test/sql/delete/delete_file_replaced_twice.test",
+        "test/sql/delete/deletion_vector_replaced_twice.test",
+        "test/sql/functions/ducklake_prepared_functions.test",
+        "test/sql/issues/issue_1090_orphan_auto_compact.test",
+        "test/sql/issues/issue_1472_expire_open_transaction.test",
+        "test/sql/remove_orphans/concurrent_insert_orphan_cleanup.test",
+        "test/sql/remove_orphans/mixed_paths.test",
+        "test/sql/remove_orphans/non_canonical_data_path.test",
+        "test/sql/remove_orphans/orphan_cleanup_open_transaction.test",
+        "test/sql/remove_orphans/remove_orphaned_files.test",
+        "test/sql/rewrite_data_files/last_snapshot_multiple_inserts.test",
+        "test/sql/rewrite_data_files/test_last_snapshot_merge_rewrite.test",
+        "test/sql/settings/options_dropped_scopes.test"
+      ]
+    },
+    {
       "reason": "Depends on the location of the metadata database",
       "paths": [
         "test/sql/general/default_path.test",

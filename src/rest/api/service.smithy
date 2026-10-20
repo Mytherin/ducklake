@@ -31,13 +31,6 @@ use ducklake.rest.codegen#wireType
             """
     }
     {
-        title: "Maintenance Endpoints"
-        kind: "maintenance"
-        documentation: """
-            These endpoints change the catalog directly, outside of a transaction.
-            """
-    }
-    {
         title: "Committing Transactions"
         kind: "commit"
         documentation: """
@@ -88,10 +81,6 @@ service DuckLake {
         TableChanges
         DuckLakeTables
         DuckLakeTable
-        ExpireSnapshots
-        FilesForCleanup
-        RemoveCleanedUpFiles
-        KnownFiles
         CommitTransaction
         CreateSchema
         CreateTable

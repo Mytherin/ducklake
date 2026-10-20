@@ -1684,26 +1684,6 @@ DuckLakeFileData DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeFileForCleanup &value) {
-	auto result = writer.CreateObject();
-	result.Add("data_file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.id));
-	result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.path));
-	result.Add("schedule_start", RESTWriteValue<RESTTimestampCodec>(writer, value.time));
-	return result;
-}
-
-template <>
-DuckLakeFileForCleanup DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for FileForCleanup");
-	}
-	DuckLakeFileForCleanup result;
-	RESTReadValue<RESTUInt64Codec>(in.Get("data_file_id"), result.id);
-	RESTReadValue<RESTPathCodec>(in.Get("path"), result.path);
-	RESTReadValue<RESTTimestampCodec>(in.Get("schedule_start"), result.time);
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeFileListEntry &value) {
 	auto result = writer.CreateObject();
 	if (!RESTIsNull(value.data_file_id)) {
@@ -4772,133 +4752,6 @@ RESTTablesWithLiveDataFilesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) 
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTExpireSnapshotsRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("snapshot_ids", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.snapshot_ids));
-	return result;
-}
-
-template <>
-RESTExpireSnapshotsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for ExpireSnapshotsRequest");
-	}
-	RESTExpireSnapshotsRequest result;
-	RESTReadValue<RESTListCodec<RESTUInt64Codec>>(in.Get("snapshot_ids"), result.snapshot_ids);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTExpireSnapshotsResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("expired_snapshots", RESTWriteValue<RESTUInt64Codec>(writer, value.expired_snapshots));
-	return result;
-}
-
-template <>
-RESTExpireSnapshotsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for ExpireSnapshotsResponse");
-	}
-	RESTExpireSnapshotsResponse result;
-	RESTReadValue<RESTUInt64Codec>(in.Get("expired_snapshots"), result.expired_snapshots);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFilesForCleanupRequest &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.older_than)) {
-		result.Add("older_than", RESTWriteValue<RESTTimestampCodec>(writer, value.older_than));
-	}
-	return result;
-}
-
-template <>
-RESTFilesForCleanupRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for FilesForCleanupRequest");
-	}
-	RESTFilesForCleanupRequest result;
-	{
-		auto entry = in.TryGet("older_than");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTTimestampCodec>(entry, result.older_than);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFilesForCleanupResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("files", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeFileForCleanup>>>(writer, value.files));
-	return result;
-}
-
-template <>
-RESTFilesForCleanupResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for FilesForCleanupResponse");
-	}
-	RESTFilesForCleanupResponse result;
-	{
-		auto entry = in.TryGet("files");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeFileForCleanup>>>(entry, result.files);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTKnownFilesRequest &value) {
-	auto result = writer.CreateObject();
-	return result;
-}
-
-template <>
-RESTKnownFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for KnownFilesRequest");
-	}
-	RESTKnownFilesRequest result;
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTKnownFilesResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("paths", RESTWriteValue<RESTListCodec<RESTPathCodec>>(writer, value.paths));
-	return result;
-}
-
-template <>
-RESTKnownFilesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for KnownFilesResponse");
-	}
-	RESTKnownFilesResponse result;
-	{
-		auto entry = in.TryGet("paths");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTPathCodec>>(entry, result.paths);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTRemoveCleanedUpFilesRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("data_file_ids", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.data_file_ids));
-	return result;
-}
-
-template <>
-RESTRemoveCleanedUpFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for RemoveCleanedUpFilesRequest");
-	}
-	RESTRemoveCleanedUpFilesRequest result;
-	RESTReadValue<RESTListCodec<RESTUInt64Codec>>(in.Get("data_file_ids"), result.data_file_ids);
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTAlterTableRequest &value) {
 	auto result = writer.CreateObject();
 	result.Add("schema_path", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.schema_path));
@@ -6184,34 +6037,6 @@ static string TablesWithLiveDataFilesEndpoint(DuckLakeRESTRequest &request, cons
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
-static string ExpireSnapshotsEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTExpireSnapshotsRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::ExpireSnapshots(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
-static string FilesForCleanupEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTFilesForCleanupRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::FilesForCleanup(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
-static string KnownFilesEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTKnownFilesRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::KnownFiles(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
-static string RemoveCleanedUpFilesEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTRemoveCleanedUpFilesRequest>(document.Root());
-	DuckLakeRESTEndpoints::RemoveCleanedUpFiles(request, parameters);
-	return "{}";
-}
-
 static string AlterTableEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTAlterTableRequest>(document.Root());
@@ -6409,10 +6234,6 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	    {"table_schema_versions", TableSchemaVersionsEndpoint},
 	    {"table_sizes", TableSizesEndpoint},
 	    {"tables_with_live_data_files", TablesWithLiveDataFilesEndpoint},
-	    {"expire_snapshots", ExpireSnapshotsEndpoint},
-	    {"files_for_cleanup", FilesForCleanupEndpoint},
-	    {"known_files", KnownFilesEndpoint},
-	    {"remove_cleaned_up_files", RemoveCleanedUpFilesEndpoint},
 	    {"alter_table", AlterTableEndpoint},
 	    {"alter_view", AlterViewEndpoint},
 	    {"commit_transaction", CommitTransactionEndpoint},
@@ -6547,29 +6368,6 @@ DuckLakeRESTClientAPI::TablesWithLiveDataFiles(const RESTTablesWithLiveDataFiles
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Post("tables_with_live_data_files", DuckLakeRESTSerializer::ToJSON(request), true));
 	return DuckLakeRESTSerializer::Read<RESTTablesWithLiveDataFilesResponse>(document.Root());
-}
-
-RESTExpireSnapshotsResponse DuckLakeRESTClientAPI::ExpireSnapshots(const RESTExpireSnapshotsRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Post("expire_snapshots", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTExpireSnapshotsResponse>(document.Root());
-}
-
-RESTFilesForCleanupResponse DuckLakeRESTClientAPI::FilesForCleanup(const RESTFilesForCleanupRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Post("files_for_cleanup", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTFilesForCleanupResponse>(document.Root());
-}
-
-RESTKnownFilesResponse DuckLakeRESTClientAPI::KnownFiles(const RESTKnownFilesRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Post("known_files", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTKnownFilesResponse>(document.Root());
-}
-
-void DuckLakeRESTClientAPI::RemoveCleanedUpFiles(const RESTRemoveCleanedUpFilesRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	Post("remove_cleaned_up_files", DuckLakeRESTSerializer::ToJSON(request), true);
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::AlterTable(const RESTAlterTableRequest &request) {

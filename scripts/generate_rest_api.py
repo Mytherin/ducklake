@@ -33,7 +33,7 @@ DOCS_BEGIN = '<!-- BEGIN GENERATED REFERENCE: edit src/rest/api/*.smithy and run
 DOCS_END = '<!-- END GENERATED REFERENCE -->'
 
 COMMIT_ENDPOINT = 'commit_transaction'
-ENDPOINT_KINDS = ['read', 'maintenance', 'transaction', 'commit']
+ENDPOINT_KINDS = ['read', 'transaction', 'commit']
 
 # primitive type -> (codec, C++ type, C++ type when nullable, description)
 PRIMITIVES = {
@@ -726,7 +726,7 @@ class SmithyModel:
             return body
         return {'type': self.local_name(target)}
 
-    def kind(self, operation):
+    def kind(self, shape_id, operation):
         input_shape = operation.get('input', {}).get('target')
         if input_shape in self.commit_requests:
             return 'commit'
@@ -737,7 +737,7 @@ class SmithyModel:
                     return 'transaction'
         if 'smithy.api#readonly' in operation.get('traits', {}):
             return 'read'
-        return 'maintenance'
+        raise SpecError(f'{shape_id}: operations have to be @readonly or requests of a commit')
 
     def endpoint(self, shape_id):
         operation = self.shapes[shape_id]
@@ -750,7 +750,7 @@ class SmithyModel:
         result = {
             'name': name,
             'cpp_name': self.local_name(shape_id),
-            'kind': self.kind(operation),
+            'kind': self.kind(shape_id, operation),
             'idempotent': 'smithy.api#readonly' in operation.get('traits', {})
             or 'smithy.api#idempotent' in operation.get('traits', {}),
             'summary': summary,

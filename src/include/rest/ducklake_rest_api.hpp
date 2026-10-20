@@ -194,13 +194,6 @@ struct RESTTableSizesRequest;
 struct RESTTableSizesResponse;
 struct RESTTablesWithLiveDataFilesRequest;
 struct RESTTablesWithLiveDataFilesResponse;
-struct RESTExpireSnapshotsRequest;
-struct RESTExpireSnapshotsResponse;
-struct RESTFilesForCleanupRequest;
-struct RESTFilesForCleanupResponse;
-struct RESTKnownFilesRequest;
-struct RESTKnownFilesResponse;
-struct RESTRemoveCleanedUpFilesRequest;
 struct RESTAlterTableRequest;
 struct RESTAlterViewRequest;
 struct RESTCommitTransactionRequest;
@@ -260,7 +253,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTErrorResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileColumnStats &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileData &value);
-	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileForCleanup &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileListEntry &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileListExtendedEntry &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFilePartition &value);
@@ -346,13 +338,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTablesWithLiveDataFilesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTablesWithLiveDataFilesResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTExpireSnapshotsRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTExpireSnapshotsResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTFilesForCleanupRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTFilesForCleanupResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTKnownFilesRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTKnownFilesResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTRemoveCleanedUpFilesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTAlterTableRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTAlterViewRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCommitTransactionRequest &value);
@@ -428,8 +413,6 @@ template <>
 DuckLakeFileColumnStats DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeFileData DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-DuckLakeFileForCleanup DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeFileListEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -600,20 +583,6 @@ template <>
 RESTTablesWithLiveDataFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTTablesWithLiveDataFilesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTExpireSnapshotsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTExpireSnapshotsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTFilesForCleanupRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTFilesForCleanupResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTKnownFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTKnownFilesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTRemoveCleanedUpFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTAlterTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -1428,38 +1397,6 @@ struct RESTTablesWithLiveDataFilesResponse {
 	vector<idx_t> table_ids;
 };
 
-struct RESTExpireSnapshotsRequest {
-	//! The snapshots to expire.
-	vector<idx_t> snapshot_ids;
-};
-
-struct RESTExpireSnapshotsResponse {
-	//! The number of expired snapshots.
-	idx_t expired_snapshots = 0;
-};
-
-struct RESTFilesForCleanupRequest {
-	//! Only files scheduled for deletion before this timestamp.
-	string older_than;
-};
-
-struct RESTFilesForCleanupResponse {
-	//! The files.
-	vector<DuckLakeFileForCleanup> files;
-};
-
-struct RESTKnownFilesRequest {};
-
-struct RESTKnownFilesResponse {
-	//! The paths.
-	vector<string> paths;
-};
-
-struct RESTRemoveCleanedUpFilesRequest {
-	//! The files.
-	vector<idx_t> data_file_ids;
-};
-
 //! The parameters of `alter_table`.
 struct RESTAlterTableRequest : public RESTCommitRequest {
 	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::ALTER_TABLE;
@@ -1819,16 +1756,6 @@ struct DuckLakeRESTEndpoints {
 	//! Returns the tables that have data files that are not deleted.
 	static RESTTablesWithLiveDataFilesResponse
 	TablesWithLiveDataFiles(DuckLakeRESTRequest &request, const RESTTablesWithLiveDataFilesRequest &parameters);
-	//! Expires snapshots.
-	static RESTExpireSnapshotsResponse ExpireSnapshots(DuckLakeRESTRequest &request,
-	                                                   const RESTExpireSnapshotsRequest &parameters);
-	//! Returns the files scheduled for deletion.
-	static RESTFilesForCleanupResponse FilesForCleanup(DuckLakeRESTRequest &request,
-	                                                   const RESTFilesForCleanupRequest &parameters);
-	//! Returns the paths of all files that the catalog refers to.
-	static RESTKnownFilesResponse KnownFiles(DuckLakeRESTRequest &request, const RESTKnownFilesRequest &parameters);
-	//! Removes files from the files scheduled for deletion, after the client deleted them.
-	static void RemoveCleanedUpFiles(DuckLakeRESTRequest &request, const RESTRemoveCleanedUpFilesRequest &parameters);
 	//! Commits a set of changes atomically.
 	static RESTCommitTransactionResponse CommitTransaction(DuckLakeRESTRequest &request,
 	                                                       const RESTCommitTransactionRequest &parameters);
@@ -1916,14 +1843,6 @@ public:
 	RESTTableSizesResponse TableSizes(const RESTTableSizesRequest &request);
 	//! Returns the tables that have data files that are not deleted.
 	RESTTablesWithLiveDataFilesResponse TablesWithLiveDataFiles(const RESTTablesWithLiveDataFilesRequest &request);
-	//! Expires snapshots.
-	RESTExpireSnapshotsResponse ExpireSnapshots(const RESTExpireSnapshotsRequest &request);
-	//! Returns the files scheduled for deletion.
-	RESTFilesForCleanupResponse FilesForCleanup(const RESTFilesForCleanupRequest &request);
-	//! Returns the paths of all files that the catalog refers to.
-	RESTKnownFilesResponse KnownFiles(const RESTKnownFilesRequest &request);
-	//! Removes files from the files scheduled for deletion, after the client deleted them.
-	void RemoveCleanedUpFiles(const RESTRemoveCleanedUpFilesRequest &request);
 	//! Alters a table.
 	RESTCommitTransactionResponse AlterTable(const RESTAlterTableRequest &request);
 	//! Alters a view.

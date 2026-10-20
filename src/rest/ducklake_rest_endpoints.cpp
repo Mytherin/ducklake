@@ -426,47 +426,6 @@ RESTInlinedRows DuckLakeRESTEndpoints::DuckLakeTable(DuckLakeRESTRequest &reques
 	return result;
 }
 
-//===--------------------------------------------------------------------===//
-// Maintenance Endpoints
-//===--------------------------------------------------------------------===//
-RESTExpireSnapshotsResponse DuckLakeRESTEndpoints::ExpireSnapshots(DuckLakeRESTRequest &request,
-                                                                   const RESTExpireSnapshotsRequest &parameters) {
-	DuckLakeSnapshotFilter filter;
-	filter.has_snapshot_ids = true;
-	filter.snapshot_ids = parameters.snapshot_ids;
-	auto &metadata_manager = request.GetMetadataManager();
-	auto snapshots = metadata_manager.GetAllSnapshots(filter);
-	if (!snapshots.empty()) {
-		metadata_manager.DeleteSnapshots(snapshots);
-		for (auto &snapshot : snapshots) {
-			request.catalog->InvalidateSchemaCache(snapshot.schema_version);
-		}
-	}
-	RESTExpireSnapshotsResponse result;
-	result.expired_snapshots = snapshots.size();
-	return result;
-}
-
-RESTFilesForCleanupResponse DuckLakeRESTEndpoints::FilesForCleanup(DuckLakeRESTRequest &request,
-                                                                   const RESTFilesForCleanupRequest &parameters) {
-	RESTFilesForCleanupResponse result;
-	result.files = request.GetMetadataManager().GetOldFilesForCleanup(parameters.older_than);
-	return result;
-}
-
-void DuckLakeRESTEndpoints::RemoveCleanedUpFiles(DuckLakeRESTRequest &request,
-                                                 const RESTRemoveCleanedUpFilesRequest &parameters) {
-	vector<DuckLakeFileForCleanup> files;
-	for (auto &file_id : parameters.data_file_ids) {
-		DuckLakeFileForCleanup file;
-		file.id = DataFileIndex(file_id);
-		files.push_back(std::move(file));
-	}
-	if (!files.empty()) {
-		request.GetMetadataManager().RemoveFilesScheduledForCleanup(files);
-	}
-}
-
 RESTFilesForCompactionResponse
 DuckLakeRESTEndpoints::FilesForCompaction(DuckLakeRESTRequest &request,
                                           const RESTFilesForCompactionRequest &parameters) {
@@ -482,13 +441,6 @@ DuckLakeRESTEndpoints::FilesForCompaction(DuckLakeRESTRequest &request,
 	RESTFilesForCompactionResponse result;
 	result.files =
 	    request.GetMetadataManager().GetFilesForCompaction(table, parameters.type, delete_threshold, snapshot, options);
-	return result;
-}
-
-RESTKnownFilesResponse DuckLakeRESTEndpoints::KnownFiles(DuckLakeRESTRequest &request,
-                                                         const RESTKnownFilesRequest &parameters) {
-	RESTKnownFilesResponse result;
-	result.paths = request.GetMetadataManager().GetKnownFilePaths();
 	return result;
 }
 

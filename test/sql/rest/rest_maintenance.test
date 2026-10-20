@@ -1,5 +1,5 @@
 # name: test/sql/rest/rest_maintenance.test
-# description: Compaction, snapshot expiration and file cleanup through the DuckLake REST API
+# description: Compaction through the DuckLake REST API, snapshot expiration and file cleanup are left to the server
 # group: [rest]
 
 include test/template/rest_setup.test_template
@@ -63,66 +63,46 @@ SELECT count(*) FROM ducklake_list_files('dl', 't') WHERE delete_file IS NOT NUL
 ----
 0
 
-# expire snapshots
-query I
-SELECT count(*) > 0 FROM ducklake_expire_snapshots('dl', older_than => now())
+# expiring snapshots and deleting files is maintenance of the server
+statement error
+CALL ducklake_expire_snapshots('dl', older_than => now())
 ----
-true
+DuckLake REST catalogs do not support expiring snapshots
 
-query I
-SELECT count(*) FROM dl.snapshots()
+statement error
+CALL ducklake_cleanup_old_files('dl', cleanup_all => true)
 ----
-1
+DuckLake REST catalogs do not support cleaning up files
 
-# the files of the expired snapshots can be cleaned up
-query I
-SELECT count(*) > 0 FROM ducklake_cleanup_old_files('dl', cleanup_all => true)
+statement error
+CALL ducklake_delete_orphaned_files('dl', cleanup_all => true)
 ----
-true
+DuckLake REST catalogs do not support deleting orphaned files
 
-query I
-SELECT count(*) FROM ducklake_cleanup_old_files('dl', cleanup_all => true)
-----
-0
+# a checkpoint leaves the maintenance to the server
+statement ok
+CHECKPOINT dl
 
 query II
 SELECT count(*), sum(i) FROM dl.t
 ----
 10	55
 
-# orphaned files are deleted
-statement ok
-COPY (SELECT 42 i) TO '{TEST_DIR}/{BASE_TEST_NAME}_rest_files/main/t/orphan.parquet'
-
-query I
-SELECT count(*) FROM ducklake_delete_orphaned_files('dl', cleanup_all => true)
+# the server runs the maintenance on its DuckLake
+query I rest_db:rest_server_con
+SELECT count(*) > 0 FROM ducklake_expire_snapshots('rest_lake', older_than => now())
 ----
-1
+true
+
+query I rest_db:rest_server_con
+SELECT count(*) > 0 FROM ducklake_cleanup_old_files('rest_lake', cleanup_all => true)
+----
+true
 
 query II
 SELECT count(*), sum(i) FROM dl.t
 ----
 10	55
-
-# expire specific snapshots
-statement ok
-INSERT INTO dl.t VALUES (100)
-
-statement ok
-INSERT INTO dl.t VALUES (101)
-
-statement ok
-SET VARIABLE oldest_snapshot = (SELECT min(snapshot_id) FROM dl.snapshots())
-
-query I
-SELECT count(*) FROM ducklake_expire_snapshots('dl', versions => [getvariable('oldest_snapshot')])
-----
-1
-
-query I
-SELECT count(*) FROM dl.snapshots()
-----
-2
 
 statement ok
 DETACH dl
