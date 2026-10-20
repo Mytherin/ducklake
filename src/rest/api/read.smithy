@@ -104,85 +104,6 @@ operation Select {
     }
 }
 
-/// Reads the inlined rows of a table that a flush writes.
-///
-/// These are all rows that were inserted up to the snapshot, including the rows that were deleted, in the order in
-/// which they are flushed. The rows that the transaction of the client deleted are not flushed.
-@http(method: "POST", uri: "/v1/tables/{table_id}/inlined-data")
-@readonly
-operation InlinedDataForFlush {
-    input := with [SnapshotReference] {
-        /// The table.
-        @required
-        @httpLabel
-        table_id: UInt64
-
-        /// The schema version of the table whose columns the rows have (see `inlined_tables`).
-        @required
-        schema_version: UInt64
-
-        /// The columns to read, e.g. `["i"]`. Columns can be cast to the type to read them as, e.g. `"i::BIGINT"`.
-        @required
-        columns: StringList
-
-        /// The sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are ordered by it,
-        /// then by their row id.
-        order_by: String = ""
-
-        /// Rows that the transaction of the client deleted, which are not flushed.
-        @cppType("set<idx_t>")
-        deleted_row_ids: UInt64List = []
-    }
-
-    output: InlinedRows
-}
-
-/// Returns the deleted versions of the inlined rows of a table that a flush writes.
-///
-/// The client writes delete files for the flushed rows with them.
-@http(method: "POST", uri: "/v1/tables/{table_id}/deleted-inlined-rows")
-@readonly
-operation DeletedInlinedRows {
-    input := with [SnapshotReference] {
-        /// The table.
-        @required
-        @httpLabel
-        table_id: UInt64
-
-        /// The schema version of the inlined rows.
-        @required
-        schema_version: UInt64
-
-        /// Rows that the transaction of the client deleted, which are not flushed.
-        @cppType("set<idx_t>")
-        deleted_row_ids: UInt64List = []
-    }
-
-    output := {
-        /// The deleted rows.
-        rows: DeletedRowVersionList = []
-    }
-}
-
-/// Returns the deletions of rows of data files that are inlined in the catalog.
-///
-/// Each deletion comes with the delete file of its data file, so that a client can write them to delete files.
-@http(method: "POST", uri: "/v1/tables/{table_id}/inlined-file-deletions")
-@readonly
-operation InlinedFileDeletions {
-    input := with [SnapshotReference] {
-        /// The table.
-        @required
-        @httpLabel
-        table_id: UInt64
-    }
-
-    output := {
-        /// The deletions.
-        deletions: InlinedFileDeletionList = []
-    }
-}
-
 /// Returns when a table and its schema versions were created.
 @http(method: "POST", uri: "/v1/tables/{table_id}/schema-versions")
 @readonly
@@ -454,21 +375,6 @@ structure ScanFilters {
 
     /// The columns to return the min/max statistics of.
     runtime_filter_columns: UInt64List = []
-}
-
-/// A deleted version of an inlined row.
-structure DeletedRowVersion {
-    /// The row id.
-    @required
-    row_id: Long
-
-    /// The snapshot that inserted the row.
-    @required
-    begin_snapshot: Long
-
-    /// The snapshot that deleted the row.
-    @required
-    end_snapshot: Long
 }
 
 /// What `row_count` counts.

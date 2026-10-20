@@ -79,13 +79,6 @@ public:
 	unique_ptr<QueryResult> ReadInlinedDataDeletions(DuckLakeSnapshot start_snapshot, DuckLakeSnapshot end_snapshot,
 	                                                 const string &inlined_table_name,
 	                                                 const vector<string> &columns_to_read) override;
-	unique_ptr<QueryResult> ReadAllInlinedDataForFlush(DuckLakeSnapshot snapshot, const string &inlined_table_name,
-	                                                   const DuckLakeTableEntry &table, const string &sort_order_sql,
-	                                                   const vector<string> &columns_to_read) override;
-	DuckLakeDeletedRowVersions GetDeletedInlinedRowVersions(DuckLakeTableEntry &table, const string &inlined_table_name,
-	                                                        DuckLakeSnapshot snapshot) override;
-	vector<DuckLakeInlinedFileDeletionEntry> GetInlinedFileDeletionsForFlush(DuckLakeTableEntry &table,
-	                                                                         DuckLakeSnapshot snapshot) override;
 	unique_ptr<QueryResult> ReadInlinedData(DuckLakeSnapshot snapshot, const string &inlined_table_name,
 	                                        const vector<string> &columns_to_read) override;
 	idx_t GetBeginSnapshotForTable(TableIndex table_id) override;
@@ -157,8 +150,6 @@ private:
 	void AddDeletes(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
 	void AddInserts(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
 	void AddNameMaps(vector<unique_ptr<RESTCommitRequest>> &requests);
-	//! The inlined rows the transaction deleted, which are not flushed
-	set<idx_t> GetTransactionDeletes(const DuckLakeTableEntry &table, const string &inlined_table_name);
 	RESTTableChangesResponse GetTableChanges(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
 	                                         DuckLakeSnapshot snapshot, const string &changes,
 	                                         optional_ptr<const vector<FieldIndex>> projection);

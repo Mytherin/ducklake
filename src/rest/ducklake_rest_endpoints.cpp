@@ -212,86 +212,6 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	return result;
 }
 
-//! The table at the schema version of its inlined data, and the name of the inlined data table
-static DuckLakeTableEntry &GetInlinedTableEntry(DuckLakeRESTRequest &request, DuckLakeSnapshot snapshot,
-                                                TableIndex table_id, idx_t schema_version, string &inlined_table_name) {
-	auto &table = GetTableEntry(request, snapshot, table_id);
-	inlined_table_name = GetInlinedTableName(*request.transaction, table, snapshot, schema_version);
-	auto result = request.catalog->GetTableAtSchemaVersion(*request.transaction, table_id, schema_version);
-	if (!result) {
-		throw CatalogException("Table %llu has no schema version %llu", table_id.index, schema_version);
-	}
-	return *result;
-}
-
-//! Rows that the client transaction deleted are not flushed, the request transaction is rolled back afterwards
-static void AddFlushDeletes(DuckLakeRESTRequest &request, const set<idx_t> &deleted_row_ids, DuckLakeTableEntry &table,
-                            const string &inlined_table_name) {
-	request.transaction->AddNewInlinedDeletes(table.GetTableId(), inlined_table_name, set<idx_t>(deleted_row_ids));
-}
-
-//! The ORDER BY of a flush, parsed so that it can only contain ordering expressions
-static string GetFlushOrder(const string &order_by) {
-	if (order_by.empty()) {
-		return order_by;
-	}
-	string result;
-	for (auto &order : Parser::GetBuiltinParser().ParseOrderList(order_by)) {
-		if (!result.empty()) {
-			result += ", ";
-		}
-		result += order.ToString();
-	}
-	return result;
-}
-
-RESTInlinedRows DuckLakeRESTEndpoints::InlinedDataForFlush(DuckLakeRESTRequest &request,
-                                                           const RESTInlinedDataForFlushRequest &parameters) {
-	auto snapshot = request.GetSnapshot(parameters);
-	auto columns = GetColumnsToRead(parameters.columns);
-	string inlined_table_name;
-	auto &table = GetInlinedTableEntry(request, snapshot, TableIndex(parameters.table_id), parameters.schema_version,
-	                                   inlined_table_name);
-	AddFlushDeletes(request, parameters.deleted_row_ids, table, inlined_table_name);
-	auto query_result = request.GetMetadataManager().ReadAllInlinedDataForFlush(
-	    snapshot, inlined_table_name, table, GetFlushOrder(parameters.order_by), columns);
-	query_result->ThrowIfError("Failed to read inlined data: ");
-	RESTInlinedRows result;
-	ReadQueryResult(result, *query_result);
-	request.connection.Rollback();
-	return result;
-}
-
-RESTDeletedInlinedRowsResponse
-DuckLakeRESTEndpoints::DeletedInlinedRows(DuckLakeRESTRequest &request,
-                                          const RESTDeletedInlinedRowsRequest &parameters) {
-	auto snapshot = request.GetSnapshot(parameters);
-	string inlined_table_name;
-	auto &table = GetInlinedTableEntry(request, snapshot, TableIndex(parameters.table_id), parameters.schema_version,
-	                                   inlined_table_name);
-	AddFlushDeletes(request, parameters.deleted_row_ids, table, inlined_table_name);
-	RESTDeletedInlinedRowsResponse result;
-	for (auto &row : request.GetMetadataManager().GetDeletedInlinedRowVersions(table, inlined_table_name, snapshot)) {
-		RESTDeletedRowVersion version;
-		version.row_id = row.first.first;
-		version.begin_snapshot = row.first.second;
-		version.end_snapshot = row.second;
-		result.rows.push_back(version);
-	}
-	request.connection.Rollback();
-	return result;
-}
-
-RESTInlinedFileDeletionsResponse
-DuckLakeRESTEndpoints::InlinedFileDeletions(DuckLakeRESTRequest &request,
-                                            const RESTInlinedFileDeletionsRequest &parameters) {
-	auto snapshot = request.GetSnapshot(parameters);
-	auto &table = GetTableEntry(request, snapshot, TableIndex(parameters.table_id));
-	RESTInlinedFileDeletionsResponse result;
-	result.deletions = request.GetMetadataManager().GetInlinedFileDeletionsForFlush(table, snapshot);
-	return result;
-}
-
 RESTTableSchemaVersionsResponse
 DuckLakeRESTEndpoints::TableSchemaVersions(DuckLakeRESTRequest &request,
                                            const RESTTableSchemaVersionsRequest &parameters) {
@@ -421,10 +341,22 @@ RESTCompactResponse DuckLakeRESTEndpoints::Compact(DuckLakeRESTRequest &request,
 	auto catalog_name = request.catalog->GetName().GetIdentifierName();
 	auto &db = DatabaseInstance::GetDatabase(*request.connection.context);
 	request.connection.Rollback();
-	auto function = parameters.type == CompactionType::MERGE_ADJACENT_TABLES ? "ducklake_merge_adjacent_files"
-	                                                                         : "ducklake_rewrite_data_files";
+	bool flush = parameters.type == "flush_inlined_data";
+	const char *function = "ducklake_flush_inlined_data";
+	if (parameters.type == "merge_adjacent") {
+		function = "ducklake_merge_adjacent_files";
+	} else if (parameters.type == "rewrite_delete") {
+		function = "ducklake_rewrite_data_files";
+	}
 	vector<string> arguments {SQLString::ToString(catalog_name)};
-	if (!parameters.table_name.empty()) {
+	if (flush) {
+		if (!parameters.schema_name.empty()) {
+			arguments.push_back("schema_name => " + SQLString::ToString(parameters.schema_name));
+		}
+		if (!parameters.table_name.empty()) {
+			arguments.push_back("table_name => " + SQLString::ToString(parameters.table_name));
+		}
+	} else if (!parameters.table_name.empty()) {
 		arguments.push_back(SQLString::ToString(parameters.table_name));
 		if (!parameters.schema_name.empty()) {
 			arguments.push_back("schema => " + SQLString::ToString(parameters.schema_name));
@@ -451,17 +383,22 @@ RESTCompactResponse DuckLakeRESTEndpoints::Compact(DuckLakeRESTRequest &request,
 		arguments.push_back(StringUtil::Format("delete_threshold => %f", parameters.delete_threshold.value));
 	}
 	Connection con(db);
+	auto columns =
+	    flush ? "schema_name, table_name, rows_flushed" : "schema_name, table_name, files_processed, files_created";
 	auto result =
-	    con.Query(StringUtil::Format("SELECT schema_name, table_name, files_processed, files_created FROM %s(%s)",
-	                                 function, StringUtil::Join(arguments, ", ")));
+	    con.Query(StringUtil::Format("SELECT %s FROM %s(%s)", columns, function, StringUtil::Join(arguments, ", ")));
 	result->ThrowIfError();
 	RESTCompactResponse response;
 	for (auto &row : *result) {
 		RESTCompactionResult entry;
 		entry.schema_name = row.GetValue<string>(0);
 		entry.table_name = row.GetValue<string>(1);
-		entry.files_processed = row.GetValue<idx_t>(2);
-		entry.files_created = row.GetValue<idx_t>(3);
+		if (flush) {
+			entry.rows_flushed = row.GetValue<idx_t>(2);
+		} else {
+			entry.files_processed = row.GetValue<idx_t>(2);
+			entry.files_created = row.GetValue<idx_t>(3);
+		}
 		response.results.push_back(std::move(entry));
 	}
 	return response;
@@ -496,7 +433,6 @@ protected:
 	void InsertRows(RESTInsertRowsRequest &parameters) override;
 	void InsertFiles(RESTInsertFilesRequest &parameters) override;
 	void DeleteData(RESTDeleteDataRequest &parameters) override;
-	void FlushInlinedData(RESTFlushInlinedDataRequest &parameters) override;
 
 private:
 	void Alter(const vector<string> &schema_path, const string &name, const RESTAlteration &alter,
@@ -763,22 +699,6 @@ void DuckLakeRESTCommit::DeleteData(RESTDeleteDataRequest &parameters) {
 	}
 	if (parameters.delete_attempted) {
 		transaction.MarkDeleteAttempted(table_id);
-	}
-}
-
-void DuckLakeRESTCommit::FlushInlinedData(RESTFlushInlinedDataRequest &parameters) {
-	for (auto &flushed_table : parameters.inlined_tables) {
-		DuckLakeInlinedTableInfo inlined_table;
-		auto &table = GetTable(GetTableId(flushed_table.table_id));
-		inlined_table.table_name =
-		    GetInlinedTableName(transaction, table, transaction.GetSnapshot(), flushed_table.schema_version);
-		inlined_table.schema_version = flushed_table.schema_version;
-		transaction.MarkInlinedDataForDeletion(std::move(inlined_table), flushed_table.flush_snapshot_id,
-		                                       flushed_table.wrote_files);
-	}
-	for (auto &file_deletions : parameters.file_deletions) {
-		auto table_id = GetTable(GetTableId(file_deletions.table_id)).GetTableId();
-		transaction.MarkInlinedFileDeletionsFlushed(table_id, file_deletions.flush_snapshot_id);
 	}
 }
 

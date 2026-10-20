@@ -823,12 +823,13 @@ static double GetDeleteThreshold(DuckLakeTableEntry &table_entry, const DuckLake
 
 //! The compaction of a REST catalog, which its server performs when the function is executed
 struct RESTCompactionBindData : public TableFunctionData {
-	RESTCompactionBindData(DuckLakeCatalog &catalog, RESTCompactRequest request)
-	    : catalog(catalog), request(std::move(request)) {
+	RESTCompactionBindData(DuckLakeCatalog &catalog, RESTCompactRequest request, bool flush)
+	    : catalog(catalog), request(std::move(request)), flush(flush) {
 	}
 
 	reference<DuckLakeCatalog> catalog;
 	RESTCompactRequest request;
+	bool flush;
 };
 
 static void RESTCompactionExecute(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
@@ -850,19 +851,37 @@ static void RESTCompactionExecute(ClientContext &context, TableFunctionInput &da
 		}
 		output.SetValue(0, count, Value(result.schema_name));
 		output.SetValue(1, count, Value(result.table_name));
-		output.SetValue(2, count, Value::BIGINT(NumericCast<int64_t>(result.files_processed)));
-		output.SetValue(3, count, Value::BIGINT(NumericCast<int64_t>(result.files_created)));
+		if (data.flush) {
+			output.SetValue(2, count, Value::BIGINT(NumericCast<int64_t>(result.rows_flushed.GetIndex())));
+		} else {
+			output.SetValue(2, count, Value::BIGINT(NumericCast<int64_t>(result.files_processed.GetIndex())));
+			output.SetValue(3, count, Value::BIGINT(NumericCast<int64_t>(result.files_created.GetIndex())));
+		}
 		count++;
 	}
 	output.SetCardinality(count);
 }
 
-static unique_ptr<LogicalOperator> BindRESTCompaction(ClientContext &context, TableFunctionBindInput &input,
-                                                      TableIndex bind_index, DuckLakeCatalog &ducklake_catalog,
-                                                      CompactionType type) {
+unique_ptr<LogicalOperator> BindRESTCompaction(ClientContext &context, TableFunctionBindInput &input,
+                                               TableIndex bind_index, DuckLakeCatalog &ducklake_catalog,
+                                               RESTCompactionKind kind) {
 	RESTCompactRequest request;
-	request.type = type;
-	if (input.inputs.size() == 2) {
+	bool flush = kind == RESTCompactionKind::FLUSH_INLINED_DATA;
+	switch (kind) {
+	case RESTCompactionKind::MERGE_ADJACENT:
+		request.type = "merge_adjacent";
+		break;
+	case RESTCompactionKind::REWRITE_DELETES:
+		request.type = "rewrite_delete";
+		break;
+	case RESTCompactionKind::FLUSH_INLINED_DATA:
+		request.type = "flush_inlined_data";
+		break;
+	}
+	if (flush) {
+		request.schema_name = DuckLakeTableFunctionUtil::GetStringOption(input, "schema_name");
+		request.table_name = DuckLakeTableFunctionUtil::GetStringOption(input, "table_name");
+	} else if (input.inputs.size() == 2) {
 		request.table_name = DuckLakeTableFunctionUtil::GetTableName(input.inputs[1]);
 		if (request.table_name.empty()) {
 			throw BinderException("Table with name \"\" does not exist");
@@ -879,27 +898,38 @@ static unique_ptr<LogicalOperator> BindRESTCompaction(ClientContext &context, Ta
 			result = NumericCast<uint64_t>(number);
 		}
 	};
-	get_number("max_compacted_files", request.max_compacted_files);
-	get_number("min_file_size", request.min_file_size);
-	get_number("max_file_size", request.max_file_size);
-	if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "newer_than", "timestamp", value)) {
-		request.newer_than = value.ToString();
-	}
-	if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "older_than", "timestamp", value)) {
-		request.older_than = value.ToString();
-	}
-	if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "delete_threshold", "double", value)) {
-		request.delete_threshold = DoubleValue::Get(value);
+	if (!flush) {
+		get_number("max_compacted_files", request.max_compacted_files);
+		get_number("min_file_size", request.min_file_size);
+		get_number("max_file_size", request.max_file_size);
+		if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "newer_than", "timestamp", value)) {
+			request.newer_than = value.ToString();
+		}
+		if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "older_than", "timestamp", value)) {
+			request.older_than = value.ToString();
+		}
+		if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "delete_threshold", "double", value)) {
+			request.delete_threshold = DoubleValue::Get(value);
+		}
 	}
 	TableFunction function("ducklake_rest_compaction", {}, RESTCompactionExecute, nullptr, DuckLakeRunOnceState::Init);
-	auto bind_data = make_uniq<RESTCompactionBindData>(ducklake_catalog, std::move(request));
-	idx_t names_count = 4;
-	vector<Identifier> names {Identifier("schema_name"), Identifier("table_name"), Identifier("files_processed"),
-	                          Identifier("files_created")};
+	auto bind_data = make_uniq<RESTCompactionBindData>(ducklake_catalog, std::move(request), flush);
+	vector<Identifier> names {Identifier("schema_name"), Identifier("table_name")};
+	vector<LogicalType> types {LogicalType::VARCHAR, LogicalType::VARCHAR};
+	if (flush) {
+		names.emplace_back("rows_flushed");
+		types.push_back(LogicalType::BIGINT);
+	} else {
+		names.emplace_back("files_processed");
+		names.emplace_back("files_created");
+		types.push_back(LogicalType::BIGINT);
+		types.push_back(LogicalType::BIGINT);
+	}
+	auto column_count = names.size();
 	auto get = make_uniq<LogicalGet>(bind_index, BoundTableFunction(std::move(function)), std::move(bind_data),
-	                                 DuckLakeLogicalCompaction::GetResultTypes(), std::move(names));
+	                                 std::move(types), std::move(names));
 	auto &column_ids = get->GetMutableColumnIds();
-	for (idx_t i = 0; i < names_count; i++) {
+	for (idx_t i = 0; i < column_count; i++) {
 		column_ids.emplace_back(i);
 	}
 	return std::move(get);
@@ -916,7 +946,9 @@ static unique_ptr<LogicalOperator> BindCompaction(ClientContext &context, TableF
 	auto &ducklake_catalog = DuckLakeBaseMetadataFunction::GetCatalog(context, input);
 	auto &transaction = DuckLakeTransaction::Get(context, ducklake_catalog);
 	if (ducklake_catalog.IsREST()) {
-		return BindRESTCompaction(context, input, bind_index, ducklake_catalog, type);
+		return BindRESTCompaction(context, input, bind_index, ducklake_catalog,
+		                          type == CompactionType::MERGE_ADJACENT_TABLES ? RESTCompactionKind::MERGE_ADJACENT
+		                                                                        : RESTCompactionKind::REWRITE_DELETES);
 	}
 	uint64_t max_files = NumericLimits<uint64_t>::Maximum() - 1;
 	Value max_files_value;

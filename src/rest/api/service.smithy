@@ -71,9 +71,6 @@ service DuckLake {
         Config
         SnapshotData
         Select
-        InlinedDataForFlush
-        DeletedInlinedRows
-        InlinedFileDeletions
         TableSchemaVersions
         RowCount
         InlinedTables
@@ -105,7 +102,6 @@ union CommitRequest {
     insert_rows: InsertRowsRequest
     insert_files: InsertFilesRequest
     delete_data: DeleteDataRequest
-    flush_inlined_data: FlushInlinedDataRequest
 }
 
 /// The path of a file or directory. Clients can have another view of the data path of the DuckLake than the server (e.g.

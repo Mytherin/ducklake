@@ -67,9 +67,7 @@ DuckLakeRESTClient &RESTMetadataManager::GetClient() {
 }
 
 bool RESTMetadataManager::HasPendingChanges() const {
-	// flushes of empty inlined tables only drop the tables
-	return !catalog_requests.empty() || !transaction.GetFlushedInlinedTables().empty() ||
-	       !transaction.GetFlushedInlinedFileDeletions().empty();
+	return !catalog_requests.empty();
 }
 
 //===--------------------------------------------------------------------===//
@@ -274,12 +272,6 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 		request.filters = make_uniq<RESTScanFilters>(DuckLakeRESTFilters::Write(*filter_info, table));
 	}
 	auto response = GetClient().Select(request);
-	// this transaction reads the inlined deletions it flushed from its delete files
-	if (include_local_changes && transaction.InlinedFileDeletionsFlushed(table.GetTableId())) {
-		for (auto &file : response.files) {
-			file.inlined_file_deletions.clear();
-		}
-	}
 	if (plan.fetch) {
 		inlined_rows_cache.Add(inlined_key, plan.projection, response.inlined_data);
 	}
@@ -429,15 +421,6 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadCachedInlinedRows(RESTInlinedRo
 	return ToQueryResult(std::move(result));
 }
 
-set<idx_t> RESTMetadataManager::GetTransactionDeletes(const DuckLakeTableEntry &table,
-                                                      const string &inlined_table_name) {
-	auto deletes = transaction.GetInlinedDeletes(table.GetTableId(), inlined_table_name);
-	if (!deletes) {
-		return set<idx_t>();
-	}
-	return deletes->rows;
-}
-
 unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedData(DuckLakeSnapshot snapshot,
                                                              const string &inlined_table_name,
                                                              const vector<string> &columns_to_read) {
@@ -458,48 +441,6 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedDataDeletions(DuckLakeSn
                                                                       const vector<string> &columns_to_read) {
 	return ReadCachedInlinedRows(RESTInlinedRowsKind::DELETIONS, start_snapshot, end_snapshot, inlined_table_name,
 	                             columns_to_read);
-}
-
-unique_ptr<QueryResult> RESTMetadataManager::ReadAllInlinedDataForFlush(DuckLakeSnapshot snapshot,
-                                                                        const string &inlined_table_name,
-                                                                        const DuckLakeTableEntry &table,
-                                                                        const string &sort_order_sql,
-                                                                        const vector<string> &columns_to_read) {
-	RESTInlinedDataForFlushRequest request;
-	request.snapshot = snapshot;
-	auto handle = ParseInlinedTableName(inlined_table_name);
-	request.table_id = handle.table_id.index;
-	request.schema_version = handle.schema_version;
-	request.columns = columns_to_read;
-	request.order_by = sort_order_sql;
-	request.deleted_row_ids = GetTransactionDeletes(table, inlined_table_name);
-	return ToQueryResult(GetClient().InlinedDataForFlush(request));
-}
-
-DuckLakeDeletedRowVersions RESTMetadataManager::GetDeletedInlinedRowVersions(DuckLakeTableEntry &table,
-                                                                             const string &inlined_table_name,
-                                                                             DuckLakeSnapshot snapshot) {
-	RESTDeletedInlinedRowsRequest request;
-	request.snapshot = snapshot;
-	request.table_id = table.GetTableId().index;
-	request.schema_version = ParseInlinedTableName(inlined_table_name).schema_version;
-	request.deleted_row_ids = GetTransactionDeletes(table, inlined_table_name);
-	DuckLakeDeletedRowVersions result;
-	for (auto &row : GetClient().DeletedInlinedRows(request).rows) {
-		result.emplace(make_pair(row.row_id, row.begin_snapshot), row.end_snapshot);
-	}
-	return result;
-}
-
-vector<DuckLakeInlinedFileDeletionEntry>
-RESTMetadataManager::GetInlinedFileDeletionsForFlush(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot) {
-	if (IsTransactionLocal(table.GetTableId())) {
-		return {};
-	}
-	RESTInlinedFileDeletionsRequest request;
-	request.snapshot = snapshot;
-	request.table_id = table.GetTableId().index;
-	return std::move(GetClient().InlinedFileDeletions(request).deletions);
 }
 
 idx_t RESTMetadataManager::GetBeginSnapshotForTable(TableIndex table_id) {
@@ -1059,25 +1000,6 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 	// inserts go last, they are in the format of the tables at the end of the transaction
 	AddNameMaps(requests);
 	AddInserts(transaction_changes, requests);
-	auto &flushed_tables = flush_transaction.GetFlushedInlinedTables();
-	auto &flushed_file_deletions = flush_transaction.GetFlushedInlinedFileDeletions();
-	if (!flushed_tables.empty() || !flushed_file_deletions.empty()) {
-		auto &flush = AddRequest<RESTFlushInlinedDataRequest>(requests);
-		for (auto &flushed_table : flushed_tables) {
-			RESTFlushedInlinedTable table;
-			table.table_id = ToRequestId(ParseInlinedTableName(flushed_table.inlined_table.table_name).table_id.index);
-			table.schema_version = flushed_table.inlined_table.schema_version;
-			table.flush_snapshot_id = flushed_table.flush_snapshot_id;
-			table.wrote_files = flushed_table.wrote_files;
-			flush.inlined_tables.push_back(std::move(table));
-		}
-		for (auto &entry : flushed_file_deletions) {
-			RESTFlushedFileDeletions deletions;
-			deletions.table_id = ToRequestId(entry.first.index);
-			deletions.flush_snapshot_id = entry.second;
-			flush.file_deletions.push_back(deletions);
-		}
-	}
 	if (transaction_snapshot.snapshot_id != DConstants::INVALID_INDEX) {
 		request.snapshot = transaction_snapshot;
 	}

@@ -141,13 +141,6 @@ SELECT (response->'$.inlined_data') IS NULL FROM ducklake_rest_request('{rest_se
 ----
 true
 
-# the inlined rows that a flush writes
-query II
-SELECT json_array_length(response->'$.rows'), response->>'$.columns[0].type.id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/inlined-data',
-'{"schema_version": 1, "columns": ["i"]}')
-----
-2	INTEGER
-
 query I
 SELECT response->>'$.row_count' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/row-count',
 '{"schema_version": 1, "count": "inlined"}')
@@ -159,22 +152,8 @@ SELECT response->>'$.inlined_data[0].schema_version' FROM ducklake_rest_request(
 ----
 1
 
-# the schema version has to have inlined data
-query II
-SELECT status, response->>'$.error.message' LIKE '%has no inlined data for schema version 7%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/inlined-data',
-'{"schema_version": 7, "columns": ["i"]}')
-----
-404	true
-
 query I
 SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/row-count', '{"count": "inlined"}')
-----
-400
-
-# the columns to read cannot inject SQL into the queries of the server
-query I
-SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/inlined-data',
-'{"schema_version": 1, "columns": ["(SELECT 42)"]}')
 ----
 400
 
@@ -304,6 +283,39 @@ SELECT status, json_array_length(response->'$.insertions') > 0 FROM ducklake_res
 '{"start_snapshot_id": 0, "changes": "insertions"}')
 ----
 200	false
+
+# the server writes the inlined data to files
+query III
+SELECT status, response->>'$.results[0].table_name', response->>'$.results[0].rows_flushed' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/compactions',
+'{"type": "flush_inlined_data", "table_name": "t"}')
+----
+200	t	2
+
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/compactions', '{"type": "flush_inlined_data"}')
+----
+200
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/compactions', '{"type": "flush_inlined_data", "table_name": "missing"}')
+----
+404	Catalog
+
+# the endpoints of the client side flush are gone
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/inlined-data', '{}')
+----
+404
+
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/deleted-inlined-rows', '{}')
+----
+404
+
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/tables/1/inlined-file-deletions', '')
+----
+404
 
 statement ok
 DETACH dl

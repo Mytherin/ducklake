@@ -68,34 +68,39 @@ void RESTCatalogEntryTypeCodec::Read(RESTJsonIn in, CatalogType &result) {
 	result = FromString(in.Str());
 }
 
-const char *RESTCompactionTypeCodec::ToString(CompactionType value) {
-	switch (value) {
-	case CompactionType::MERGE_ADJACENT_TABLES:
-		return "merge_adjacent";
-	case CompactionType::REWRITE_DELETES:
-		return "rewrite_delete";
-	default:
-		throw InternalException("CompactionType value %d is not a value of the REST API type CompactionType",
-		                        static_cast<int>(value));
-	}
-}
-
-CompactionType RESTCompactionTypeCodec::FromString(const string &value) {
+const char *RESTCompactionTypeCodec::ToString(const string &value) {
 	if (value == "merge_adjacent") {
-		return CompactionType::MERGE_ADJACENT_TABLES;
+		return "merge_adjacent";
 	}
 	if (value == "rewrite_delete") {
-		return CompactionType::REWRITE_DELETES;
+		return "rewrite_delete";
 	}
-	throw InvalidInputException(
-	    "DuckLake REST: \"%s\" is not a valid CompactionType (expected one of merge_adjacent, rewrite_delete)", value);
+	if (value == "flush_inlined_data") {
+		return "flush_inlined_data";
+	}
+	throw InternalException("\"%s\" is not a value of the REST API type CompactionType", value);
 }
 
-JSONMutableValue RESTCompactionTypeCodec::Write(JSONWriter &writer, CompactionType value) {
+string RESTCompactionTypeCodec::FromString(const string &value) {
+	if (value == "merge_adjacent") {
+		return value;
+	}
+	if (value == "rewrite_delete") {
+		return value;
+	}
+	if (value == "flush_inlined_data") {
+		return value;
+	}
+	throw InvalidInputException("DuckLake REST: \"%s\" is not a valid CompactionType (expected one of merge_adjacent, "
+	                            "rewrite_delete, flush_inlined_data)",
+	                            value);
+}
+
+JSONMutableValue RESTCompactionTypeCodec::Write(JSONWriter &writer, const string &value) {
 	return writer.CreateString(ToString(value));
 }
 
-void RESTCompactionTypeCodec::Read(RESTJsonIn in, CompactionType &result) {
+void RESTCompactionTypeCodec::Read(RESTJsonIn in, string &result) {
 	result = FromString(in.Str());
 }
 
@@ -728,8 +733,15 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCom
 	auto result = writer.CreateObject();
 	result.Add("schema_name", RESTWriteValue<RESTStringCodec>(writer, value.schema_name));
 	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
-	result.Add("files_processed", RESTWriteValue<RESTUInt64Codec>(writer, value.files_processed));
-	result.Add("files_created", RESTWriteValue<RESTUInt64Codec>(writer, value.files_created));
+	if (!RESTIsNull(value.files_processed)) {
+		result.Add("files_processed", RESTWriteValue<RESTUInt64Codec>(writer, value.files_processed));
+	}
+	if (!RESTIsNull(value.files_created)) {
+		result.Add("files_created", RESTWriteValue<RESTUInt64Codec>(writer, value.files_created));
+	}
+	if (!RESTIsNull(value.rows_flushed)) {
+		result.Add("rows_flushed", RESTWriteValue<RESTUInt64Codec>(writer, value.rows_flushed));
+	}
 	return result;
 }
 
@@ -741,8 +753,24 @@ RESTCompactionResult DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	RESTCompactionResult result;
 	RESTReadValue<RESTStringCodec>(in.Get("schema_name"), result.schema_name);
 	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
-	RESTReadValue<RESTUInt64Codec>(in.Get("files_processed"), result.files_processed);
-	RESTReadValue<RESTUInt64Codec>(in.Get("files_created"), result.files_created);
+	{
+		auto entry = in.TryGet("files_processed");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.files_processed);
+		}
+	}
+	{
+		auto entry = in.TryGet("files_created");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.files_created);
+		}
+	}
+	{
+		auto entry = in.TryGet("rows_flushed");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.rows_flushed);
+		}
+	}
 	return result;
 }
 
@@ -1176,26 +1204,6 @@ DuckLakeDeleteScanEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		result.inlined_file_deletions.emplace(
 		    key, RESTUInt64Codec::template Get<typename map_t::mapped_type>(item.Get("snapshot_id")));
 	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDeletedRowVersion &value) {
-	auto result = writer.CreateObject();
-	result.Add("row_id", RESTWriteValue<RESTInt64Codec>(writer, value.row_id));
-	result.Add("begin_snapshot", RESTWriteValue<RESTInt64Codec>(writer, value.begin_snapshot));
-	result.Add("end_snapshot", RESTWriteValue<RESTInt64Codec>(writer, value.end_snapshot));
-	return result;
-}
-
-template <>
-RESTDeletedRowVersion DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DeletedRowVersion");
-	}
-	RESTDeletedRowVersion result;
-	RESTReadValue<RESTInt64Codec>(in.Get("row_id"), result.row_id);
-	RESTReadValue<RESTInt64Codec>(in.Get("begin_snapshot"), result.begin_snapshot);
-	RESTReadValue<RESTInt64Codec>(in.Get("end_snapshot"), result.end_snapshot);
 	return result;
 }
 
@@ -1679,53 +1687,6 @@ RESTFileRowDeletes DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	RESTFileRowDeletes result;
 	RESTReadValue<RESTUInt64Codec>(in.Get("data_file_id"), result.data_file_id);
 	RESTReadValue<RESTListCodec<RESTUInt64Codec>>(in.Get("row_ids"), result.row_ids);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFlushedFileDeletions &value) {
-	auto result = writer.CreateObject();
-	result.Add("table_id", RESTWriteValue<RESTInt64Codec>(writer, value.table_id));
-	result.Add("flush_snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.flush_snapshot_id));
-	return result;
-}
-
-template <>
-RESTFlushedFileDeletions DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for FlushedFileDeletions");
-	}
-	RESTFlushedFileDeletions result;
-	RESTReadValue<RESTInt64Codec>(in.Get("table_id"), result.table_id);
-	RESTReadValue<RESTUInt64Codec>(in.Get("flush_snapshot_id"), result.flush_snapshot_id);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFlushedInlinedTable &value) {
-	auto result = writer.CreateObject();
-	result.Add("table_id", RESTWriteValue<RESTInt64Codec>(writer, value.table_id));
-	result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
-	result.Add("flush_snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.flush_snapshot_id));
-	result.Add("wrote_files", RESTWriteValue<RESTBoolCodec>(writer, value.wrote_files));
-	return result;
-}
-
-template <>
-RESTFlushedInlinedTable DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for FlushedInlinedTable");
-	}
-	RESTFlushedInlinedTable result;
-	RESTReadValue<RESTInt64Codec>(in.Get("table_id"), result.table_id);
-	RESTReadValue<RESTUInt64Codec>(in.Get("schema_version"), result.schema_version);
-	RESTReadValue<RESTUInt64Codec>(in.Get("flush_snapshot_id"), result.flush_snapshot_id);
-	{
-		auto entry = in.TryGet("wrote_files");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTBoolCodec>(entry, result.wrote_files);
-		} else {
-			result.wrote_files = true;
-		}
-	}
 	return result;
 }
 
@@ -3411,70 +3372,6 @@ RESTConfigRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDeletedInlinedRowsRequest &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.snapshot)) {
-		result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
-	}
-	if (!RESTIsNull(value.snapshot_id)) {
-		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
-	}
-	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
-	result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
-	result.Add("deleted_row_ids", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.deleted_row_ids));
-	return result;
-}
-
-template <>
-RESTDeletedInlinedRowsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DeletedInlinedRowsRequest");
-	}
-	RESTDeletedInlinedRowsRequest result;
-	{
-		auto entry = in.TryGet("snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(entry, result.snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("snapshot_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.snapshot_id);
-		}
-	}
-	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
-	RESTReadValue<RESTUInt64Codec>(in.Get("schema_version"), result.schema_version);
-	{
-		auto entry = in.TryGet("deleted_row_ids");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.deleted_row_ids);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDeletedInlinedRowsResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("rows", RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTDeletedRowVersion>>>(writer, value.rows));
-	return result;
-}
-
-template <>
-RESTDeletedInlinedRowsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DeletedInlinedRowsResponse");
-	}
-	RESTDeletedInlinedRowsResponse result;
-	{
-		auto entry = in.TryGet("rows");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTDeletedRowVersion>>>(entry, result.rows);
-		}
-	}
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDuckLakeTableRequest &value) {
 	auto result = writer.CreateObject();
 	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
@@ -3521,116 +3418,6 @@ RESTDuckLakeTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("table_names");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.table_names);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTInlinedDataForFlushRequest &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.snapshot)) {
-		result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
-	}
-	if (!RESTIsNull(value.snapshot_id)) {
-		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
-	}
-	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
-	result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
-	result.Add("columns", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.columns));
-	result.Add("order_by", RESTWriteValue<RESTStringCodec>(writer, value.order_by));
-	result.Add("deleted_row_ids", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.deleted_row_ids));
-	return result;
-}
-
-template <>
-RESTInlinedDataForFlushRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for InlinedDataForFlushRequest");
-	}
-	RESTInlinedDataForFlushRequest result;
-	{
-		auto entry = in.TryGet("snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(entry, result.snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("snapshot_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.snapshot_id);
-		}
-	}
-	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
-	RESTReadValue<RESTUInt64Codec>(in.Get("schema_version"), result.schema_version);
-	RESTReadValue<RESTListCodec<RESTStringCodec>>(in.Get("columns"), result.columns);
-	{
-		auto entry = in.TryGet("order_by");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.order_by);
-		} else {
-			result.order_by = string("");
-		}
-	}
-	{
-		auto entry = in.TryGet("deleted_row_ids");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.deleted_row_ids);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTInlinedFileDeletionsRequest &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.snapshot)) {
-		result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
-	}
-	if (!RESTIsNull(value.snapshot_id)) {
-		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
-	}
-	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
-	return result;
-}
-
-template <>
-RESTInlinedFileDeletionsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for InlinedFileDeletionsRequest");
-	}
-	RESTInlinedFileDeletionsRequest result;
-	{
-		auto entry = in.TryGet("snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(entry, result.snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("snapshot_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.snapshot_id);
-		}
-	}
-	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTInlinedFileDeletionsResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("deletions", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeInlinedFileDeletionEntry>>>(
-	                            writer, value.deletions));
-	return result;
-}
-
-template <>
-RESTInlinedFileDeletionsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for InlinedFileDeletionsResponse");
-	}
-	RESTInlinedFileDeletionsResponse result;
-	{
-		auto entry = in.TryGet("deletions");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeInlinedFileDeletionEntry>>>(entry, result.deletions);
 		}
 	}
 	return result;
@@ -5107,36 +4894,6 @@ RESTDeleteDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFlushInlinedDataRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("inlined_tables",
-	           RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTFlushedInlinedTable>>>(writer, value.inlined_tables));
-	result.Add("file_deletions",
-	           RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTFlushedFileDeletions>>>(writer, value.file_deletions));
-	return result;
-}
-
-template <>
-RESTFlushInlinedDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for FlushInlinedDataRequest");
-	}
-	RESTFlushInlinedDataRequest result;
-	{
-		auto entry = in.TryGet("inlined_tables");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTFlushedInlinedTable>>>(entry, result.inlined_tables);
-		}
-	}
-	{
-		auto entry = in.TryGet("file_deletions");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTFlushedFileDeletions>>>(entry, result.file_deletions);
-		}
-	}
-	return result;
-}
-
 //===--------------------------------------------------------------------===//
 // Commit requests
 //===--------------------------------------------------------------------===//
@@ -5172,8 +4929,6 @@ const char *RESTCommitRequest::Path() const {
 		return "insert_files";
 	case RESTCommitRequestType::DELETE_DATA:
 		return "delete_data";
-	case RESTCommitRequestType::FLUSH_INLINED_DATA:
-		return "flush_inlined_data";
 	default:
 		throw InternalException("Unsupported RESTCommitRequestType");
 	}
@@ -5225,9 +4980,6 @@ optional_idx RESTCommitRequest::TypeFromPath(const string &path) {
 	if (path == "delete_data") {
 		return static_cast<idx_t>(RESTCommitRequestType::DELETE_DATA);
 	}
-	if (path == "flush_inlined_data") {
-		return static_cast<idx_t>(RESTCommitRequestType::FLUSH_INLINED_DATA);
-	}
 	return optional_idx();
 }
 
@@ -5264,9 +5016,6 @@ static unique_ptr<RESTCommitRequest> ReadCommitRequest(RESTCommitRequestType typ
 		return make_uniq<RESTInsertFilesRequest>(DuckLakeRESTSerializer::Read<RESTInsertFilesRequest>(parameters));
 	case RESTCommitRequestType::DELETE_DATA:
 		return make_uniq<RESTDeleteDataRequest>(DuckLakeRESTSerializer::Read<RESTDeleteDataRequest>(parameters));
-	case RESTCommitRequestType::FLUSH_INLINED_DATA:
-		return make_uniq<RESTFlushInlinedDataRequest>(
-		    DuckLakeRESTSerializer::Read<RESTFlushInlinedDataRequest>(parameters));
 	default:
 		throw InternalException("Unsupported RESTCommitRequestType");
 	}
@@ -5320,10 +5069,6 @@ JSONMutableValue RESTCommitRequestCodec::Write(JSONWriter &writer, const RESTCom
 		break;
 	case RESTCommitRequestType::DELETE_DATA:
 		result.Add("delete_data", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTDeleteDataRequest>()));
-		break;
-	case RESTCommitRequestType::FLUSH_INLINED_DATA:
-		result.Add("flush_inlined_data",
-		           DuckLakeRESTSerializer::Write(writer, value.Cast<RESTFlushInlinedDataRequest>()));
 		break;
 	default:
 		throw InternalException("Unsupported RESTCommitRequestType");
@@ -5391,9 +5136,6 @@ void DuckLakeRESTCommitHandler::Apply(RESTCommitRequest &request) {
 		break;
 	case RESTCommitRequestType::DELETE_DATA:
 		DeleteData(request.Cast<RESTDeleteDataRequest>());
-		break;
-	case RESTCommitRequestType::FLUSH_INLINED_DATA:
-		FlushInlinedData(request.Cast<RESTFlushInlinedDataRequest>());
 		break;
 	default:
 		throw InternalException("Unsupported RESTCommitRequestType");
@@ -5565,13 +5307,6 @@ static string ConfigEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
-static string DeletedInlinedRowsEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTDeletedInlinedRowsRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::DeletedInlinedRows(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
 static string DuckLakeTableEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTDuckLakeTableRequest>(document.Root());
@@ -5583,20 +5318,6 @@ static string DuckLakeTablesEndpoint(DuckLakeRESTRequest &request, const string 
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTDuckLakeTablesRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::DuckLakeTables(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
-static string InlinedDataForFlushEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTInlinedDataForFlushRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::InlinedDataForFlush(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
-static string InlinedFileDeletionsEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTInlinedFileDeletionsRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::InlinedFileDeletions(request, parameters);
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
@@ -5674,11 +5395,8 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	static const unordered_map<string, rest_endpoint_t> endpoints = {
 	    {"column_mappings", ColumnMappingsEndpoint},
 	    {"config", ConfigEndpoint},
-	    {"deleted_inlined_rows", DeletedInlinedRowsEndpoint},
 	    {"ducklake_table", DuckLakeTableEndpoint},
 	    {"ducklake_tables", DuckLakeTablesEndpoint},
-	    {"inlined_data_for_flush", InlinedDataForFlushEndpoint},
-	    {"inlined_file_deletions", InlinedFileDeletionsEndpoint},
 	    {"inlined_tables", InlinedTablesEndpoint},
 	    {"list_snapshots", ListSnapshotsEndpoint},
 	    {"row_count", RowCountEndpoint},
@@ -5697,20 +5415,8 @@ const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	static const vector<RESTRoute> routes = {
 	    {"column_mappings", "GET", "/v1/column-mappings", {{"start_from", RESTParameterType::UINT, "start_from"}}},
 	    {"config", "GET", "/v1/config", {}},
-	    {"deleted_inlined_rows",
-	     "POST",
-	     "/v1/tables/{table_id}/deleted-inlined-rows",
-	     {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"ducklake_table", "GET", "/v1/metadata-tables/{table_name}", {{"table_name", RESTParameterType::STRING, ""}}},
 	    {"ducklake_tables", "GET", "/v1/metadata-tables", {}},
-	    {"inlined_data_for_flush",
-	     "POST",
-	     "/v1/tables/{table_id}/inlined-data",
-	     {{"table_id", RESTParameterType::UINT, ""}}},
-	    {"inlined_file_deletions",
-	     "POST",
-	     "/v1/tables/{table_id}/inlined-file-deletions",
-	     {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"inlined_tables", "POST", "/v1/tables/{table_id}/inlined-tables", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"list_snapshots",
 	     "GET",
@@ -5757,12 +5463,6 @@ DuckLakeMetadata DuckLakeRESTClientAPI::Config(const RESTConfigRequest &request)
 	return DuckLakeRESTSerializer::Read<DuckLakeMetadata>(document.Root());
 }
 
-RESTDeletedInlinedRowsResponse DuckLakeRESTClientAPI::DeletedInlinedRows(const RESTDeletedInlinedRowsRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("deleted_inlined_rows", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTDeletedInlinedRowsResponse>(document.Root());
-}
-
 RESTInlinedRows DuckLakeRESTClientAPI::DuckLakeTable(const RESTDuckLakeTableRequest &request) {
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("ducklake_table", DuckLakeRESTSerializer::ToJSON(request), true));
@@ -5773,19 +5473,6 @@ RESTDuckLakeTablesResponse DuckLakeRESTClientAPI::DuckLakeTables(const RESTDuckL
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("ducklake_tables", DuckLakeRESTSerializer::ToJSON(request), true));
 	return DuckLakeRESTSerializer::Read<RESTDuckLakeTablesResponse>(document.Root());
-}
-
-RESTInlinedRows DuckLakeRESTClientAPI::InlinedDataForFlush(const RESTInlinedDataForFlushRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("inlined_data_for_flush", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTInlinedRows>(document.Root());
-}
-
-RESTInlinedFileDeletionsResponse
-DuckLakeRESTClientAPI::InlinedFileDeletions(const RESTInlinedFileDeletionsRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("inlined_file_deletions", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTInlinedFileDeletionsResponse>(document.Root());
 }
 
 RESTInlinedTablesResponse DuckLakeRESTClientAPI::InlinedTables(const RESTInlinedTablesRequest &request) {

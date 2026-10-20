@@ -186,35 +186,6 @@ Request: no body.
 
 Response: [`Metadata`](#metadata).
 
-### `deleted_inlined_rows`
-
-Returns the deleted versions of the inlined rows of a table that a flush writes.
-
-The client writes delete files for the flushed rows with them.
-
-`POST /v1/tables/{table_id}/deleted-inlined-rows`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `table_id` | path | `uint64` | The table. |
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
-| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `schema_version` | `uint64` | The schema version of the inlined rows. |
-| `deleted_row_ids` | list of `uint64` (default `[]`) | Rows that the transaction of the client deleted, which are not flushed. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `rows` | list of [`DeletedRowVersion`](#deletedrowversion) (default `[]`) | The deleted rows. |
-
 ### `ducklake_table`
 
 Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
@@ -249,61 +220,6 @@ Response:
 | Field | Type | Description |
 |-------|------|-------------|
 | `table_names` | list of `string` (default `[]`) | The tables. |
-
-### `inlined_data_for_flush`
-
-Reads the inlined rows of a table that a flush writes.
-
-These are all rows that were inserted up to the snapshot, including the rows that were deleted, in the order in
-which they are flushed. The rows that the transaction of the client deleted are not flushed.
-
-`POST /v1/tables/{table_id}/inlined-data`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `table_id` | path | `uint64` | The table. |
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
-| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `schema_version` | `uint64` | The schema version of the table whose columns the rows have (see `inlined_tables`). |
-| `columns` | list of `string` | The columns to read, e.g. `["i"]`. Columns can be cast to the type to read them as, e.g. `"i::BIGINT"`. |
-| `order_by` | `string` (default `""`) | The sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are ordered by it, then by their row id. |
-| `deleted_row_ids` | list of `uint64` (default `[]`) | Rows that the transaction of the client deleted, which are not flushed. |
-
-Response: [`InlinedRows`](#inlinedrows).
-
-### `inlined_file_deletions`
-
-Returns the deletions of rows of data files that are inlined in the catalog.
-
-Each deletion comes with the delete file of its data file, so that a client can write them to delete files.
-
-`POST /v1/tables/{table_id}/inlined-file-deletions`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `table_id` | path | `uint64` | The table. |
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
-| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `deletions` | list of [`InlinedFileDeletion`](#inlinedfiledeletion) (default `[]`) | The deletions. |
 
 ### `inlined_tables`
 
@@ -537,11 +453,12 @@ transaction of its own.
 
 ### `compact`
 
-Compacts the data files of the DuckLake on the server.
+Compacts the DuckLake on the server.
 
-The server merges or rewrites the files and commits the result in a transaction of its own, so the compaction does
-not see the uncommitted changes of a client. The files are read and written by the server; the parameters are the
-options of `ducklake_merge_adjacent_files` and `ducklake_rewrite_data_files`.
+The server merges or rewrites data files, or writes inlined data to files, and commits the result in a transaction
+of its own, so the compaction does not see the uncommitted changes of a client. The files are read and written by
+the server; the parameters are the options of `ducklake_merge_adjacent_files`, `ducklake_rewrite_data_files` and
+`ducklake_flush_inlined_data`.
 
 `POST /v1/compactions`
 
@@ -550,7 +467,7 @@ Request:
 | Field | Type | Description |
 |-------|------|-------------|
 | `type` | [`CompactionType`](#compactiontype) | The type of the compaction. |
-| `schema_name` | `string` (optional) | The schema of `table_name`, the default schema if absent. |
+| `schema_name` | `string` (optional) | The schema of `table_name`, the default schema if absent. For `flush_inlined_data`, all tables of the schema are flushed if there is no `table_name`. |
 | `table_name` | `string` (optional) | Only compact this table, all tables if absent. |
 | `max_compacted_files` | `uint64` (optional) | The maximum number of files to compact. |
 | `min_file_size` | `uint64` (optional) | For `merge_adjacent`: only merge files of at least this size. |
@@ -842,22 +759,6 @@ Request:
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
-### `flush_inlined_data`
-
-Marks inlined data as flushed.
-
-The rows are deleted from the inlined data tables when the transaction commits. The files that hold the flushed rows
-are inserted with `insert_files`.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `inlined_tables` | list of [`FlushedInlinedTable`](#flushedinlinedtable) (default `[]`) | The inlined data tables whose rows up to the snapshot were flushed. |
-| `file_deletions` | list of [`FlushedFileDeletions`](#flushedfiledeletions) (default `[]`) | The tables whose inlined deletions of data file rows up to the snapshot were flushed to delete files (registered with `delete_data`). |
-
-Response: as for [`commit_transaction`](#commit_transaction).
-
 ## Types
 
 The structures that the endpoints share. Fields that are optional can be `null` or absent; the server and the
@@ -1030,8 +931,9 @@ The compaction of a table.
 |-------|------|-------------|
 | `schema_name` | `string` | The schema of the table. |
 | `table_name` | `string` | The name of the table. |
-| `files_processed` | `uint64` | The number of files that were compacted. |
-| `files_created` | `uint64` | The number of files that were written. |
+| `files_processed` | `uint64` (optional) | For `merge_adjacent` and `rewrite_delete`: the number of files that were compacted. |
+| `files_created` | `uint64` (optional) | For `merge_adjacent` and `rewrite_delete`: the number of files that were written. |
+| `rows_flushed` | `uint64` (optional) | For `flush_inlined_data`: the number of rows that were written to files. |
 
 ### `CompactionType`
 
@@ -1041,6 +943,7 @@ The type of a compaction.
 |-------|-------------|
 | `merge_adjacent` | Merges small adjacent files. |
 | `rewrite_delete` | Rewrites files with many deleted rows. |
+| `flush_inlined_data` | Writes the data and deletions that are inlined in the catalog to files. |
 
 ### `CreatedEntry`
 
@@ -1144,16 +1047,6 @@ A data file whose rows were deleted between two snapshots.
 | `end_snapshot` | `uint64` (optional) | The last snapshot of the range. |
 | `file_id` | `uint64` (optional) | The id of the data file. |
 | `inlined_file_deletions` | list of `uint64` (default `[]`) | Entries of `row_id` and `snapshot_id`. The deleted rows of the file that are inlined in the catalog, with the snapshot that deleted them. |
-
-### `DeletedRowVersion`
-
-A deleted version of an inlined row.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `row_id` | `int64` | The row id. |
-| `begin_snapshot` | `int64` | The snapshot that inserted the row. |
-| `end_snapshot` | `int64` | The snapshot that deleted the row. |
 
 ### `DropNotNull`
 
@@ -1292,26 +1185,6 @@ Deletes of rows of a data file that are inlined in the catalog.
 |-------|------|-------------|
 | `data_file_id` | `uint64` | The data file. |
 | `row_ids` | list of `uint64` | The positions of the deleted rows in the file. |
-
-### `FlushedFileDeletions`
-
-The inlined deletions of rows of data files of a table that were flushed.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_id` | `int64` | The table. |
-| `flush_snapshot_id` | `uint64` | The deletions up to this snapshot were flushed. |
-
-### `FlushedInlinedTable`
-
-The inlined rows of a table at a schema version that were flushed.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_id` | `int64` | The table. |
-| `schema_version` | `uint64` | The schema version of the inlined rows. |
-| `flush_snapshot_id` | `uint64` | The rows up to this snapshot were flushed. |
-| `wrote_files` | `bool` (default `true`) | Whether the flush wrote data files, the rows of a flush that wrote none are not deleted. |
 
 ### `GlobalColumnStats`
 

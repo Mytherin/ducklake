@@ -6,11 +6,12 @@ namespace ducklake.rest
 
 use ducklake.rest.codegen#cppType
 
-/// Compacts the data files of the DuckLake on the server.
+/// Compacts the DuckLake on the server.
 ///
-/// The server merges or rewrites the files and commits the result in a transaction of its own, so the compaction does
-/// not see the uncommitted changes of a client. The files are read and written by the server; the parameters are the
-/// options of `ducklake_merge_adjacent_files` and `ducklake_rewrite_data_files`.
+/// The server merges or rewrites data files, or writes inlined data to files, and commits the result in a transaction
+/// of its own, so the compaction does not see the uncommitted changes of a client. The files are read and written by
+/// the server; the parameters are the options of `ducklake_merge_adjacent_files`, `ducklake_rewrite_data_files` and
+/// `ducklake_flush_inlined_data`.
 @http(method: "POST", uri: "/v1/compactions")
 operation Compact {
     input := {
@@ -18,7 +19,8 @@ operation Compact {
         @required
         type: CompactionType
 
-        /// The schema of `table_name`, the default schema if absent.
+        /// The schema of `table_name`, the default schema if absent. For `flush_inlined_data`, all tables of the schema
+        /// are flushed if there is no `table_name`.
         schema_name: String
 
         /// Only compact this table, all tables if absent.
@@ -61,13 +63,14 @@ structure CompactionResult {
     @required
     table_name: String
 
-    /// The number of files that were compacted.
-    @required
+    /// For `merge_adjacent` and `rewrite_delete`: the number of files that were compacted.
     files_processed: UInt64
 
-    /// The number of files that were written.
-    @required
+    /// For `merge_adjacent` and `rewrite_delete`: the number of files that were written.
     files_created: UInt64
+
+    /// For `flush_inlined_data`: the number of rows that were written to files.
+    rows_flushed: UInt64
 }
 
 list CompactionResultList {

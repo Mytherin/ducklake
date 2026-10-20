@@ -456,6 +456,12 @@ static unique_ptr<LogicalOperator> FlushInlinedDataBind(ClientContext &context, 
                                                         TableIndex bind_index, vector<Identifier> &return_names) {
 	auto &ducklake_catalog = DuckLakeBaseMetadataFunction::GetCatalog(context, input);
 	auto &transaction = DuckLakeTransaction::Get(context, ducklake_catalog);
+	if (ducklake_catalog.IsREST()) {
+		return_names.push_back("schema_name");
+		return_names.push_back("table_name");
+		return_names.push_back("rows_flushed");
+		return BindRESTCompaction(context, input, bind_index, ducklake_catalog, RESTCompactionKind::FLUSH_INLINED_DATA);
+	}
 
 	auto schema = DuckLakeTableFunctionUtil::GetStringOption(input, "schema_name");
 	auto table = DuckLakeTableFunctionUtil::GetStringOption(input, "table_name");

@@ -309,19 +309,6 @@ structure DeleteDataRequest {
     delete_attempted: Boolean = false
 }
 
-/// Marks inlined data as flushed.
-///
-/// The rows are deleted from the inlined data tables when the transaction commits. The files that hold the flushed rows
-/// are inserted with `insert_files`.
-structure FlushInlinedDataRequest {
-    /// The inlined data tables whose rows up to the snapshot were flushed.
-    inlined_tables: FlushedInlinedTableList = []
-
-    /// The tables whose inlined deletions of data file rows up to the snapshot were flushed to delete files (registered
-    /// with `delete_data`).
-    file_deletions: FlushedFileDeletionsList = []
-}
-
 /// How a commit is retried on conflicts.
 structure RetryConfig {
     /// The number of retries.
@@ -421,31 +408,3 @@ structure DroppedFile {
     file_size_bytes: UInt64
 }
 
-/// The inlined rows of a table at a schema version that were flushed.
-structure FlushedInlinedTable {
-    /// The table.
-    @required
-    table_id: Long
-
-    /// The schema version of the inlined rows.
-    @required
-    schema_version: UInt64
-
-    /// The rows up to this snapshot were flushed.
-    @required
-    flush_snapshot_id: UInt64
-
-    /// Whether the flush wrote data files, the rows of a flush that wrote none are not deleted.
-    wrote_files: Boolean = true
-}
-
-/// The inlined deletions of rows of data files of a table that were flushed.
-structure FlushedFileDeletions {
-    /// The table.
-    @required
-    table_id: Long
-
-    /// The deletions up to this snapshot were flushed.
-    @required
-    flush_snapshot_id: UInt64
-}

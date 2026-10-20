@@ -41,10 +41,10 @@ struct RESTCatalogEntryTypeCodec : public RESTCodec<RESTCatalogEntryTypeCodec> {
 
 //! The type of a compaction.
 struct RESTCompactionTypeCodec : public RESTCodec<RESTCompactionTypeCodec> {
-	static const char *ToString(CompactionType value);
-	static CompactionType FromString(const string &value);
-	static JSONMutableValue Write(JSONWriter &writer, CompactionType value);
-	static void Read(RESTJsonIn in, CompactionType &result);
+	static const char *ToString(const string &value);
+	static string FromString(const string &value);
+	static JSONMutableValue Write(JSONWriter &writer, const string &value);
+	static void Read(RESTJsonIn in, string &result);
 };
 
 //! Where the rows of a file list entry are stored.
@@ -130,15 +130,12 @@ struct RESTColumnDefinition;
 struct RESTCompactionResult;
 struct RESTCreatedEntry;
 struct RESTCreatedTable;
-struct RESTDeletedRowVersion;
 struct RESTDropNotNull;
 struct RESTDroppedFile;
 struct RESTDynamicFilter;
 struct RESTErrorInfo;
 struct RESTErrorResponse;
 struct RESTFileRowDeletes;
-struct RESTFlushedFileDeletions;
-struct RESTFlushedInlinedTable;
 struct RESTInlinedRowDeletes;
 struct RESTInlinedRows;
 struct RESTInlinedTableRows;
@@ -165,14 +162,9 @@ struct RESTSnapshotReference;
 struct RESTColumnMappingsRequest;
 struct RESTColumnMappingsResponse;
 struct RESTConfigRequest;
-struct RESTDeletedInlinedRowsRequest;
-struct RESTDeletedInlinedRowsResponse;
 struct RESTDuckLakeTableRequest;
 struct RESTDuckLakeTablesRequest;
 struct RESTDuckLakeTablesResponse;
-struct RESTInlinedDataForFlushRequest;
-struct RESTInlinedFileDeletionsRequest;
-struct RESTInlinedFileDeletionsResponse;
 struct RESTInlinedTablesRequest;
 struct RESTInlinedTablesResponse;
 struct RESTListSnapshotsRequest;
@@ -208,7 +200,6 @@ struct RESTCreateNameMapRequest;
 struct RESTInsertRowsRequest;
 struct RESTInsertFilesRequest;
 struct RESTDeleteDataRequest;
-struct RESTFlushInlinedDataRequest;
 
 //! Conversion of the structures of the REST API to and from JSON
 struct DuckLakeRESTSerializer {
@@ -237,7 +228,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeDataFile &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeDeleteFile &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeDeleteScanEntry &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDeletedRowVersion &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDropNotNull &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDroppedFile &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDynamicFilter &value);
@@ -249,8 +239,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileListExtendedEntry &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFilePartition &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTFileRowDeletes &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTFlushedFileDeletions &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTFlushedInlinedTable &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeGlobalColumnStatsInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeGlobalStatsInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeInlinedFileDeletionEntry &value);
@@ -300,14 +288,9 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnMappingsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnMappingsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTConfigRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDeletedInlinedRowsRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDeletedInlinedRowsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTableRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedDataForFlushRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedFileDeletionsRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedFileDeletionsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedTablesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedTablesResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsRequest &value);
@@ -343,7 +326,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInsertRowsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInsertFilesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDeleteDataRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTFlushInlinedDataRequest &value);
 };
 
 template <>
@@ -377,8 +359,6 @@ DuckLakeDeleteFile DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeDeleteScanEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTDeletedRowVersion DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
 RESTDropNotNull DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDroppedFile DuckLakeRESTSerializer::Read(RESTJsonIn in);
@@ -400,10 +380,6 @@ template <>
 DuckLakeFilePartition DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTFileRowDeletes DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTFlushedFileDeletions DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTFlushedInlinedTable DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeGlobalColumnStatsInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -503,21 +479,11 @@ RESTColumnMappingsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTConfigRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTDeletedInlinedRowsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTDeletedInlinedRowsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
 RESTDuckLakeTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDuckLakeTablesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDuckLakeTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTInlinedDataForFlushRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTInlinedFileDeletionsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTInlinedFileDeletionsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTInlinedTablesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -588,8 +554,6 @@ template <>
 RESTInsertFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDeleteDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTFlushInlinedDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 
 template <class T>
 struct RESTObjectCodec : public RESTCodec<RESTObjectCodec<T>> {
@@ -647,7 +611,6 @@ enum class RESTCommitRequestType : uint8_t {
 	INSERT_ROWS,
 	INSERT_FILES,
 	DELETE_DATA,
-	FLUSH_INLINED_DATA,
 };
 
 //! A request of a commit_transaction
@@ -799,10 +762,12 @@ struct RESTCompactionResult {
 	string schema_name;
 	//! The name of the table.
 	string table_name;
-	//! The number of files that were compacted.
-	idx_t files_processed = 0;
-	//! The number of files that were written.
-	idx_t files_created = 0;
+	//! For `merge_adjacent` and `rewrite_delete`: the number of files that were compacted.
+	optional_idx files_processed;
+	//! For `merge_adjacent` and `rewrite_delete`: the number of files that were written.
+	optional_idx files_created;
+	//! For `flush_inlined_data`: the number of rows that were written to files.
+	optional_idx rows_flushed;
 };
 
 //! An entry that a commit created.
@@ -821,16 +786,6 @@ struct RESTCreatedTable {
 	RESTOptional<int64_t> placeholder;
 	//! The id the commit gave the table.
 	idx_t table_id = 0;
-};
-
-//! A deleted version of an inlined row.
-struct RESTDeletedRowVersion {
-	//! The row id.
-	int64_t row_id = 0;
-	//! The snapshot that inserted the row.
-	int64_t begin_snapshot = 0;
-	//! The snapshot that deleted the row.
-	int64_t end_snapshot = 0;
 };
 
 struct RESTDropNotNull : public RESTAlteration {
@@ -887,26 +842,6 @@ struct RESTFileRowDeletes {
 	idx_t data_file_id = 0;
 	//! The positions of the deleted rows in the file.
 	set<idx_t> row_ids;
-};
-
-//! The inlined deletions of rows of data files of a table that were flushed.
-struct RESTFlushedFileDeletions {
-	//! The table.
-	int64_t table_id = 0;
-	//! The deletions up to this snapshot were flushed.
-	idx_t flush_snapshot_id = 0;
-};
-
-//! The inlined rows of a table at a schema version that were flushed.
-struct RESTFlushedInlinedTable {
-	//! The table.
-	int64_t table_id = 0;
-	//! The schema version of the inlined rows.
-	idx_t schema_version = 0;
-	//! The rows up to this snapshot were flushed.
-	idx_t flush_snapshot_id = 0;
-	//! Whether the flush wrote data files, the rows of a flush that wrote none are not deleted.
-	bool wrote_files = true;
 };
 
 //! Deletes of inlined rows.
@@ -1154,20 +1089,6 @@ struct RESTColumnMappingsResponse {
 
 struct RESTConfigRequest {};
 
-struct RESTDeletedInlinedRowsRequest : public RESTSnapshotReference {
-	//! The table.
-	idx_t table_id = 0;
-	//! The schema version of the inlined rows.
-	idx_t schema_version = 0;
-	//! Rows that the transaction of the client deleted, which are not flushed.
-	set<idx_t> deleted_row_ids;
-};
-
-struct RESTDeletedInlinedRowsResponse {
-	//! The deleted rows.
-	vector<RESTDeletedRowVersion> rows;
-};
-
 struct RESTDuckLakeTableRequest {
 	//! The table, e.g. `ducklake_snapshot`.
 	string table_name;
@@ -1178,29 +1099,6 @@ struct RESTDuckLakeTablesRequest {};
 struct RESTDuckLakeTablesResponse {
 	//! The tables.
 	vector<string> table_names;
-};
-
-struct RESTInlinedDataForFlushRequest : public RESTSnapshotReference {
-	//! The table.
-	idx_t table_id = 0;
-	//! The schema version of the table whose columns the rows have (see `inlined_tables`).
-	idx_t schema_version = 0;
-	//! The columns to read, e.g. `["i"]`. Columns can be cast to the type to read them as, e.g. `"i::BIGINT"`.
-	vector<string> columns;
-	//! The sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are ordered by it,
-	string order_by = string("");
-	//! Rows that the transaction of the client deleted, which are not flushed.
-	set<idx_t> deleted_row_ids;
-};
-
-struct RESTInlinedFileDeletionsRequest : public RESTSnapshotReference {
-	//! The table.
-	idx_t table_id = 0;
-};
-
-struct RESTInlinedFileDeletionsResponse {
-	//! The deletions.
-	vector<DuckLakeInlinedFileDeletionEntry> deletions;
 };
 
 struct RESTInlinedTablesRequest : public RESTSnapshotReference {
@@ -1340,8 +1238,8 @@ struct RESTTableSizesResponse {
 
 struct RESTCompactRequest {
 	//! The type of the compaction.
-	CompactionType type = CompactionType::MERGE_ADJACENT_TABLES;
-	//! The schema of `table_name`, the default schema if absent.
+	string type;
+	//! The schema of `table_name`, the default schema if absent. For `flush_inlined_data`, all tables of the schema
 	string schema_name;
 	//! Only compact this table, all tables if absent.
 	string table_name;
@@ -1643,19 +1541,6 @@ struct RESTDeleteDataRequest : public RESTCommitRequest {
 	bool delete_attempted = false;
 };
 
-//! The `flush_inlined_data` request of a commit.
-struct RESTFlushInlinedDataRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::FLUSH_INLINED_DATA;
-
-	RESTFlushInlinedDataRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The inlined data tables whose rows up to the snapshot were flushed.
-	vector<RESTFlushedInlinedTable> inlined_tables;
-	//! The tables whose inlined deletions of data file rows up to the snapshot were flushed to delete files (registered
-	vector<RESTFlushedFileDeletions> file_deletions;
-};
-
 //===--------------------------------------------------------------------===//
 // Server
 //===--------------------------------------------------------------------===//
@@ -1666,20 +1551,11 @@ struct DuckLakeRESTEndpoints {
 	                                                 const RESTColumnMappingsRequest &parameters);
 	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 	static DuckLakeMetadata Config(DuckLakeRESTRequest &request, const RESTConfigRequest &parameters);
-	//! Returns the deleted versions of the inlined rows of a table that a flush writes.
-	static RESTDeletedInlinedRowsResponse DeletedInlinedRows(DuckLakeRESTRequest &request,
-	                                                         const RESTDeletedInlinedRowsRequest &parameters);
 	//! Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
 	static RESTInlinedRows DuckLakeTable(DuckLakeRESTRequest &request, const RESTDuckLakeTableRequest &parameters);
 	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
 	static RESTDuckLakeTablesResponse DuckLakeTables(DuckLakeRESTRequest &request,
 	                                                 const RESTDuckLakeTablesRequest &parameters);
-	//! Reads the inlined rows of a table that a flush writes.
-	static RESTInlinedRows InlinedDataForFlush(DuckLakeRESTRequest &request,
-	                                           const RESTInlinedDataForFlushRequest &parameters);
-	//! Returns the deletions of rows of data files that are inlined in the catalog.
-	static RESTInlinedFileDeletionsResponse InlinedFileDeletions(DuckLakeRESTRequest &request,
-	                                                             const RESTInlinedFileDeletionsRequest &parameters);
 	//! Returns the schema versions that a table has inlined rows for.
 	static RESTInlinedTablesResponse InlinedTables(DuckLakeRESTRequest &request,
 	                                               const RESTInlinedTablesRequest &parameters);
@@ -1701,7 +1577,7 @@ struct DuckLakeRESTEndpoints {
 	                                                           const RESTTableSchemaVersionsRequest &parameters);
 	//! Returns the storage used by each table at a snapshot.
 	static RESTTableSizesResponse TableSizes(DuckLakeRESTRequest &request, const RESTTableSizesRequest &parameters);
-	//! Compacts the data files of the DuckLake on the server.
+	//! Compacts the DuckLake on the server.
 	static RESTCompactResponse Compact(DuckLakeRESTRequest &request, const RESTCompactRequest &parameters);
 	//! Commits a set of changes atomically.
 	static RESTCommitTransactionResponse CommitTransaction(DuckLakeRESTRequest &request,
@@ -1733,7 +1609,6 @@ protected:
 	virtual void InsertRows(RESTInsertRowsRequest &request) = 0;
 	virtual void InsertFiles(RESTInsertFilesRequest &request) = 0;
 	virtual void DeleteData(RESTDeleteDataRequest &request) = 0;
-	virtual void FlushInlinedData(RESTFlushInlinedDataRequest &request) = 0;
 };
 
 //! Handles the JSON body of a request to an endpoint, returns the JSON body of the response
@@ -1794,16 +1669,10 @@ public:
 	RESTColumnMappingsResponse ColumnMappings(const RESTColumnMappingsRequest &request);
 	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 	DuckLakeMetadata Config(const RESTConfigRequest &request);
-	//! Returns the deleted versions of the inlined rows of a table that a flush writes.
-	RESTDeletedInlinedRowsResponse DeletedInlinedRows(const RESTDeletedInlinedRowsRequest &request);
 	//! Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
 	RESTInlinedRows DuckLakeTable(const RESTDuckLakeTableRequest &request);
 	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
 	RESTDuckLakeTablesResponse DuckLakeTables(const RESTDuckLakeTablesRequest &request);
-	//! Reads the inlined rows of a table that a flush writes.
-	RESTInlinedRows InlinedDataForFlush(const RESTInlinedDataForFlushRequest &request);
-	//! Returns the deletions of rows of data files that are inlined in the catalog.
-	RESTInlinedFileDeletionsResponse InlinedFileDeletions(const RESTInlinedFileDeletionsRequest &request);
 	//! Returns the schema versions that a table has inlined rows for.
 	RESTInlinedTablesResponse InlinedTables(const RESTInlinedTablesRequest &request);
 	//! Returns the snapshots, optionally filtered.
@@ -1820,7 +1689,7 @@ public:
 	RESTTableSchemaVersionsResponse TableSchemaVersions(const RESTTableSchemaVersionsRequest &request);
 	//! Returns the storage used by each table at a snapshot.
 	RESTTableSizesResponse TableSizes(const RESTTableSizesRequest &request);
-	//! Compacts the data files of the DuckLake on the server.
+	//! Compacts the DuckLake on the server.
 	RESTCompactResponse Compact(const RESTCompactRequest &request);
 	//! Commits a set of changes atomically.
 	RESTCommitTransactionResponse CommitTransaction(const RESTCommitTransactionRequest &request);

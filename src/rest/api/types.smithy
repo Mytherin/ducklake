@@ -818,13 +818,15 @@ structure DataFile {
 }
 
 /// The type of a compaction.
-@cppClass("CompactionType")
 enum CompactionType {
     /// Merges small adjacent files.
     MERGE_ADJACENT_TABLES = "merge_adjacent"
 
     /// Rewrites files with many deleted rows.
     REWRITE_DELETES = "rewrite_delete"
+
+    /// Writes the data and deletions that are inlined in the catalog to files.
+    FLUSH_INLINED_DATA = "flush_inlined_data"
 }
 
 /// A data file whose rows were deleted between two snapshots.
@@ -1141,10 +1143,6 @@ list DeleteScanEntryList {
     member: DeleteScanEntry
 }
 
-list DeletedRowVersionList {
-    member: DeletedRowVersion
-}
-
 list DroppedFileList {
     member: DroppedFile
 }
@@ -1171,14 +1169,6 @@ list FilePartitionValueList {
 
 list FileRowDeletesList {
     member: FileRowDeletes
-}
-
-list FlushedFileDeletionsList {
-    member: FlushedFileDeletions
-}
-
-list FlushedInlinedTableList {
-    member: FlushedInlinedTable
 }
 
 list GlobalColumnStatsList {
