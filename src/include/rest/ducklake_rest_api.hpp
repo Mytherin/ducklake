@@ -891,6 +891,8 @@ struct RESTErrorInfo {
 	string type = string("Error");
 	//! The message of the error.
 	string message = string("");
+	//! The HTTP status code of the response.
+	idx_t code = 500;
 };
 
 //! The body of a response with a status code other than 200: `409` for transaction conflicts, `404` for catalog errors

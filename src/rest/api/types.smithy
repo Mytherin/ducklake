@@ -1430,10 +1430,14 @@ structure ErrorInfo {
 
     /// The message of the error.
     message: String = ""
+
+    /// The HTTP status code of the response.
+    code: UInt64 = 500
 }
 
 /// The body of a response with a status code other than 200: `409` for transaction conflicts, `404` for catalog errors
-/// (e.g. entries that do not exist), `400` for invalid input, `401` for a missing or invalid token and `500` otherwise.
+/// (e.g. entries that do not exist or unknown endpoints), `400` for invalid input, `401` for a missing or invalid token,
+/// `501` for operations that are not supported and `500` otherwise. The status code is repeated in the `code` of the error.
 ///
 /// ```json
 /// {"error": {"type": "Catalog", "message": "Table with id 1000 does not exist at snapshot 3"}}

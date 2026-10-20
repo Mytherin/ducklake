@@ -1544,6 +1544,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTErr
 	auto result = writer.CreateObject();
 	result.Add("type", RESTWriteValue<RESTStringCodec>(writer, value.type));
 	result.Add("message", RESTWriteValue<RESTStringCodec>(writer, value.message));
+	result.Add("code", RESTWriteValue<RESTUInt64Codec>(writer, value.code));
 	return result;
 }
 
@@ -1567,6 +1568,14 @@ RESTErrorInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 			RESTReadValue<RESTStringCodec>(entry, result.message);
 		} else {
 			result.message = string("");
+		}
+	}
+	{
+		auto entry = in.TryGet("code");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.code);
+		} else {
+			result.code = 500;
 		}
 	}
 	return result;

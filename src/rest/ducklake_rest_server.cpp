@@ -77,18 +77,20 @@ static int32_t StatusCodeForError(ExceptionType type) {
 	case ExceptionType::PARSER:
 	case ExceptionType::CONVERSION:
 	case ExceptionType::CONSTRAINT:
-	case ExceptionType::NOT_IMPLEMENTED:
 	case ExceptionType::INVALID_CONFIGURATION:
 		return 400;
+	case ExceptionType::NOT_IMPLEMENTED:
+		return 501;
 	default:
 		return 500;
 	}
 }
 
-static string ErrorBody(ExceptionType type, const string &message) {
+static string ErrorBody(ExceptionType type, const string &message, int32_t status) {
 	RESTErrorResponse response;
 	response.error.type = Exception::ExceptionTypeToString(type);
 	response.error.message = message;
+	response.error.code = status;
 	return DuckLakeRESTSerializer::ToJSON(response);
 }
 
@@ -98,7 +100,9 @@ int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &
 		auto entry = endpoints.find(endpoint);
 		string request_body = body.empty() ? "{}" : body;
 		if (entry == endpoints.end()) {
-			throw InvalidInputException("Unknown DuckLake REST endpoint \"%s\"", endpoint);
+			response = ErrorBody(ExceptionType::INVALID_INPUT,
+			                     StringUtil::Format("Unknown DuckLake REST endpoint \"%s\"", endpoint), 404);
+			return 404;
 		}
 		DuckLakeRESTRequest request(*db, catalog_name);
 		try {
@@ -115,8 +119,9 @@ int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &
 		return 200;
 	} catch (std::exception &ex) {
 		ErrorData error(ex);
-		response = ErrorBody(error.Type(), error.RawMessage());
-		return StatusCodeForError(error.Type());
+		auto status = StatusCodeForError(error.Type());
+		response = ErrorBody(error.Type(), error.RawMessage(), status);
+		return status;
 	}
 }
 
@@ -134,7 +139,7 @@ idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_cou
 		if (!token.empty() && req.get_header_value("Authorization") != "Bearer " + token) {
 			res.status = 401;
 			res.set_content(
-			    ErrorBody(ExceptionType::PERMISSION, "Missing or invalid token for the DuckLake REST server"),
+			    ErrorBody(ExceptionType::PERMISSION, "Missing or invalid token for the DuckLake REST server", 401),
 			    "application/json");
 			return;
 		}

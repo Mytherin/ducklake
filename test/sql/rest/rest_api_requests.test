@@ -73,10 +73,10 @@ FROM ducklake_rest_request('{rest_server}', 'create_schema', '{"schema_path": ["
 1234	SCHEMA_ENTRY
 
 # errors
-query II
-SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'unknown_endpoint', '{}')
+query III
+SELECT status, response->>'$.error.type', response->>'$.error.code' FROM ducklake_rest_request('{rest_server}', 'unknown_endpoint', '{}')
 ----
-400	Invalid Input
+404	Invalid Input	404
 
 query II
 SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'select', '{"table_id": 1000}')
