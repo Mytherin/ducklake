@@ -407,4 +407,3 @@ structure DroppedFile {
     @required
     file_size_bytes: UInt64
 }
-
