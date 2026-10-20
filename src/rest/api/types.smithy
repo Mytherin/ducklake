@@ -199,6 +199,10 @@ structure TableInfo {
 
     /// The tags of the table.
     tags: TagList = []
+
+    /// The next free column (field) id of the table, which is larger than the id of every column the table ever had,
+    /// including dropped columns. Clients that add columns use it for the ids of the new columns.
+    next_column_id: UInt64
 }
 
 /// A tag of a column of a view.

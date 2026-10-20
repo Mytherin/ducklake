@@ -132,6 +132,13 @@ RESTSnapshotDataResponse DuckLakeRESTEndpoints::SnapshotData(DuckLakeRESTRequest
 	                                 parameters.cached_data_version.GetIndex() != snapshot.next_file_id);
 	if (include_catalog) {
 		result.catalog = make_uniq<DuckLakeCatalogInfo>(metadata_manager.GetCatalogForSnapshot(snapshot));
+		auto next_column_ids = metadata_manager.GetNextColumnIds();
+		for (auto &table : result.catalog->tables) {
+			auto entry = next_column_ids.find(table.id.index);
+			if (entry != next_column_ids.end()) {
+				table.next_column_id = entry->second;
+			}
+		}
 	}
 	if (include_stats) {
 		result.stats = metadata_manager.GetGlobalTableStats(snapshot);
@@ -336,13 +343,6 @@ RESTInlinedTablesResponse DuckLakeRESTEndpoints::InlinedTables(DuckLakeRESTReque
 	for (auto &inlined_table : table.GetInlinedDataTables(*request.transaction, snapshot, false)) {
 		result.schema_versions.push_back(inlined_table.schema_version);
 	}
-	return result;
-}
-
-RESTNextColumnIdResponse DuckLakeRESTEndpoints::NextColumnId(DuckLakeRESTRequest &request,
-                                                             const RESTNextColumnIdRequest &parameters) {
-	RESTNextColumnIdResponse result;
-	result.next_column_id = request.GetMetadataManager().GetNextColumnId(TableIndex(parameters.table_id));
 	return result;
 }
 

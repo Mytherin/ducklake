@@ -70,7 +70,6 @@ service DuckLake {
         TableSchemaVersions
         RowCount
         InlinedTables
-        NextColumnId
         ListSnapshots
         TableSizes
         TablesWithLiveDataFiles

@@ -113,6 +113,8 @@ struct DuckLakeTableInfo {
 	vector<DuckLakeColumnInfo> columns;
 	vector<DuckLakeTag> tags;
 	vector<DuckLakeInlinedTableInfo> inlined_data_tables;
+	//! The next free column id, if known
+	optional_idx next_column_id;
 };
 
 //! Stores the information on macro parameters

@@ -178,8 +178,6 @@ struct RESTInlinedTablesRequest;
 struct RESTInlinedTablesResponse;
 struct RESTListSnapshotsRequest;
 struct RESTListSnapshotsResponse;
-struct RESTNextColumnIdRequest;
-struct RESTNextColumnIdResponse;
 struct RESTRowCountRequest;
 struct RESTRowCountResponse;
 struct RESTSelectRequest;
@@ -322,8 +320,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedTablesResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTNextColumnIdRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTNextColumnIdResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTRowCountRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTRowCountResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSelectRequest &value);
@@ -551,10 +547,6 @@ template <>
 RESTListSnapshotsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTListSnapshotsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTNextColumnIdRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTNextColumnIdResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTRowCountRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -1271,16 +1263,6 @@ struct RESTListSnapshotsResponse {
 	vector<DuckLakeSnapshotInfo> snapshots;
 };
 
-struct RESTNextColumnIdRequest {
-	//! The table.
-	idx_t table_id = 0;
-};
-
-struct RESTNextColumnIdResponse {
-	//! The next free column id.
-	idx_t next_column_id = 0;
-};
-
 struct RESTRowCountRequest : public RESTSnapshotReference {
 	//! What to count.
 	string count;
@@ -1737,9 +1719,6 @@ struct DuckLakeRESTEndpoints {
 	//! Returns the snapshots, optionally filtered.
 	static RESTListSnapshotsResponse ListSnapshots(DuckLakeRESTRequest &request,
 	                                               const RESTListSnapshotsRequest &parameters);
-	//! Returns the next free column (field) id of a table.
-	static RESTNextColumnIdResponse NextColumnId(DuckLakeRESTRequest &request,
-	                                             const RESTNextColumnIdRequest &parameters);
 	//! Counts the rows of a table that are visible in a snapshot.
 	static RESTRowCountResponse RowCount(DuckLakeRESTRequest &request, const RESTRowCountRequest &parameters);
 	//! Plans a scan of a table.
@@ -1866,8 +1845,6 @@ public:
 	RESTInlinedTablesResponse InlinedTables(const RESTInlinedTablesRequest &request);
 	//! Returns the snapshots, optionally filtered.
 	RESTListSnapshotsResponse ListSnapshots(const RESTListSnapshotsRequest &request);
-	//! Returns the next free column (field) id of a table.
-	RESTNextColumnIdResponse NextColumnId(const RESTNextColumnIdRequest &request);
 	//! Counts the rows of a table that are visible in a snapshot.
 	RESTRowCountResponse RowCount(const RESTRowCountRequest &request);
 	//! Plans a scan of a table.

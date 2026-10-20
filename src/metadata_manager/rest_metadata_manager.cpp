@@ -330,12 +330,6 @@ RESTMetadataManager::GetFilesForCompaction(DuckLakeTableEntry &table, Compaction
 	return std::move(GetClient().FilesForCompaction(request).files);
 }
 
-idx_t RESTMetadataManager::GetNextColumnId(TableIndex table_id) {
-	RESTNextColumnIdRequest request;
-	request.table_id = table_id.index;
-	return GetClient().NextColumnId(request).next_column_id;
-}
-
 unique_ptr<QueryResult> RESTMetadataManager::ToQueryResult(RESTInlinedRows rows) {
 	auto context = transaction.context.lock();
 	vector<Identifier> names;

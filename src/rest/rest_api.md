@@ -384,26 +384,6 @@ Response:
 |-------|------|-------------|
 | `snapshots` | list of [`SnapshotInfo`](#snapshotinfo) (default `[]`) | The snapshots. |
 
-### `next_column_id`
-
-Returns the next free column (field) id of a table.
-
-`GET /v1/tables/{table_id}/next-column-id`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `table_id` | path | `uint64` | The table. |
-
-Request: no body.
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `next_column_id` | `uint64` | The next free column id. |
-
 ### `row_count`
 
 Counts the rows of a table that are visible in a snapshot.
@@ -1886,6 +1866,7 @@ A table of the catalog.
 | `path` | `path` (default `""`) | The data path of the table. |
 | `columns` | list of [`ColumnInfo`](#columninfo) (default `[]`) | The columns of the table. |
 | `tags` | list of [`Tag`](#tag) (default `[]`) | The tags of the table. |
+| `next_column_id` | `uint64` (optional) | The next free column (field) id of the table, which is larger than the id of every column the table ever had, including dropped columns. Clients that add columns use it for the ids of the new columns. |
 
 ### `TableSetting`
 

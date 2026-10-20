@@ -591,6 +591,8 @@ public:
 	                                                 idx_t newest_snapshot_id);
 
 	virtual idx_t GetNextColumnId(TableIndex table_id);
+	//! The next free column id of every table that has columns
+	unordered_map<idx_t, idx_t> GetNextColumnIds();
 	virtual unique_ptr<QueryResult> ReadInlinedData(DuckLakeSnapshot snapshot, const string &inlined_table_name,
 	                                                const vector<string> &columns_to_read);
 	virtual unique_ptr<QueryResult> ReadInlinedDataInsertions(DuckLakeSnapshot start_snapshot,

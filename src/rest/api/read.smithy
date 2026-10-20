@@ -295,24 +295,6 @@ operation InlinedTables {
     }
 }
 
-/// Returns the next free column (field) id of a table.
-@http(method: "GET", uri: "/v1/tables/{table_id}/next-column-id")
-@readonly
-operation NextColumnId {
-    input := {
-        /// The table.
-        @required
-        @httpLabel
-        table_id: UInt64
-    }
-
-    output := {
-        /// The next free column id.
-        @required
-        next_column_id: UInt64
-    }
-}
-
 /// Returns the snapshots, optionally filtered.
 @http(method: "GET", uri: "/v1/snapshots")
 @readonly

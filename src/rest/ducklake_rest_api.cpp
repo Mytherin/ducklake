@@ -3332,6 +3332,9 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	result.Add("path", RESTWriteValue<RESTPathCodec>(writer, value.path));
 	result.Add("columns", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnInfo>>>(writer, value.columns));
 	result.Add("tags", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeTag>>>(writer, value.tags));
+	if (!RESTIsNull(value.next_column_id)) {
+		result.Add("next_column_id", RESTWriteValue<RESTUInt64Codec>(writer, value.next_column_id));
+	}
 	return result;
 }
 
@@ -3380,6 +3383,12 @@ DuckLakeTableInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("tags");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeTag>>>(entry, result.tags);
+		}
+	}
+	{
+		auto entry = in.TryGet("next_column_id");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.next_column_id);
 		}
 	}
 	return result;
@@ -4130,38 +4139,6 @@ RESTListSnapshotsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeSnapshotInfo>>>(entry, result.snapshots);
 		}
 	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTNextColumnIdRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
-	return result;
-}
-
-template <>
-RESTNextColumnIdRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for NextColumnIdRequest");
-	}
-	RESTNextColumnIdRequest result;
-	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTNextColumnIdResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("next_column_id", RESTWriteValue<RESTUInt64Codec>(writer, value.next_column_id));
-	return result;
-}
-
-template <>
-RESTNextColumnIdResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for NextColumnIdResponse");
-	}
-	RESTNextColumnIdResponse result;
-	RESTReadValue<RESTUInt64Codec>(in.Get("next_column_id"), result.next_column_id);
 	return result;
 }
 
@@ -5990,13 +5967,6 @@ static string ListSnapshotsEndpoint(DuckLakeRESTRequest &request, const string &
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
-static string NextColumnIdEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTNextColumnIdRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::NextColumnId(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
 static string RowCountEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTRowCountRequest>(document.Root());
@@ -6065,7 +6035,6 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	    {"inlined_file_deletions", InlinedFileDeletionsEndpoint},
 	    {"inlined_tables", InlinedTablesEndpoint},
 	    {"list_snapshots", ListSnapshotsEndpoint},
-	    {"next_column_id", NextColumnIdEndpoint},
 	    {"row_count", RowCountEndpoint},
 	    {"select", SelectEndpoint},
 	    {"snapshot_data", SnapshotDataEndpoint},
@@ -6107,7 +6076,6 @@ const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	     {{"exclude_latest", RESTParameterType::BOOL, "exclude_latest"},
 	      {"older_than", RESTParameterType::STRING, "older_than"},
 	      {"snapshot_ids", RESTParameterType::UINT_LIST, "snapshot_id"}}},
-	    {"next_column_id", "GET", "/v1/tables/{table_id}/next-column-id", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"row_count", "POST", "/v1/tables/{table_id}/row-count", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"select", "POST", "/v1/tables/{table_id}/scan", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"snapshot_data", "POST", "/v1/snapshots/load", {}},
@@ -6194,12 +6162,6 @@ RESTListSnapshotsResponse DuckLakeRESTClientAPI::ListSnapshots(const RESTListSna
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("list_snapshots", DuckLakeRESTSerializer::ToJSON(request), true));
 	return DuckLakeRESTSerializer::Read<RESTListSnapshotsResponse>(document.Root());
-}
-
-RESTNextColumnIdResponse DuckLakeRESTClientAPI::NextColumnId(const RESTNextColumnIdRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("next_column_id", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTNextColumnIdResponse>(document.Root());
 }
 
 RESTRowCountResponse DuckLakeRESTClientAPI::RowCount(const RESTRowCountRequest &request) {

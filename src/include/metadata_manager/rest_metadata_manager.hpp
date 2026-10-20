@@ -73,7 +73,6 @@ public:
 	GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
 	                         const FilterPushdownInfo *filter_info = nullptr,
 	                         optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
-	idx_t GetNextColumnId(TableIndex table_id) override;
 	vector<DuckLakeCompactionFileEntry> GetFilesForCompaction(DuckLakeTableEntry &table, CompactionType type,
 	                                                          double deletion_threshold, DuckLakeSnapshot snapshot,
 	                                                          DuckLakeFileSizeOptions options) override;

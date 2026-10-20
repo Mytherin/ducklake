@@ -801,7 +801,7 @@ unique_ptr<DuckLakeCatalogSet> DuckLakeCatalog::LoadSchemaForSnapshot(DuckLakeTr
 		// create the table and add it to the schema set
 		auto table_entry = make_uniq<DuckLakeTableEntry>(
 		    *this, schema_entry, *create_table_info, table.id, std::move(table.uuid), std::move(table.path),
-		    std::move(field_data), optional_idx(), std::move(table.inlined_data_tables), LocalChangeType::NONE);
+		    std::move(field_data), table.next_column_id, std::move(table.inlined_data_tables), LocalChangeType::NONE);
 		AssignStableOid(*table_entry, table.id.index);
 		schema_set->AddEntry(schema_entry, table.id, std::move(table_entry));
 	}

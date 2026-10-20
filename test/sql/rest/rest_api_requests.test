@@ -224,9 +224,9 @@ SELECT (SELECT json_array_length(response->'$.snapshots') FROM ducklake_rest_req
 1
 
 query I
-SELECT response->>'$.next_column_id' IS NOT NULL FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/tables/1/next-column-id', '')
+SELECT response->>'$.catalog.tables[0].next_column_id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/snapshots/load', '{"include_catalog": true}')
 ----
-true
+3
 
 query I
 SELECT json_array_length(response->'$.table_names') > 0 FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/metadata-tables', '')
