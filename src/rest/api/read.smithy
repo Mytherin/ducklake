@@ -183,46 +183,6 @@ operation InlinedFileDeletions {
     }
 }
 
-/// Returns the data files of a table that are candidates for compaction, together with their delete files.
-@http(method: "POST", uri: "/v1/tables/{table_id}/compaction-files")
-@readonly
-operation FilesForCompaction {
-    input := with [SnapshotReference] {
-        /// The table.
-        @required
-        @httpLabel
-        table_id: UInt64
-
-        /// The type of the compaction.
-        @required
-        type: CompactionType
-
-        /// For `rewrite_delete`: the fraction of deleted rows above which files are rewritten.
-        delete_threshold: Double
-
-        /// Only consider files of at least this size.
-        min_file_size: UInt64
-
-        /// Only consider files of at most this size.
-        max_file_size: UInt64
-
-        /// The size of the compacted files.
-        @required
-        target_file_size: UInt64
-
-        /// Only consider files written at or after this timestamp.
-        newer_than: Value
-
-        /// Only consider files written before this timestamp.
-        older_than: Value
-    }
-
-    output := {
-        /// The candidates.
-        files: CompactionFileEntryList = []
-    }
-}
-
 /// Returns when a table and its schema versions were created.
 @http(method: "POST", uri: "/v1/tables/{table_id}/schema-versions")
 @readonly
@@ -330,18 +290,6 @@ operation TableSizes {
     output := {
         /// The tables.
         tables: TableSizeList = []
-    }
-}
-
-/// Returns the tables that have data files that are not deleted.
-@http(method: "GET", uri: "/v1/tables/with-data-files")
-@readonly
-operation TablesWithLiveDataFiles {
-    input := {}
-
-    output := {
-        /// The tables.
-        table_ids: UInt64List = []
     }
 }
 

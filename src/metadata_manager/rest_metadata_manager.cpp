@@ -311,25 +311,6 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 	return std::move(response.extended_files);
 }
 
-vector<DuckLakeCompactionFileEntry>
-RESTMetadataManager::GetFilesForCompaction(DuckLakeTableEntry &table, CompactionType type, double deletion_threshold,
-                                           DuckLakeSnapshot snapshot, DuckLakeFileSizeOptions options) {
-	if (IsTransactionLocal(table.GetTableId())) {
-		return {};
-	}
-	RESTFilesForCompactionRequest request;
-	request.snapshot = snapshot;
-	request.table_id = table.GetTableId().index;
-	request.type = type;
-	request.delete_threshold = deletion_threshold;
-	request.min_file_size = options.min_file_size;
-	request.max_file_size = options.max_file_size;
-	request.newer_than = options.newer_than;
-	request.older_than = options.older_than;
-	request.target_file_size = options.target_file_size;
-	return std::move(GetClient().FilesForCompaction(request).files);
-}
-
 unique_ptr<QueryResult> RESTMetadataManager::ToQueryResult(RESTInlinedRows rows) {
 	auto context = transaction.context.lock();
 	vector<Identifier> names;
@@ -696,11 +677,6 @@ vector<DuckLakeTableSizeInfo> RESTMetadataManager::GetTableSizes(DuckLakeSnapsho
 	return std::move(GetClient().TableSizes(request).tables);
 }
 
-unordered_set<idx_t> RESTMetadataManager::GetTablesWithLiveDataFiles() {
-	auto response = GetClient().TablesWithLiveDataFiles(RESTTablesWithLiveDataFilesRequest());
-	return unordered_set<idx_t>(response.table_ids.begin(), response.table_ids.end());
-}
-
 vector<DuckLakeColumnMappingInfo> RESTMetadataManager::GetColumnMappings(optional_idx start_from) {
 	RESTColumnMappingsRequest request;
 	request.start_from = start_from;
@@ -1035,11 +1011,6 @@ void RESTMetadataManager::AddInserts(const TransactionChangeInformation &transac
 				request.row_ids = inlined_data.row_ids;
 			}
 			request.column_stats = inlined_data.column_stats;
-		}
-		if (!changes.compactions.empty()) {
-			auto &request = AddRequest<RESTCompactRequest>(requests);
-			request.table_id = table_id;
-			request.compactions = changes.compactions;
 		}
 	}
 }

@@ -76,6 +76,55 @@
       ]
     },
     {
+      "reason": "Compacts files that the client wrote to a data path of its own: the REST server compacts the files itself, so they have to be in a data path that the server can read",
+      "paths": [
+        "test/sql/catalog/nested_schema/nested_functions.test",
+        "test/sql/checkpoint/checkpoint_binary_as_string.test",
+        "test/sql/checkpoint/checkpoint_updates_interleaved.test",
+        "test/sql/compaction/compaction_delete_conflict.test",
+        "test/sql/compaction/compaction_multiple_rename_column.test",
+        "test/sql/compaction/compaction_partition_spec_time_travel.test",
+        "test/sql/compaction/compaction_per_thread_output.test",
+        "test/sql/compaction/compaction_twice_in_transaction.test",
+        "test/sql/compaction/merge_adjacent_cross_schema_isolated.test",
+        "test/sql/compaction/merge_adjacent_keeps_row_ids.test",
+        "test/sql/compaction/merge_adjacent_max_files_partitioned.test",
+        "test/sql/compaction/merge_adjacent_older_than.test",
+        "test/sql/issues/issue_1419_prepared_compaction.test",
+        "test/sql/issues/issue_1571_rewritten_inlined_delete_changes.test",
+        "test/sql/issues/issue_1603_merged_file_delete_snapshot.test",
+        "test/sql/partitioning/merge_adjacent_hive_default_value.test",
+        "test/sql/rewrite_data_files/insert_delete_loop.test",
+        "test/sql/rewrite_data_files/test_rewrite_inlined_schema_change.test",
+        "test/sql/rewrite_data_files/test_rewrite_max_files.test",
+        "test/sql/rewrite_data_files/test_rewrite_merge_adjacent.test",
+        "test/sql/rewrite_data_files/test_rewrite_rollback_cleanup.test",
+        "test/sql/rewrite_data_files/test_rewrite_transaction_conflict.test",
+        "test/sql/sorted_table/data_inlining_flush_sorted_typed_order.test",
+        "test/sql/sorted_table/insert_sorted_sort_on_insert_option.test",
+        "test/sql/sorted_table/merge_adjacent_sorted_case_insensitivity.test",
+        "test/sql/sorted_table/merge_adjacent_sorted_non_adjacent_parallel.test",
+        "test/sql/sorted_table/merge_adjacent_sorted_old_schema.test",
+        "test/sql/sorted_table/merge_adjacent_sorted_renamed.test",
+        "test/sql/sorted_table/rewrite_sorted_parallel.test",
+        "test/sql/sorted_table/sort_key_macro_search_path.test",
+        "test/sql/stats/count_star_optimization_file_operations.test",
+        "test/sql/stats/count_star_optimization_time_travel.test",
+        "test/sql/stats/min_max_optimization_compaction.test",
+        "test/sql/stats/min_max_optimization_deletes.test",
+        "test/sql/table_changes/ducklake_table_deletions_compacted.test",
+        "test/sql/table_changes/ducklake_table_insertions.test",
+        "test/sql/time_travel/time_travel_local_changes.test",
+        "test/sql/types/blob_binary_as_string.test"
+      ]
+    },
+    {
+      "reason": "Compacts in the transaction that holds uncommitted changes, but the REST server compacts in a transaction of its own",
+      "paths": [
+        "test/sql/data_inlining/flush_renamed_in_transaction.test"
+      ]
+    },
+    {
       "reason": "Depends on the location of the metadata database",
       "paths": [
         "test/sql/general/default_path.test",

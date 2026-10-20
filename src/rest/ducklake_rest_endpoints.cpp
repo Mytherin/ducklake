@@ -365,16 +365,6 @@ RESTTableSizesResponse DuckLakeRESTEndpoints::TableSizes(DuckLakeRESTRequest &re
 	return result;
 }
 
-RESTTablesWithLiveDataFilesResponse
-DuckLakeRESTEndpoints::TablesWithLiveDataFiles(DuckLakeRESTRequest &request,
-                                               const RESTTablesWithLiveDataFilesRequest &parameters) {
-	RESTTablesWithLiveDataFilesResponse result;
-	for (auto table_id : request.GetMetadataManager().GetTablesWithLiveDataFiles()) {
-		result.table_ids.push_back(table_id);
-	}
-	return result;
-}
-
 RESTColumnMappingsResponse DuckLakeRESTEndpoints::ColumnMappings(DuckLakeRESTRequest &request,
                                                                  const RESTColumnMappingsRequest &parameters) {
 	RESTColumnMappingsResponse result;
@@ -426,22 +416,55 @@ RESTInlinedRows DuckLakeRESTEndpoints::DuckLakeTable(DuckLakeRESTRequest &reques
 	return result;
 }
 
-RESTFilesForCompactionResponse
-DuckLakeRESTEndpoints::FilesForCompaction(DuckLakeRESTRequest &request,
-                                          const RESTFilesForCompactionRequest &parameters) {
-	auto snapshot = request.GetSnapshot(parameters);
-	auto &table = GetTableEntry(request, snapshot, TableIndex(parameters.table_id));
-	DuckLakeMergeAdjacentOptions merge_options;
-	merge_options.min_file_size = parameters.min_file_size;
-	merge_options.max_file_size = parameters.max_file_size;
-	merge_options.newer_than = parameters.newer_than;
-	merge_options.older_than = parameters.older_than;
-	DuckLakeFileSizeOptions options(merge_options, parameters.target_file_size);
-	auto delete_threshold = parameters.delete_threshold.has_value ? parameters.delete_threshold.value : 0;
-	RESTFilesForCompactionResponse result;
-	result.files =
-	    request.GetMetadataManager().GetFilesForCompaction(table, parameters.type, delete_threshold, snapshot, options);
-	return result;
+RESTCompactResponse DuckLakeRESTEndpoints::Compact(DuckLakeRESTRequest &request, const RESTCompactRequest &parameters) {
+	// the compaction runs in transactions of its own
+	auto catalog_name = request.catalog->GetName().GetIdentifierName();
+	auto &db = DatabaseInstance::GetDatabase(*request.connection.context);
+	request.connection.Rollback();
+	auto function = parameters.type == CompactionType::MERGE_ADJACENT_TABLES ? "ducklake_merge_adjacent_files"
+	                                                                         : "ducklake_rewrite_data_files";
+	vector<string> arguments {SQLString::ToString(catalog_name)};
+	if (!parameters.table_name.empty()) {
+		arguments.push_back(SQLString::ToString(parameters.table_name));
+		if (!parameters.schema_name.empty()) {
+			arguments.push_back("schema => " + SQLString::ToString(parameters.schema_name));
+		}
+	} else if (!parameters.schema_name.empty()) {
+		throw InvalidInputException("A schema_name needs a table_name");
+	}
+	auto add_number = [&](const char *name, const optional_idx &value) {
+		if (value.IsValid()) {
+			arguments.push_back(StringUtil::Format("%s => %llu", name, value.GetIndex()));
+		}
+	};
+	add_number("max_compacted_files", parameters.max_compacted_files);
+	add_number("min_file_size", parameters.min_file_size);
+	add_number("max_file_size", parameters.max_file_size);
+	auto add_timestamp = [&](const char *name, const string &value) {
+		if (!value.empty()) {
+			arguments.push_back(StringUtil::Format("%s => %s::TIMESTAMPTZ", name, SQLString::ToString(value)));
+		}
+	};
+	add_timestamp("newer_than", parameters.newer_than);
+	add_timestamp("older_than", parameters.older_than);
+	if (parameters.delete_threshold.has_value) {
+		arguments.push_back(StringUtil::Format("delete_threshold => %f", parameters.delete_threshold.value));
+	}
+	Connection con(db);
+	auto result =
+	    con.Query(StringUtil::Format("SELECT schema_name, table_name, files_processed, files_created FROM %s(%s)",
+	                                 function, StringUtil::Join(arguments, ", ")));
+	result->ThrowIfError();
+	RESTCompactResponse response;
+	for (auto &row : *result) {
+		RESTCompactionResult entry;
+		entry.schema_name = row.GetValue<string>(0);
+		entry.table_name = row.GetValue<string>(1);
+		entry.files_processed = row.GetValue<idx_t>(2);
+		entry.files_created = row.GetValue<idx_t>(3);
+		response.results.push_back(std::move(entry));
+	}
+	return response;
 }
 
 //===--------------------------------------------------------------------===//
@@ -474,7 +497,6 @@ protected:
 	void InsertFiles(RESTInsertFilesRequest &parameters) override;
 	void DeleteData(RESTDeleteDataRequest &parameters) override;
 	void FlushInlinedData(RESTFlushInlinedDataRequest &parameters) override;
-	void Compact(RESTCompactRequest &parameters) override;
 
 private:
 	void Alter(const vector<string> &schema_path, const string &name, const RESTAlteration &alter,
@@ -815,16 +837,6 @@ void DuckLakeRESTCommit::RemapNameMap(DuckLakeDataFile &file) {
 	} else if (DuckLakeTransaction::IsTransactionLocal(file.mapping_id.index)) {
 		throw InvalidInputException("Name map %llu does not refer to a name map created in this transaction",
 		                            file.mapping_id.index);
-	}
-}
-
-void DuckLakeRESTCommit::Compact(RESTCompactRequest &parameters) {
-	auto table_id = GetTable(GetTableId(parameters.table_id)).GetTableId();
-	for (auto &compaction : parameters.compactions) {
-		for (auto &file : compaction.written_files) {
-			RemapNameMap(file);
-		}
-		transaction.AddCompaction(table_id, std::move(compaction));
 	}
 }
 

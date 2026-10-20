@@ -724,308 +724,25 @@ DuckLakeSnapshotCommit DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeCompactionEntry &value) {
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCompactionResult &value) {
 	auto result = writer.CreateObject();
-	result.Add("type", RESTWriteValue<RESTCompactionTypeCodec>(writer, value.type));
-	if (!RESTIsNull(value.row_id_start)) {
-		result.Add("row_id_start", RESTWriteValue<RESTUInt64Codec>(writer, value.row_id_start));
-	}
-	result.Add("source_files",
-	           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeCompactionFileEntry>>>(writer, value.source_files));
-	result.Add("written_files",
-	           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeDataFile>>>(writer, value.written_files));
+	result.Add("schema_name", RESTWriteValue<RESTStringCodec>(writer, value.schema_name));
+	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
+	result.Add("files_processed", RESTWriteValue<RESTUInt64Codec>(writer, value.files_processed));
+	result.Add("files_created", RESTWriteValue<RESTUInt64Codec>(writer, value.files_created));
 	return result;
 }
 
 template <>
-DuckLakeCompactionEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+RESTCompactionResult DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for Compaction");
+		throw InvalidInputException("DuckLake REST: expected a JSON object for CompactionResult");
 	}
-	DuckLakeCompactionEntry result;
-	RESTReadValue<RESTCompactionTypeCodec>(in.Get("type"), result.type);
-	{
-		auto entry = in.TryGet("row_id_start");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.row_id_start);
-		}
-	}
-	{
-		auto entry = in.TryGet("source_files");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeCompactionFileEntry>>>(entry, result.source_files);
-		}
-	}
-	{
-		auto entry = in.TryGet("written_files");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeDataFile>>>(entry, result.written_files);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeCompactionBaseFileData &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.id)) {
-		result.Add("file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.id));
-	}
-	result.Add("file", RESTWriteValue<RESTObjectCodec<DuckLakeFileData>>(writer, value.data));
-	result.Add("record_count", RESTWriteValue<RESTUInt64Codec>(writer, value.row_count));
-	result.Add("begin_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.begin_snapshot));
-	if (!RESTIsNull(value.end_snapshot)) {
-		result.Add("end_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.end_snapshot));
-	}
-	if (!RESTIsNull(value.max_row_count)) {
-		result.Add("max_row_count", RESTWriteValue<RESTUInt64Codec>(writer, value.max_row_count));
-	}
-	return result;
-}
-
-template <>
-DuckLakeCompactionBaseFileData DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for CompactionBaseFile");
-	}
-	DuckLakeCompactionBaseFileData result;
-	{
-		auto entry = in.TryGet("file_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.id);
-		}
-	}
-	RESTReadValue<RESTObjectCodec<DuckLakeFileData>>(in.Get("file"), result.data);
-	RESTReadValue<RESTUInt64Codec>(in.Get("record_count"), result.row_count);
-	RESTReadValue<RESTUInt64Codec>(in.Get("begin_snapshot"), result.begin_snapshot);
-	{
-		auto entry = in.TryGet("end_snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.end_snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("max_row_count");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.max_row_count);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeCompactionFileData &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.id)) {
-		result.Add("file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.id));
-	}
-	result.Add("file", RESTWriteValue<RESTObjectCodec<DuckLakeFileData>>(writer, value.data));
-	result.Add("record_count", RESTWriteValue<RESTUInt64Codec>(writer, value.row_count));
-	result.Add("begin_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.begin_snapshot));
-	if (!RESTIsNull(value.end_snapshot)) {
-		result.Add("end_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.end_snapshot));
-	}
-	if (!RESTIsNull(value.max_row_count)) {
-		result.Add("max_row_count", RESTWriteValue<RESTUInt64Codec>(writer, value.max_row_count));
-	}
-	if (!RESTIsNull(value.row_id_start)) {
-		result.Add("row_id_start", RESTWriteValue<RESTUInt64Codec>(writer, value.row_id_start));
-	}
-	if (!RESTIsNull(value.mapping_id)) {
-		result.Add("mapping_id", RESTWriteValue<RESTUInt64Codec>(writer, value.mapping_id));
-	}
-	if (!RESTIsNull(value.partition_id)) {
-		result.Add("partition_id", RESTWriteValue<RESTUInt64Codec>(writer, value.partition_id));
-	}
-	result.Add("partition_values", RESTWriteValue<RESTListCodec<RESTValueCodec>>(writer, value.partition_values));
-	return result;
-}
-
-template <>
-DuckLakeCompactionFileData DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for CompactionDataFile");
-	}
-	DuckLakeCompactionFileData result;
-	{
-		auto entry = in.TryGet("file_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.id);
-		}
-	}
-	RESTReadValue<RESTObjectCodec<DuckLakeFileData>>(in.Get("file"), result.data);
-	RESTReadValue<RESTUInt64Codec>(in.Get("record_count"), result.row_count);
-	RESTReadValue<RESTUInt64Codec>(in.Get("begin_snapshot"), result.begin_snapshot);
-	{
-		auto entry = in.TryGet("end_snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.end_snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("max_row_count");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.max_row_count);
-		}
-	}
-	{
-		auto entry = in.TryGet("row_id_start");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.row_id_start);
-		}
-	}
-	{
-		auto entry = in.TryGet("mapping_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.mapping_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("partition_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.partition_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("partition_values");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTValueCodec>>(entry, result.partition_values);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeCompactionDeleteFileData &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.id)) {
-		result.Add("file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.id));
-	}
-	result.Add("file", RESTWriteValue<RESTObjectCodec<DuckLakeFileData>>(writer, value.data));
-	result.Add("record_count", RESTWriteValue<RESTUInt64Codec>(writer, value.row_count));
-	result.Add("begin_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.begin_snapshot));
-	if (!RESTIsNull(value.end_snapshot)) {
-		result.Add("end_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.end_snapshot));
-	}
-	if (!RESTIsNull(value.max_row_count)) {
-		result.Add("max_row_count", RESTWriteValue<RESTUInt64Codec>(writer, value.max_row_count));
-	}
-	if (!RESTIsNull(value.delete_file_id)) {
-		result.Add("delete_file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.delete_file_id));
-	}
-	if (!RESTIsNull(value.max_snapshot)) {
-		result.Add("max_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.max_snapshot));
-	}
-	return result;
-}
-
-template <>
-DuckLakeCompactionDeleteFileData DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for CompactionDeleteFile");
-	}
-	DuckLakeCompactionDeleteFileData result;
-	{
-		auto entry = in.TryGet("file_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.id);
-		}
-	}
-	RESTReadValue<RESTObjectCodec<DuckLakeFileData>>(in.Get("file"), result.data);
-	RESTReadValue<RESTUInt64Codec>(in.Get("record_count"), result.row_count);
-	RESTReadValue<RESTUInt64Codec>(in.Get("begin_snapshot"), result.begin_snapshot);
-	{
-		auto entry = in.TryGet("end_snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.end_snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("max_row_count");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.max_row_count);
-		}
-	}
-	{
-		auto entry = in.TryGet("delete_file_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.delete_file_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("max_snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.max_snapshot);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeCompactionFileEntry &value) {
-	auto result = writer.CreateObject();
-	result.Add("data_file", RESTWriteValue<RESTObjectCodec<DuckLakeCompactionFileData>>(writer, value.file));
-	result.Add("delete_files", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeCompactionDeleteFileData>>>(
-	                               writer, value.delete_files));
-	if (!RESTIsNull(value.max_partial_file_snapshot)) {
-		result.Add("max_partial_file_snapshot",
-		           RESTWriteValue<RESTUInt64Codec>(writer, value.max_partial_file_snapshot));
-	}
-	result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
-	if (!RESTIsNull(value.partition_schema_version)) {
-		result.Add("partition_schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.partition_schema_version));
-	}
-	result.Add("inlined_file_deletions",
-	           RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.inlined_file_deletions));
-	result.Add("has_inlined_deletions", RESTWriteValue<RESTBoolCodec>(writer, value.has_inlined_deletions));
-	result.Add("delete_ratio", RESTWriteValue<RESTDoubleCodec>(writer, value.delete_ratio));
-	return result;
-}
-
-template <>
-DuckLakeCompactionFileEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for CompactionFileEntry");
-	}
-	DuckLakeCompactionFileEntry result;
-	RESTReadValue<RESTObjectCodec<DuckLakeCompactionFileData>>(in.Get("data_file"), result.file);
-	{
-		auto entry = in.TryGet("delete_files");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeCompactionDeleteFileData>>>(entry, result.delete_files);
-		}
-	}
-	{
-		auto entry = in.TryGet("max_partial_file_snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.max_partial_file_snapshot);
-		}
-	}
-	RESTReadValue<RESTUInt64Codec>(in.Get("schema_version"), result.schema_version);
-	{
-		auto entry = in.TryGet("partition_schema_version");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.partition_schema_version);
-		}
-	}
-	{
-		auto entry = in.TryGet("inlined_file_deletions");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.inlined_file_deletions);
-		}
-	}
-	{
-		auto entry = in.TryGet("has_inlined_deletions");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTBoolCodec>(entry, result.has_inlined_deletions);
-		} else {
-			result.has_inlined_deletions = false;
-		}
-	}
-	{
-		auto entry = in.TryGet("delete_ratio");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTDoubleCodec>(entry, result.delete_ratio);
-		} else {
-			result.delete_ratio = 0.0;
-		}
-	}
+	RESTCompactionResult result;
+	RESTReadValue<RESTStringCodec>(in.Get("schema_name"), result.schema_name);
+	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
+	RESTReadValue<RESTUInt64Codec>(in.Get("files_processed"), result.files_processed);
+	RESTReadValue<RESTUInt64Codec>(in.Get("files_created"), result.files_created);
 	return result;
 }
 
@@ -3809,111 +3526,6 @@ RESTDuckLakeTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFilesForCompactionRequest &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.snapshot)) {
-		result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
-	}
-	if (!RESTIsNull(value.snapshot_id)) {
-		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
-	}
-	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
-	result.Add("type", RESTWriteValue<RESTCompactionTypeCodec>(writer, value.type));
-	if (!RESTIsNull(value.delete_threshold)) {
-		result.Add("delete_threshold", RESTWriteValue<RESTDoubleCodec>(writer, value.delete_threshold));
-	}
-	if (!RESTIsNull(value.min_file_size)) {
-		result.Add("min_file_size", RESTWriteValue<RESTUInt64Codec>(writer, value.min_file_size));
-	}
-	if (!RESTIsNull(value.max_file_size)) {
-		result.Add("max_file_size", RESTWriteValue<RESTUInt64Codec>(writer, value.max_file_size));
-	}
-	result.Add("target_file_size", RESTWriteValue<RESTUInt64Codec>(writer, value.target_file_size));
-	if (!RESTIsNull(value.newer_than)) {
-		result.Add("newer_than", RESTWriteValue<RESTValueCodec>(writer, value.newer_than));
-	}
-	if (!RESTIsNull(value.older_than)) {
-		result.Add("older_than", RESTWriteValue<RESTValueCodec>(writer, value.older_than));
-	}
-	return result;
-}
-
-template <>
-RESTFilesForCompactionRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for FilesForCompactionRequest");
-	}
-	RESTFilesForCompactionRequest result;
-	{
-		auto entry = in.TryGet("snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(entry, result.snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("snapshot_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.snapshot_id);
-		}
-	}
-	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
-	RESTReadValue<RESTCompactionTypeCodec>(in.Get("type"), result.type);
-	{
-		auto entry = in.TryGet("delete_threshold");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTDoubleCodec>(entry, result.delete_threshold);
-		}
-	}
-	{
-		auto entry = in.TryGet("min_file_size");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.min_file_size);
-		}
-	}
-	{
-		auto entry = in.TryGet("max_file_size");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.max_file_size);
-		}
-	}
-	RESTReadValue<RESTUInt64Codec>(in.Get("target_file_size"), result.target_file_size);
-	{
-		auto entry = in.TryGet("newer_than");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.newer_than);
-		}
-	}
-	{
-		auto entry = in.TryGet("older_than");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.older_than);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFilesForCompactionResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("files",
-	           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeCompactionFileEntry>>>(writer, value.files));
-	return result;
-}
-
-template <>
-RESTFilesForCompactionResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for FilesForCompactionResponse");
-	}
-	RESTFilesForCompactionResponse result;
-	{
-		auto entry = in.TryGet("files");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeCompactionFileEntry>>>(entry, result.files);
-		}
-	}
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTInlinedDataForFlushRequest &value) {
 	auto result = writer.CreateObject();
 	if (!RESTIsNull(value.snapshot)) {
@@ -4703,36 +4315,110 @@ RESTTableSizesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTablesWithLiveDataFilesRequest &value) {
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCompactRequest &value) {
 	auto result = writer.CreateObject();
+	result.Add("type", RESTWriteValue<RESTCompactionTypeCodec>(writer, value.type));
+	if (!RESTIsNull(value.schema_name)) {
+		result.Add("schema_name", RESTWriteValue<RESTStringCodec>(writer, value.schema_name));
+	}
+	if (!RESTIsNull(value.table_name)) {
+		result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
+	}
+	if (!RESTIsNull(value.max_compacted_files)) {
+		result.Add("max_compacted_files", RESTWriteValue<RESTUInt64Codec>(writer, value.max_compacted_files));
+	}
+	if (!RESTIsNull(value.min_file_size)) {
+		result.Add("min_file_size", RESTWriteValue<RESTUInt64Codec>(writer, value.min_file_size));
+	}
+	if (!RESTIsNull(value.max_file_size)) {
+		result.Add("max_file_size", RESTWriteValue<RESTUInt64Codec>(writer, value.max_file_size));
+	}
+	if (!RESTIsNull(value.newer_than)) {
+		result.Add("newer_than", RESTWriteValue<RESTTimestampCodec>(writer, value.newer_than));
+	}
+	if (!RESTIsNull(value.older_than)) {
+		result.Add("older_than", RESTWriteValue<RESTTimestampCodec>(writer, value.older_than));
+	}
+	if (!RESTIsNull(value.delete_threshold)) {
+		result.Add("delete_threshold", RESTWriteValue<RESTDoubleCodec>(writer, value.delete_threshold));
+	}
 	return result;
 }
 
 template <>
-RESTTablesWithLiveDataFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+RESTCompactRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for TablesWithLiveDataFilesRequest");
+		throw InvalidInputException("DuckLake REST: expected a JSON object for CompactRequest");
 	}
-	RESTTablesWithLiveDataFilesRequest result;
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTablesWithLiveDataFilesResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("table_ids", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.table_ids));
-	return result;
-}
-
-template <>
-RESTTablesWithLiveDataFilesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for TablesWithLiveDataFilesResponse");
-	}
-	RESTTablesWithLiveDataFilesResponse result;
+	RESTCompactRequest result;
+	RESTReadValue<RESTCompactionTypeCodec>(in.Get("type"), result.type);
 	{
-		auto entry = in.TryGet("table_ids");
+		auto entry = in.TryGet("schema_name");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.table_ids);
+			RESTReadValue<RESTStringCodec>(entry, result.schema_name);
+		}
+	}
+	{
+		auto entry = in.TryGet("table_name");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTStringCodec>(entry, result.table_name);
+		}
+	}
+	{
+		auto entry = in.TryGet("max_compacted_files");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.max_compacted_files);
+		}
+	}
+	{
+		auto entry = in.TryGet("min_file_size");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.min_file_size);
+		}
+	}
+	{
+		auto entry = in.TryGet("max_file_size");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.max_file_size);
+		}
+	}
+	{
+		auto entry = in.TryGet("newer_than");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTTimestampCodec>(entry, result.newer_than);
+		}
+	}
+	{
+		auto entry = in.TryGet("older_than");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTTimestampCodec>(entry, result.older_than);
+		}
+	}
+	{
+		auto entry = in.TryGet("delete_threshold");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTDoubleCodec>(entry, result.delete_threshold);
+		}
+	}
+	return result;
+}
+
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCompactResponse &value) {
+	auto result = writer.CreateObject();
+	result.Add("results", RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTCompactionResult>>>(writer, value.results));
+	return result;
+}
+
+template <>
+RESTCompactResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for CompactResponse");
+	}
+	RESTCompactResponse result;
+	{
+		auto entry = in.TryGet("results");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTCompactionResult>>>(entry, result.results);
 		}
 	}
 	return result;
@@ -5451,25 +5137,6 @@ RESTFlushInlinedDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCompactRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("table_id", RESTWriteValue<RESTInt64Codec>(writer, value.table_id));
-	result.Add("compactions",
-	           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeCompactionEntry>>>(writer, value.compactions));
-	return result;
-}
-
-template <>
-RESTCompactRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for CompactRequest");
-	}
-	RESTCompactRequest result;
-	RESTReadValue<RESTInt64Codec>(in.Get("table_id"), result.table_id);
-	RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeCompactionEntry>>>(in.Get("compactions"), result.compactions);
-	return result;
-}
-
 //===--------------------------------------------------------------------===//
 // Commit requests
 //===--------------------------------------------------------------------===//
@@ -5507,8 +5174,6 @@ const char *RESTCommitRequest::Path() const {
 		return "delete_data";
 	case RESTCommitRequestType::FLUSH_INLINED_DATA:
 		return "flush_inlined_data";
-	case RESTCommitRequestType::COMPACT:
-		return "compact";
 	default:
 		throw InternalException("Unsupported RESTCommitRequestType");
 	}
@@ -5563,9 +5228,6 @@ optional_idx RESTCommitRequest::TypeFromPath(const string &path) {
 	if (path == "flush_inlined_data") {
 		return static_cast<idx_t>(RESTCommitRequestType::FLUSH_INLINED_DATA);
 	}
-	if (path == "compact") {
-		return static_cast<idx_t>(RESTCommitRequestType::COMPACT);
-	}
 	return optional_idx();
 }
 
@@ -5605,8 +5267,6 @@ static unique_ptr<RESTCommitRequest> ReadCommitRequest(RESTCommitRequestType typ
 	case RESTCommitRequestType::FLUSH_INLINED_DATA:
 		return make_uniq<RESTFlushInlinedDataRequest>(
 		    DuckLakeRESTSerializer::Read<RESTFlushInlinedDataRequest>(parameters));
-	case RESTCommitRequestType::COMPACT:
-		return make_uniq<RESTCompactRequest>(DuckLakeRESTSerializer::Read<RESTCompactRequest>(parameters));
 	default:
 		throw InternalException("Unsupported RESTCommitRequestType");
 	}
@@ -5664,9 +5324,6 @@ JSONMutableValue RESTCommitRequestCodec::Write(JSONWriter &writer, const RESTCom
 	case RESTCommitRequestType::FLUSH_INLINED_DATA:
 		result.Add("flush_inlined_data",
 		           DuckLakeRESTSerializer::Write(writer, value.Cast<RESTFlushInlinedDataRequest>()));
-		break;
-	case RESTCommitRequestType::COMPACT:
-		result.Add("compact", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTCompactRequest>()));
 		break;
 	default:
 		throw InternalException("Unsupported RESTCommitRequestType");
@@ -5737,9 +5394,6 @@ void DuckLakeRESTCommitHandler::Apply(RESTCommitRequest &request) {
 		break;
 	case RESTCommitRequestType::FLUSH_INLINED_DATA:
 		FlushInlinedData(request.Cast<RESTFlushInlinedDataRequest>());
-		break;
-	case RESTCommitRequestType::COMPACT:
-		Compact(request.Cast<RESTCompactRequest>());
 		break;
 	default:
 		throw InternalException("Unsupported RESTCommitRequestType");
@@ -5932,13 +5586,6 @@ static string DuckLakeTablesEndpoint(DuckLakeRESTRequest &request, const string 
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
-static string FilesForCompactionEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTFilesForCompactionRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::FilesForCompaction(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
 static string InlinedDataForFlushEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTInlinedDataForFlushRequest>(document.Root());
@@ -6009,10 +5656,10 @@ static string TableSizesEndpoint(DuckLakeRESTRequest &request, const string &bod
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
-static string TablesWithLiveDataFilesEndpoint(DuckLakeRESTRequest &request, const string &body) {
+static string CompactEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTTablesWithLiveDataFilesRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::TablesWithLiveDataFiles(request, parameters);
+	auto parameters = DuckLakeRESTSerializer::Read<RESTCompactRequest>(document.Root());
+	auto result = DuckLakeRESTEndpoints::Compact(request, parameters);
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
@@ -6030,7 +5677,6 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	    {"deleted_inlined_rows", DeletedInlinedRowsEndpoint},
 	    {"ducklake_table", DuckLakeTableEndpoint},
 	    {"ducklake_tables", DuckLakeTablesEndpoint},
-	    {"files_for_compaction", FilesForCompactionEndpoint},
 	    {"inlined_data_for_flush", InlinedDataForFlushEndpoint},
 	    {"inlined_file_deletions", InlinedFileDeletionsEndpoint},
 	    {"inlined_tables", InlinedTablesEndpoint},
@@ -6041,7 +5687,7 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	    {"table_changes", TableChangesEndpoint},
 	    {"table_schema_versions", TableSchemaVersionsEndpoint},
 	    {"table_sizes", TableSizesEndpoint},
-	    {"tables_with_live_data_files", TablesWithLiveDataFilesEndpoint},
+	    {"compact", CompactEndpoint},
 	    {"commit_transaction", CommitTransactionEndpoint},
 	};
 	return endpoints;
@@ -6057,10 +5703,6 @@ const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	     {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"ducklake_table", "GET", "/v1/metadata-tables/{table_name}", {{"table_name", RESTParameterType::STRING, ""}}},
 	    {"ducklake_tables", "GET", "/v1/metadata-tables", {}},
-	    {"files_for_compaction",
-	     "POST",
-	     "/v1/tables/{table_id}/compaction-files",
-	     {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"inlined_data_for_flush",
 	     "POST",
 	     "/v1/tables/{table_id}/inlined-data",
@@ -6085,7 +5727,7 @@ const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	     "/v1/tables/{table_id}/schema-versions",
 	     {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"table_sizes", "POST", "/v1/table-sizes", {}},
-	    {"tables_with_live_data_files", "GET", "/v1/tables/with-data-files", {}},
+	    {"compact", "POST", "/v1/compactions", {}},
 	    {"commit_transaction", "POST", "/v1/transactions/commit", {}},
 	};
 	return routes;
@@ -6131,12 +5773,6 @@ RESTDuckLakeTablesResponse DuckLakeRESTClientAPI::DuckLakeTables(const RESTDuckL
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("ducklake_tables", DuckLakeRESTSerializer::ToJSON(request), true));
 	return DuckLakeRESTSerializer::Read<RESTDuckLakeTablesResponse>(document.Root());
-}
-
-RESTFilesForCompactionResponse DuckLakeRESTClientAPI::FilesForCompaction(const RESTFilesForCompactionRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("files_for_compaction", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTFilesForCompactionResponse>(document.Root());
 }
 
 RESTInlinedRows DuckLakeRESTClientAPI::InlinedDataForFlush(const RESTInlinedDataForFlushRequest &request) {
@@ -6201,11 +5837,10 @@ RESTTableSizesResponse DuckLakeRESTClientAPI::TableSizes(const RESTTableSizesReq
 	return DuckLakeRESTSerializer::Read<RESTTableSizesResponse>(document.Root());
 }
 
-RESTTablesWithLiveDataFilesResponse
-DuckLakeRESTClientAPI::TablesWithLiveDataFiles(const RESTTablesWithLiveDataFilesRequest &request) {
+RESTCompactResponse DuckLakeRESTClientAPI::Compact(const RESTCompactRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("tables_with_live_data_files", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTTablesWithLiveDataFilesResponse>(document.Root());
+	RESTJsonReader document(Call("compact", DuckLakeRESTSerializer::ToJSON(request), false));
+	return DuckLakeRESTSerializer::Read<RESTCompactResponse>(document.Root());
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::CommitTransaction(const RESTCommitTransactionRequest &request) {

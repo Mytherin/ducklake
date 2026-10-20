@@ -73,9 +73,6 @@ public:
 	GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
 	                         const FilterPushdownInfo *filter_info = nullptr,
 	                         optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
-	vector<DuckLakeCompactionFileEntry> GetFilesForCompaction(DuckLakeTableEntry &table, CompactionType type,
-	                                                          double deletion_threshold, DuckLakeSnapshot snapshot,
-	                                                          DuckLakeFileSizeOptions options) override;
 	unique_ptr<QueryResult> ReadInlinedDataInsertions(DuckLakeSnapshot start_snapshot, DuckLakeSnapshot end_snapshot,
 	                                                  const string &inlined_table_name,
 	                                                  const vector<string> &columns_to_read) override;
@@ -103,7 +100,6 @@ public:
 	void SetConfigOption(const DuckLakeConfigOption &option) override;
 	bool ResetConfigOption(const DuckLakeConfigOption &option) override;
 	vector<DuckLakeTableSizeInfo> GetTableSizes(DuckLakeSnapshot snapshot) override;
-	unordered_set<idx_t> GetTablesWithLiveDataFiles() override;
 	vector<DuckLakeColumnMappingInfo> GetColumnMappings(optional_idx start_from) override;
 	vector<DuckLakeFileListEntry>
 	GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot,

@@ -127,6 +127,7 @@ struct RESTAddField;
 struct RESTAtClause;
 struct RESTChangeColumnType;
 struct RESTColumnDefinition;
+struct RESTCompactionResult;
 struct RESTCreatedEntry;
 struct RESTCreatedTable;
 struct RESTDeletedRowVersion;
@@ -169,8 +170,6 @@ struct RESTDeletedInlinedRowsResponse;
 struct RESTDuckLakeTableRequest;
 struct RESTDuckLakeTablesRequest;
 struct RESTDuckLakeTablesResponse;
-struct RESTFilesForCompactionRequest;
-struct RESTFilesForCompactionResponse;
 struct RESTInlinedDataForFlushRequest;
 struct RESTInlinedFileDeletionsRequest;
 struct RESTInlinedFileDeletionsResponse;
@@ -190,8 +189,8 @@ struct RESTTableSchemaVersionsRequest;
 struct RESTTableSchemaVersionsResponse;
 struct RESTTableSizesRequest;
 struct RESTTableSizesResponse;
-struct RESTTablesWithLiveDataFilesRequest;
-struct RESTTablesWithLiveDataFilesResponse;
+struct RESTCompactRequest;
+struct RESTCompactResponse;
 struct RESTCommitTransactionRequest;
 struct RESTCommitTransactionResponse;
 struct RESTCreateSchemaRequest;
@@ -210,7 +209,6 @@ struct RESTInsertRowsRequest;
 struct RESTInsertFilesRequest;
 struct RESTDeleteDataRequest;
 struct RESTFlushInlinedDataRequest;
-struct RESTCompactRequest;
 
 //! Conversion of the structures of the REST API to and from JSON
 struct DuckLakeRESTSerializer {
@@ -233,11 +231,7 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeColumnInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeColumnStats &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSnapshotCommit &value);
-	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeCompactionEntry &value);
-	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeCompactionBaseFileData &value);
-	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeCompactionFileData &value);
-	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeCompactionDeleteFileData &value);
-	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeCompactionFileEntry &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTCompactionResult &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCreatedEntry &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCreatedTable &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeDataFile &value);
@@ -311,8 +305,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTableRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTFilesForCompactionRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTFilesForCompactionResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedDataForFlushRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedFileDeletionsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedFileDeletionsResponse &value);
@@ -332,8 +324,8 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSchemaVersionsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTTablesWithLiveDataFilesRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTTablesWithLiveDataFilesResponse &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTCompactRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTCompactResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCommitTransactionRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCommitTransactionResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateSchemaRequest &value);
@@ -352,7 +344,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInsertFilesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDeleteDataRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTFlushInlinedDataRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTCompactRequest &value);
 };
 
 template <>
@@ -374,15 +365,7 @@ DuckLakeColumnStats DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeSnapshotCommit DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-DuckLakeCompactionEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-DuckLakeCompactionBaseFileData DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-DuckLakeCompactionFileData DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-DuckLakeCompactionDeleteFileData DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-DuckLakeCompactionFileEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
+RESTCompactionResult DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTCreatedEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -530,10 +513,6 @@ RESTDuckLakeTablesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDuckLakeTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTFilesForCompactionRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTFilesForCompactionResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
 RESTInlinedDataForFlushRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTInlinedFileDeletionsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
@@ -572,9 +551,9 @@ RESTTableSizesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTTableSizesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTTablesWithLiveDataFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+RESTCompactRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTTablesWithLiveDataFilesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
+RESTCompactResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTCommitTransactionRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -611,8 +590,6 @@ template <>
 RESTDeleteDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTFlushInlinedDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTCompactRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 
 template <class T>
 struct RESTObjectCodec : public RESTCodec<RESTObjectCodec<T>> {
@@ -671,7 +648,6 @@ enum class RESTCommitRequestType : uint8_t {
 	INSERT_FILES,
 	DELETE_DATA,
 	FLUSH_INLINED_DATA,
-	COMPACT,
 };
 
 //! A request of a commit_transaction
@@ -815,6 +791,18 @@ struct RESTChangeColumnType : public RESTAlteration {
 	string column_type;
 	//! The `USING` expression that converts the old values.
 	string expression;
+};
+
+//! The compaction of a table.
+struct RESTCompactionResult {
+	//! The schema of the table.
+	string schema_name;
+	//! The name of the table.
+	string table_name;
+	//! The number of files that were compacted.
+	idx_t files_processed = 0;
+	//! The number of files that were written.
+	idx_t files_created = 0;
 };
 
 //! An entry that a commit created.
@@ -1192,30 +1180,6 @@ struct RESTDuckLakeTablesResponse {
 	vector<string> table_names;
 };
 
-struct RESTFilesForCompactionRequest : public RESTSnapshotReference {
-	//! The table.
-	idx_t table_id = 0;
-	//! The type of the compaction.
-	CompactionType type = CompactionType::MERGE_ADJACENT_TABLES;
-	//! For `rewrite_delete`: the fraction of deleted rows above which files are rewritten.
-	RESTOptional<double> delete_threshold;
-	//! Only consider files of at least this size.
-	optional_idx min_file_size;
-	//! Only consider files of at most this size.
-	optional_idx max_file_size;
-	//! The size of the compacted files.
-	idx_t target_file_size = 0;
-	//! Only consider files written at or after this timestamp.
-	Value newer_than;
-	//! Only consider files written before this timestamp.
-	Value older_than;
-};
-
-struct RESTFilesForCompactionResponse {
-	//! The candidates.
-	vector<DuckLakeCompactionFileEntry> files;
-};
-
 struct RESTInlinedDataForFlushRequest : public RESTSnapshotReference {
 	//! The table.
 	idx_t table_id = 0;
@@ -1374,11 +1338,30 @@ struct RESTTableSizesResponse {
 	vector<DuckLakeTableSizeInfo> tables;
 };
 
-struct RESTTablesWithLiveDataFilesRequest {};
+struct RESTCompactRequest {
+	//! The type of the compaction.
+	CompactionType type = CompactionType::MERGE_ADJACENT_TABLES;
+	//! The schema of `table_name`, the default schema if absent.
+	string schema_name;
+	//! Only compact this table, all tables if absent.
+	string table_name;
+	//! The maximum number of files to compact.
+	optional_idx max_compacted_files;
+	//! For `merge_adjacent`: only merge files of at least this size.
+	optional_idx min_file_size;
+	//! For `merge_adjacent`: only merge files of at most this size.
+	optional_idx max_file_size;
+	//! For `merge_adjacent`: only merge files written after this timestamp.
+	string newer_than;
+	//! For `merge_adjacent`: only merge files written before this timestamp.
+	string older_than;
+	//! For `rewrite_delete`: the fraction of deleted rows above which files are rewritten.
+	RESTOptional<double> delete_threshold;
+};
 
-struct RESTTablesWithLiveDataFilesResponse {
-	//! The tables.
-	vector<idx_t> table_ids;
+struct RESTCompactResponse {
+	//! The compactions that were performed, per table.
+	vector<RESTCompactionResult> results;
 };
 
 struct RESTCommitTransactionRequest : public RESTSnapshotReference {
@@ -1673,19 +1656,6 @@ struct RESTFlushInlinedDataRequest : public RESTCommitRequest {
 	vector<RESTFlushedFileDeletions> file_deletions;
 };
 
-//! The `compact` request of a commit.
-struct RESTCompactRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::COMPACT;
-
-	RESTCompactRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The table.
-	int64_t table_id = 0;
-	//! The compactions.
-	vector<DuckLakeCompactionEntry> compactions;
-};
-
 //===--------------------------------------------------------------------===//
 // Server
 //===--------------------------------------------------------------------===//
@@ -1704,9 +1674,6 @@ struct DuckLakeRESTEndpoints {
 	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
 	static RESTDuckLakeTablesResponse DuckLakeTables(DuckLakeRESTRequest &request,
 	                                                 const RESTDuckLakeTablesRequest &parameters);
-	//! Returns the data files of a table that are candidates for compaction, together with their delete files.
-	static RESTFilesForCompactionResponse FilesForCompaction(DuckLakeRESTRequest &request,
-	                                                         const RESTFilesForCompactionRequest &parameters);
 	//! Reads the inlined rows of a table that a flush writes.
 	static RESTInlinedRows InlinedDataForFlush(DuckLakeRESTRequest &request,
 	                                           const RESTInlinedDataForFlushRequest &parameters);
@@ -1734,9 +1701,8 @@ struct DuckLakeRESTEndpoints {
 	                                                           const RESTTableSchemaVersionsRequest &parameters);
 	//! Returns the storage used by each table at a snapshot.
 	static RESTTableSizesResponse TableSizes(DuckLakeRESTRequest &request, const RESTTableSizesRequest &parameters);
-	//! Returns the tables that have data files that are not deleted.
-	static RESTTablesWithLiveDataFilesResponse
-	TablesWithLiveDataFiles(DuckLakeRESTRequest &request, const RESTTablesWithLiveDataFilesRequest &parameters);
+	//! Compacts the data files of the DuckLake on the server.
+	static RESTCompactResponse Compact(DuckLakeRESTRequest &request, const RESTCompactRequest &parameters);
 	//! Commits a set of changes atomically.
 	static RESTCommitTransactionResponse CommitTransaction(DuckLakeRESTRequest &request,
 	                                                       const RESTCommitTransactionRequest &parameters);
@@ -1768,7 +1734,6 @@ protected:
 	virtual void InsertFiles(RESTInsertFilesRequest &request) = 0;
 	virtual void DeleteData(RESTDeleteDataRequest &request) = 0;
 	virtual void FlushInlinedData(RESTFlushInlinedDataRequest &request) = 0;
-	virtual void Compact(RESTCompactRequest &request) = 0;
 };
 
 //! Handles the JSON body of a request to an endpoint, returns the JSON body of the response
@@ -1835,8 +1800,6 @@ public:
 	RESTInlinedRows DuckLakeTable(const RESTDuckLakeTableRequest &request);
 	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
 	RESTDuckLakeTablesResponse DuckLakeTables(const RESTDuckLakeTablesRequest &request);
-	//! Returns the data files of a table that are candidates for compaction, together with their delete files.
-	RESTFilesForCompactionResponse FilesForCompaction(const RESTFilesForCompactionRequest &request);
 	//! Reads the inlined rows of a table that a flush writes.
 	RESTInlinedRows InlinedDataForFlush(const RESTInlinedDataForFlushRequest &request);
 	//! Returns the deletions of rows of data files that are inlined in the catalog.
@@ -1857,8 +1820,8 @@ public:
 	RESTTableSchemaVersionsResponse TableSchemaVersions(const RESTTableSchemaVersionsRequest &request);
 	//! Returns the storage used by each table at a snapshot.
 	RESTTableSizesResponse TableSizes(const RESTTableSizesRequest &request);
-	//! Returns the tables that have data files that are not deleted.
-	RESTTablesWithLiveDataFilesResponse TablesWithLiveDataFiles(const RESTTablesWithLiveDataFilesRequest &request);
+	//! Compacts the data files of the DuckLake on the server.
+	RESTCompactResponse Compact(const RESTCompactRequest &request);
 	//! Commits a set of changes atomically.
 	RESTCommitTransactionResponse CommitTransaction(const RESTCommitTransactionRequest &request);
 

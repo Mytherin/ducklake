@@ -250,38 +250,6 @@ Response:
 |-------|------|-------------|
 | `table_names` | list of `string` (default `[]`) | The tables. |
 
-### `files_for_compaction`
-
-Returns the data files of a table that are candidates for compaction, together with their delete files.
-
-`POST /v1/tables/{table_id}/compaction-files`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `table_id` | path | `uint64` | The table. |
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
-| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `type` | [`CompactionType`](#compactiontype) | The type of the compaction. |
-| `delete_threshold` | `double` (optional) | For `rewrite_delete`: the fraction of deleted rows above which files are rewritten. |
-| `min_file_size` | `uint64` (optional) | Only consider files of at least this size. |
-| `max_file_size` | `uint64` (optional) | Only consider files of at most this size. |
-| `target_file_size` | `uint64` | The size of the compacted files. |
-| `newer_than` | `value` (optional) | Only consider files written at or after this timestamp. |
-| `older_than` | `value` (optional) | Only consider files written before this timestamp. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `files` | list of [`CompactionFileEntry`](#compactionfileentry) (default `[]`) | The candidates. |
-
 ### `inlined_data_for_flush`
 
 Reads the inlined rows of a table that a flush writes.
@@ -562,19 +530,40 @@ Response:
 |-------|------|-------------|
 | `tables` | list of [`TableSize`](#tablesize) (default `[]`) | The tables. |
 
-### `tables_with_live_data_files`
+## Server Commands
 
-Returns the tables that have data files that are not deleted.
+These endpoints make the server perform work on the DuckLake outside of a client transaction, and commit it in a
+transaction of its own.
 
-`GET /v1/tables/with-data-files`
+### `compact`
 
-Request: no body.
+Compacts the data files of the DuckLake on the server.
+
+The server merges or rewrites the files and commits the result in a transaction of its own, so the compaction does
+not see the uncommitted changes of a client. The files are read and written by the server; the parameters are the
+options of `ducklake_merge_adjacent_files` and `ducklake_rewrite_data_files`.
+
+`POST /v1/compactions`
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | [`CompactionType`](#compactiontype) | The type of the compaction. |
+| `schema_name` | `string` (optional) | The schema of `table_name`, the default schema if absent. |
+| `table_name` | `string` (optional) | Only compact this table, all tables if absent. |
+| `max_compacted_files` | `uint64` (optional) | The maximum number of files to compact. |
+| `min_file_size` | `uint64` (optional) | For `merge_adjacent`: only merge files of at least this size. |
+| `max_file_size` | `uint64` (optional) | For `merge_adjacent`: only merge files of at most this size. |
+| `newer_than` | `timestamp` (optional) | For `merge_adjacent`: only merge files written after this timestamp. |
+| `older_than` | `timestamp` (optional) | For `merge_adjacent`: only merge files written before this timestamp. |
+| `delete_threshold` | `double` (optional) | For `rewrite_delete`: the fraction of deleted rows above which files are rewritten. |
 
 Response:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `table_ids` | list of `uint64` (default `[]`) | The tables. |
+| `results` | list of [`CompactionResult`](#compactionresult) (default `[]`) | The compactions that were performed, per table. |
 
 ## Committing Transactions
 
@@ -869,19 +858,6 @@ Request:
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
-### `compact`
-
-Replaces data files with compacted files that were written by the client.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_id` | `int64` | The table. |
-| `compactions` | list of [`Compaction`](#compaction) | The compactions. |
-
-Response: as for [`commit_transaction`](#commit_transaction).
-
 ## Types
 
 The structures that the endpoints share. Fields that are optional can be `null` or absent; the server and the
@@ -1046,68 +1022,16 @@ The commit information of a transaction.
 | `commit_extra_info` | `value` (optional) | Extra information of the commit. |
 | `is_commit_info_set` | `bool` (default `false`) | Whether the commit information was set. |
 
-### `Compaction`
+### `CompactionResult`
 
-Data files that are replaced by compacted files.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | [`CompactionType`](#compactiontype) | The type of the compaction. |
-| `row_id_start` | `uint64` (optional) | The row id of the first row of the compacted files. |
-| `source_files` | list of [`CompactionFileEntry`](#compactionfileentry) (default `[]`) | The files that are replaced, as returned by `files_for_compaction`. |
-| `written_files` | list of [`DataFile`](#datafile) (default `[]`) | The compacted files. |
-
-### `CompactionBaseFile`
-
-A file of a compaction.
+The compaction of a table.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `file_id` | `uint64` (optional) | The id of the file. |
-| `file` | [`FileData`](#filedata) | The file. |
-| `record_count` | `uint64` | The number of rows. |
-| `begin_snapshot` | `uint64` | The snapshot that added the file. |
-| `end_snapshot` | `uint64` (optional) | The snapshot that removed the file. |
-| `max_row_count` | `uint64` (optional) | The number of rows of the file to read. |
-
-### `CompactionDataFile`
-
-A data file that is a candidate for compaction.
-
-Has the fields of [`CompactionBaseFile`](#compactionbasefile), and:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `row_id_start` | `uint64` (optional) | The row id of the first row. |
-| `mapping_id` | `uint64` (optional) | The name map of the file. |
-| `partition_id` | `uint64` (optional) | The partitioning of the file. |
-| `partition_values` | list of `value` (default `[]`) | The values of the partition keys. |
-
-### `CompactionDeleteFile`
-
-A delete file of a data file that is a candidate for compaction.
-
-Has the fields of [`CompactionBaseFile`](#compactionbasefile), and:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `delete_file_id` | `uint64` (optional) | The id of the delete file. |
-| `max_snapshot` | `uint64` (optional) | The last snapshot whose deletes the file holds. |
-
-### `CompactionFileEntry`
-
-A data file that is a candidate for compaction, together with its delete files.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `data_file` | [`CompactionDataFile`](#compactiondatafile) | The data file. |
-| `delete_files` | list of [`CompactionDeleteFile`](#compactiondeletefile) (default `[]`) | The delete files of the data file. |
-| `max_partial_file_snapshot` | `uint64` (optional) | The last snapshot whose rows the file holds, for partial files. |
-| `schema_version` | `uint64` | The schema version the file was written with. |
-| `partition_schema_version` | `uint64` (optional) | The schema version of the partitioning of the file. |
-| `inlined_file_deletions` | list of `uint64` (default `[]`) | The positions of the deleted rows of the file that are inlined in the catalog. |
-| `has_inlined_deletions` | `bool` (default `false`) | Whether rows of the file are deleted by inlined deletions. |
-| `delete_ratio` | `double` (default `0`) | The fraction of deleted rows. |
+| `schema_name` | `string` | The schema of the table. |
+| `table_name` | `string` | The name of the table. |
+| `files_processed` | `uint64` | The number of files that were compacted. |
+| `files_created` | `uint64` | The number of files that were written. |
 
 ### `CompactionType`
 

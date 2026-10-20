@@ -33,7 +33,7 @@ DOCS_BEGIN = "<!-- BEGIN GENERATED REFERENCE: edit src/rest/api/*.smithy and run
 DOCS_END = "<!-- END GENERATED REFERENCE -->"
 
 COMMIT_ENDPOINT = "commit_transaction"
-ENDPOINT_KINDS = ["read", "transaction", "commit"]
+ENDPOINT_KINDS = ["read", "command", "transaction", "commit"]
 
 # primitive type -> (codec, C++ type, C++ type when nullable, description)
 PRIMITIVES = {
@@ -900,9 +900,7 @@ class SmithyModel:
                     return "transaction"
         if "smithy.api#readonly" in operation.get("traits", {}):
             return "read"
-        raise SpecError(
-            f"{shape_id}: operations have to be @readonly or commit transactions"
-        )
+        return "command"
 
     def route_parameters(self, shape_id, operation, path):
         """The members of the input that are sent in the path or the query of the URL instead of the body"""

@@ -2,6 +2,8 @@
 # description: Compaction through the DuckLake REST API, snapshot expiration and file cleanup are left to the server
 # group: [rest]
 
+require json
+
 include test/template/rest_setup.test_template
 
 statement ok
@@ -62,6 +64,48 @@ query I
 SELECT count(*) FROM ducklake_list_files('dl', 't') WHERE delete_file IS NOT NULL
 ----
 0
+
+# the server compacts in a transaction of its own, which does not see the changes of the client
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO dl.t VALUES (1000)
+
+statement error
+CALL ducklake_merge_adjacent_files('dl')
+----
+which does not see the changes of the open transaction
+
+statement ok
+ROLLBACK
+
+# the compaction can be requested directly
+query II
+SELECT status, response->>'$.results' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/compactions', '{"type": "merge_adjacent", "table_name": "t", "min_file_size": 1}')
+----
+200	[]
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/compactions', '{"type": "merge_adjacent", "schema_name": "main"}')
+----
+400	Invalid Input
+
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/compactions', '{"type": "everything"}')
+----
+400
+
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/compactions', '{"type": "rewrite_delete", "delete_threshold": 2}')
+----
+400
+
+# the endpoints of the client side compaction are gone
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/compaction-files', '{}')
+----
+404
 
 # expiring snapshots and deleting files is maintenance of the server
 statement error

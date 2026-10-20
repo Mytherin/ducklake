@@ -31,6 +31,14 @@ use ducklake.rest.codegen#wireType
             """
     }
     {
+        title: "Server Commands"
+        kind: "command"
+        documentation: """
+            These endpoints make the server perform work on the DuckLake outside of a client transaction, and commit it in a
+            transaction of its own.
+            """
+    }
+    {
         title: "Committing Transactions"
         kind: "commit"
         documentation: """
@@ -66,13 +74,12 @@ service DuckLake {
         InlinedDataForFlush
         DeletedInlinedRows
         InlinedFileDeletions
-        FilesForCompaction
         TableSchemaVersions
         RowCount
         InlinedTables
         ListSnapshots
         TableSizes
-        TablesWithLiveDataFiles
+        Compact
         ColumnMappings
         TableChanges
         DuckLakeTables
@@ -99,7 +106,6 @@ union CommitRequest {
     insert_files: InsertFilesRequest
     delete_data: DeleteDataRequest
     flush_inlined_data: FlushInlinedDataRequest
-    compact: CompactRequest
 }
 
 /// The path of a file or directory. Clients can have another view of the data path of the DuckLake than the server (e.g.

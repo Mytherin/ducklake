@@ -322,17 +322,6 @@ structure FlushInlinedDataRequest {
     file_deletions: FlushedFileDeletionsList = []
 }
 
-/// Replaces data files with compacted files that were written by the client.
-structure CompactRequest {
-    /// The table.
-    @required
-    table_id: Long
-
-    /// The compactions.
-    @required
-    compactions: CompactionList
-}
-
 /// How a commit is retried on conflicts.
 structure RetryConfig {
     /// The number of retries.

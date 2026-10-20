@@ -817,94 +817,6 @@ structure DataFile {
     delete_files: DeleteFileList = []
 }
 
-/// A file of a compaction.
-@mixin(
-    localTraits: [cppClass]
-)
-@cppClass("DuckLakeCompactionBaseFileData")
-structure CompactionBaseFile {
-    /// The id of the file.
-    @cppMember("id")
-    file_id: UInt64
-
-    /// The file.
-    @required
-    @cppMember("data")
-    file: FileData
-
-    /// The number of rows.
-    @required
-    @cppMember("row_count")
-    record_count: UInt64
-
-    /// The snapshot that added the file.
-    @required
-    begin_snapshot: UInt64
-
-    /// The snapshot that removed the file.
-    end_snapshot: UInt64
-
-    /// The number of rows of the file to read.
-    max_row_count: UInt64
-}
-
-/// A data file that is a candidate for compaction.
-@cppClass("DuckLakeCompactionFileData")
-structure CompactionDataFile with [CompactionBaseFile] {
-    /// The row id of the first row.
-    row_id_start: UInt64
-
-    /// The name map of the file.
-    mapping_id: UInt64
-
-    /// The partitioning of the file.
-    partition_id: UInt64
-
-    /// The values of the partition keys.
-    partition_values: ValueList = []
-}
-
-/// A delete file of a data file that is a candidate for compaction.
-@cppClass("DuckLakeCompactionDeleteFileData")
-structure CompactionDeleteFile with [CompactionBaseFile] {
-    /// The id of the delete file.
-    delete_file_id: UInt64
-
-    /// The last snapshot whose deletes the file holds.
-    max_snapshot: UInt64
-}
-
-/// A data file that is a candidate for compaction, together with its delete files.
-@cppClass("DuckLakeCompactionFileEntry")
-structure CompactionFileEntry {
-    /// The data file.
-    @required
-    @cppMember("file")
-    data_file: CompactionDataFile
-
-    /// The delete files of the data file.
-    delete_files: CompactionDeleteFileList = []
-
-    /// The last snapshot whose rows the file holds, for partial files.
-    max_partial_file_snapshot: UInt64
-
-    /// The schema version the file was written with.
-    @required
-    schema_version: UInt64
-
-    /// The schema version of the partitioning of the file.
-    partition_schema_version: UInt64
-
-    /// The positions of the deleted rows of the file that are inlined in the catalog.
-    inlined_file_deletions: UInt64List = []
-
-    /// Whether rows of the file are deleted by inlined deletions.
-    has_inlined_deletions: Boolean = false
-
-    /// The fraction of deleted rows.
-    delete_ratio: Double = 0
-}
-
 /// The type of a compaction.
 @cppClass("CompactionType")
 enum CompactionType {
@@ -913,23 +825,6 @@ enum CompactionType {
 
     /// Rewrites files with many deleted rows.
     REWRITE_DELETES = "rewrite_delete"
-}
-
-/// Data files that are replaced by compacted files.
-@cppClass("DuckLakeCompactionEntry")
-structure Compaction {
-    /// The type of the compaction.
-    @required
-    type: CompactionType
-
-    /// The row id of the first row of the compacted files.
-    row_id_start: UInt64
-
-    /// The files that are replaced, as returned by `files_for_compaction`.
-    source_files: CompactionFileEntryList = []
-
-    /// The compacted files.
-    written_files: DataFileList = []
 }
 
 /// A data file whose rows were deleted between two snapshots.
@@ -1224,18 +1119,6 @@ list ColumnStatsEntryList {
 
 list CommitRequestList {
     member: CommitRequest
-}
-
-list CompactionDeleteFileList {
-    member: CompactionDeleteFile
-}
-
-list CompactionFileEntryList {
-    member: CompactionFileEntry
-}
-
-list CompactionList {
-    member: Compaction
 }
 
 list CreatedEntryList {
