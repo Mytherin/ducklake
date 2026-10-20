@@ -4,7 +4,7 @@ metadata suppressions = [
     {
         id: "HttpMethodSemantics.UnnecessaryReadonlyTrait"
         namespace: "ducklake.rest"
-        reason: "All endpoints take a JSON body, so they are POST requests - read endpoints also accept GET"
+        reason: "Reads that take a snapshot, filters or projections in a JSON body are POST requests"
     }
 ]
 
@@ -38,9 +38,6 @@ use ducklake.rest.codegen#wireType
             are a list of requests that are applied in order; later requests can refer to entries created by earlier requests
             through negative placeholder ids: `-1` is the first entry (schema, table, view, ...) created in the transaction,
             `-2` the second one, etc.
-
-            Every request of a commit can also be sent on its own to the endpoint of its name (e.g. `POST /v1/create_table`),
-            which commits a transaction with only that request, based on the latest snapshot.
 
             Clients send the deletes of committed data first, then the catalog changes in the order in which they were made,
             and then the inserted data in the format of the tables at the end of the transaction. This order matters: e.g. a
@@ -82,27 +79,10 @@ service DuckLake {
         DuckLakeTables
         DuckLakeTable
         CommitTransaction
-        CreateSchema
-        CreateTable
-        CreateView
-        CreateMacro
-        AlterTable
-        AlterView
-        DropSchema
-        DropTable
-        DropView
-        DropMacro
-        SetOption
-        CreateNameMap
-        InsertRows
-        InsertFiles
-        DeleteData
-        FlushInlinedData
-        Compact
     ]
 }
 
-/// A request of a commit, by the endpoint it can also be sent to on its own.
+/// A request of a commit.
 union CommitRequest {
     create_schema: CreateSchemaRequest
     create_table: CreateTableRequest

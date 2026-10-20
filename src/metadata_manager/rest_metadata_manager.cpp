@@ -633,6 +633,10 @@ vector<DuckLakeSnapshotInfo> RESTMetadataManager::GetAllSnapshots(const DuckLake
 	request.exclude_latest = filter.exclude_latest;
 	request.older_than = filter.older_than;
 	if (filter.has_snapshot_ids) {
+		if (filter.snapshot_ids.empty()) {
+			// the snapshot ids are query parameters, which cannot express an empty list
+			return {};
+		}
 		request.snapshot_ids = filter.snapshot_ids;
 	}
 	return std::move(GetClient().ListSnapshots(request).snapshots);

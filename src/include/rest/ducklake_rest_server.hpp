@@ -66,7 +66,8 @@ public:
 	}
 
 	//! Handles a request for an endpoint, returns the HTTP status code
-	int32_t HandleRequest(const string &endpoint, const string &body, string &response);
+	int32_t HandleRequest(const RESTRoute &route, const vector<string> &path_values,
+	                      const vector<pair<string, string>> &query, const string &body, string &response);
 
 private:
 	shared_ptr<DatabaseInstance> db;

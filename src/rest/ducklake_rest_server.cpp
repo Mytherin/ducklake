@@ -94,19 +94,19 @@ static string ErrorBody(ExceptionType type, const string &message, int32_t statu
 	return DuckLakeRESTSerializer::ToJSON(response);
 }
 
-int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &body, string &response) {
+int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, const vector<string> &path_values,
+                                          const vector<pair<string, string>> &query, const string &body,
+                                          string &response) {
 	try {
 		auto &endpoints = DuckLakeRESTAPI::GetEndpoints();
-		auto entry = endpoints.find(endpoint);
-		string request_body = body.empty() ? "{}" : body;
+		auto entry = endpoints.find(route.endpoint);
 		if (entry == endpoints.end()) {
-			response = ErrorBody(ExceptionType::INVALID_INPUT,
-			                     StringUtil::Format("Unknown DuckLake REST endpoint \"%s\"", endpoint), 404);
-			return 404;
+			throw InternalException("DuckLake REST: the endpoint \"%s\" has no handler", route.endpoint);
 		}
+		auto request_json = route.ServerRequest(path_values, query, body);
 		DuckLakeRESTRequest request(*db, catalog_name);
 		try {
-			response = entry->second(request, request_body);
+			response = entry->second(request, request_json);
 			if (request.connection.HasActiveTransaction()) {
 				request.connection.Commit();
 			}
@@ -125,8 +125,6 @@ int32_t DuckLakeRESTServer::HandleRequest(const string &endpoint, const string &
 	}
 }
 
-static const string ENDPOINT_PREFIX = "/v1/";
-
 idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_count) {
 	server = make_uniq<duckdb_httplib::Server>();
 	if (thread_count > 0) {
@@ -134,21 +132,39 @@ idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_cou
 			return new duckdb_httplib::ThreadPool(thread_count);
 		};
 	}
-	auto handler = [this](const duckdb_httplib::Request &req, duckdb_httplib::Response &res) {
-		string response;
-		if (!token.empty() && req.get_header_value("Authorization") != "Bearer " + token) {
-			res.status = 401;
-			res.set_content(
-			    ErrorBody(ExceptionType::PERMISSION, "Missing or invalid token for the DuckLake REST server", 401),
-			    "application/json");
-			return;
+	for (auto &route : DuckLakeRESTAPI::GetRoutes()) {
+		auto handler = [this, &route](const duckdb_httplib::Request &req, duckdb_httplib::Response &res) {
+			string response;
+			if (!token.empty() && req.get_header_value("Authorization") != "Bearer " + token) {
+				res.status = 401;
+				res.set_content(
+				    ErrorBody(ExceptionType::PERMISSION, "Missing or invalid token for the DuckLake REST server", 401),
+				    "application/json");
+				return;
+			}
+			vector<string> path_values;
+			for (idx_t i = 1; i < req.matches.groups.size(); i++) {
+				path_values.push_back(req.matches.groups[i].str());
+			}
+			vector<pair<string, string>> query;
+			for (auto &param : req.params) {
+				query.emplace_back(param.first, param.second);
+			}
+			res.status = HandleRequest(route, path_values, query, req.body, response);
+			res.set_content(response, "application/json");
+		};
+		if (route.method == "GET") {
+			server->Get(route.PathPattern(), handler);
+		} else {
+			server->Post(route.PathPattern(), handler);
 		}
-		res.status = HandleRequest(req.path.substr(ENDPOINT_PREFIX.size()), req.body, response);
-		res.set_content(response, "application/json");
-	};
-	const string pattern = R"(/v1/([a-z_]+))";
-	server->Get(pattern, handler);
-	server->Post(pattern, handler);
+	}
+	server->set_error_handler([](const duckdb_httplib::Request &, duckdb_httplib::Response &res) {
+		if (res.body.empty()) {
+			res.set_content(ErrorBody(ExceptionType::INVALID_INPUT, "Unknown DuckLake REST endpoint", res.status),
+			                "application/json");
+		}
+	});
 	int32_t bound_port;
 	if (port == 0) {
 		bound_port = server->bind_to_any_port(host);
@@ -329,7 +345,8 @@ static unique_ptr<FunctionData> DuckLakeRESTRequestBind(ClientContext &context, 
 	auto token = GetNamedParameter(input, "token");
 	DuckLakeRESTClient client(StringValue::Get(input.inputs[0]), token.IsNull() ? string() : StringValue::Get(token));
 	string response;
-	auto status = client.PostRaw(StringValue::Get(input.inputs[1]), StringValue::Get(input.inputs[2]), response);
+	auto status = client.SendRaw(StringUtil::Upper(StringValue::Get(input.inputs[1])),
+	                             StringValue::Get(input.inputs[2]), StringValue::Get(input.inputs[3]), response);
 	names.emplace_back("status");
 	return_types.emplace_back(LogicalType::INTEGER);
 	names.emplace_back("response");
@@ -361,7 +378,8 @@ DuckLakeRESTRequestFunction::DuckLakeRESTRequestFunction()
     : TableFunction("ducklake_rest_request",
                     FunctionSignature()
                         .AddPositionalOnly("listen_uri", LogicalType::VARCHAR)
-                        .AddPositionalOnly("endpoint", LogicalType::VARCHAR)
+                        .AddPositionalOnly("method", LogicalType::VARCHAR)
+                        .AddPositionalOnly("path", LogicalType::VARCHAR)
                         .AddPositionalOnly("body", LogicalType::VARCHAR),
                     DuckLakeRESTExecute, DuckLakeRESTRequestBind, DuckLakeRunOnceState::Init) {
 	GetSignature().WithTypedKwargs("options",

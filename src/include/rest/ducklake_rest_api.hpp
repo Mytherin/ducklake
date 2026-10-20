@@ -194,25 +194,25 @@ struct RESTTableSizesRequest;
 struct RESTTableSizesResponse;
 struct RESTTablesWithLiveDataFilesRequest;
 struct RESTTablesWithLiveDataFilesResponse;
-struct RESTAlterTableRequest;
-struct RESTAlterViewRequest;
 struct RESTCommitTransactionRequest;
 struct RESTCommitTransactionResponse;
-struct RESTCompactRequest;
-struct RESTCreateMacroRequest;
-struct RESTCreateNameMapRequest;
 struct RESTCreateSchemaRequest;
 struct RESTCreateTableRequest;
 struct RESTCreateViewRequest;
-struct RESTDeleteDataRequest;
-struct RESTDropMacroRequest;
+struct RESTCreateMacroRequest;
+struct RESTAlterTableRequest;
+struct RESTAlterViewRequest;
 struct RESTDropSchemaRequest;
 struct RESTDropTableRequest;
 struct RESTDropViewRequest;
-struct RESTFlushInlinedDataRequest;
-struct RESTInsertFilesRequest;
-struct RESTInsertRowsRequest;
+struct RESTDropMacroRequest;
 struct RESTSetOptionRequest;
+struct RESTCreateNameMapRequest;
+struct RESTInsertRowsRequest;
+struct RESTInsertFilesRequest;
+struct RESTDeleteDataRequest;
+struct RESTFlushInlinedDataRequest;
+struct RESTCompactRequest;
 
 //! Conversion of the structures of the REST API to and from JSON
 struct DuckLakeRESTSerializer {
@@ -338,25 +338,25 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTablesWithLiveDataFilesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTablesWithLiveDataFilesResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTAlterTableRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTAlterViewRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCommitTransactionRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCommitTransactionResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTCompactRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateMacroRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateNameMapRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateSchemaRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateTableRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateViewRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDeleteDataRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDropMacroRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateMacroRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTAlterTableRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTAlterViewRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDropSchemaRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDropTableRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDropViewRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTFlushInlinedDataRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTInsertFilesRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTInsertRowsRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTDropMacroRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSetOptionRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateNameMapRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTInsertRowsRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTInsertFilesRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTDeleteDataRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTFlushInlinedDataRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTCompactRequest &value);
 };
 
 template <>
@@ -584,19 +584,9 @@ RESTTablesWithLiveDataFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTTablesWithLiveDataFilesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTAlterTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTAlterViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
 RESTCommitTransactionRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTCommitTransactionResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTCompactRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTCreateMacroRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTCreateNameMapRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTCreateSchemaRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -604,9 +594,11 @@ RESTCreateTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTCreateViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTDeleteDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+RESTCreateMacroRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTDropMacroRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+RESTAlterTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTAlterViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDropSchemaRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -614,13 +606,21 @@ RESTDropTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDropViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTFlushInlinedDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+RESTDropMacroRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTInsertFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+RESTSetOptionRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTCreateNameMapRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTInsertRowsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTSetOptionRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+RESTInsertFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTDeleteDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTFlushInlinedDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTCompactRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 
 template <class T>
 struct RESTObjectCodec : public RESTCodec<RESTObjectCodec<T>> {
@@ -663,23 +663,23 @@ vector<LogicalType> RESTRowTypes(const vector<T> &entries, MEMBER member) {
 // Commit requests
 //===--------------------------------------------------------------------===//
 enum class RESTCommitRequestType : uint8_t {
-	ALTER_TABLE,
-	ALTER_VIEW,
-	COMPACT,
-	CREATE_MACRO,
-	CREATE_NAME_MAP,
 	CREATE_SCHEMA,
 	CREATE_TABLE,
 	CREATE_VIEW,
-	DELETE_DATA,
-	DROP_MACRO,
+	CREATE_MACRO,
+	ALTER_TABLE,
+	ALTER_VIEW,
 	DROP_SCHEMA,
 	DROP_TABLE,
 	DROP_VIEW,
-	FLUSH_INLINED_DATA,
-	INSERT_FILES,
-	INSERT_ROWS,
+	DROP_MACRO,
 	SET_OPTION,
+	CREATE_NAME_MAP,
+	INSERT_ROWS,
+	INSERT_FILES,
+	DELETE_DATA,
+	FLUSH_INLINED_DATA,
+	COMPACT,
 };
 
 //! A request of a commit_transaction
@@ -1399,38 +1399,6 @@ struct RESTTablesWithLiveDataFilesResponse {
 	vector<idx_t> table_ids;
 };
 
-//! The parameters of `alter_table`.
-struct RESTAlterTableRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::ALTER_TABLE;
-
-	RESTAlterTableRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The schema of the table.
-	vector<string> schema_path;
-	//! The name of the table.
-	string name;
-	//! The change.
-	unique_ptr<RESTAlteration> alter;
-	//! For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`).
-	optional_idx partition_id;
-};
-
-//! The parameters of `alter_view`.
-struct RESTAlterViewRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::ALTER_VIEW;
-
-	RESTAlterViewRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The schema of the view.
-	vector<string> schema_path;
-	//! The name of the view.
-	string name;
-	//! The change.
-	unique_ptr<RESTAlteration> alter;
-};
-
 struct RESTCommitTransactionRequest : public RESTSnapshotReference {
 	//! The commit information of the snapshot.
 	unique_ptr<DuckLakeSnapshotCommit> commit_info;
@@ -1453,48 +1421,7 @@ struct RESTCommitTransactionResponse {
 	vector<RESTOptionSetting> table_options;
 };
 
-//! The parameters of `compact`.
-struct RESTCompactRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::COMPACT;
-
-	RESTCompactRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The table.
-	int64_t table_id = 0;
-	//! The compactions.
-	vector<DuckLakeCompactionEntry> compactions;
-};
-
-//! The parameters of `create_macro`.
-struct RESTCreateMacroRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::CREATE_MACRO;
-
-	RESTCreateMacroRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! See `create_schema`.
-	optional_idx entry_reference;
-	//! The schema of the macro.
-	vector<string> schema_path;
-	//! The macro (its ids are ignored).
-	DuckLakeMacroInfo macro;
-};
-
-//! The parameters of `create_name_map`.
-struct RESTCreateNameMapRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::CREATE_NAME_MAP;
-
-	RESTCreateNameMapRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The table.
-	int64_t table_id = 0;
-	//! The name map.
-	DuckLakeColumnMappingInfo mapping;
-};
-
-//! The parameters of `create_schema`.
+//! The `create_schema` request of a commit.
 struct RESTCreateSchemaRequest : public RESTCommitRequest {
 	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::CREATE_SCHEMA;
 
@@ -1513,7 +1440,7 @@ struct RESTCreateSchemaRequest : public RESTCommitRequest {
 	bool if_not_exists = false;
 };
 
-//! The parameters of `create_table`.
+//! The `create_table` request of a commit.
 struct RESTCreateTableRequest : public RESTCommitRequest {
 	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::CREATE_TABLE;
 
@@ -1546,7 +1473,7 @@ struct RESTCreateTableRequest : public RESTCommitRequest {
 	optional_idx partition_id;
 };
 
-//! The parameters of `create_view`.
+//! The `create_view` request of a commit.
 struct RESTCreateViewRequest : public RESTCommitRequest {
 	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::CREATE_VIEW;
 
@@ -1573,7 +1500,164 @@ struct RESTCreateViewRequest : public RESTCommitRequest {
 	map<string, string> column_comments;
 };
 
-//! The parameters of `delete_data`.
+//! The `create_macro` request of a commit.
+struct RESTCreateMacroRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::CREATE_MACRO;
+
+	RESTCreateMacroRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! See `create_schema`.
+	optional_idx entry_reference;
+	//! The schema of the macro.
+	vector<string> schema_path;
+	//! The macro (its ids are ignored).
+	DuckLakeMacroInfo macro;
+};
+
+//! The `alter_table` request of a commit.
+struct RESTAlterTableRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::ALTER_TABLE;
+
+	RESTAlterTableRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! The schema of the table.
+	vector<string> schema_path;
+	//! The name of the table.
+	string name;
+	//! The change.
+	unique_ptr<RESTAlteration> alter;
+	//! For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`).
+	optional_idx partition_id;
+};
+
+//! The `alter_view` request of a commit.
+struct RESTAlterViewRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::ALTER_VIEW;
+
+	RESTAlterViewRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! The schema of the view.
+	vector<string> schema_path;
+	//! The name of the view.
+	string name;
+	//! The change.
+	unique_ptr<RESTAlteration> alter;
+};
+
+//! The `drop_schema` request of a commit.
+struct RESTDropSchemaRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_SCHEMA;
+
+	RESTDropSchemaRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! The path of the schema.
+	vector<string> schema_path;
+};
+
+//! The `drop_table` request of a commit.
+struct RESTDropTableRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_TABLE;
+
+	RESTDropTableRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! The schema of the table.
+	vector<string> schema_path;
+	//! The name of the table.
+	string name;
+};
+
+//! The `drop_view` request of a commit.
+struct RESTDropViewRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_VIEW;
+
+	RESTDropViewRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! The schema of the view.
+	vector<string> schema_path;
+	//! The name of the view.
+	string name;
+};
+
+//! The `drop_macro` request of a commit.
+struct RESTDropMacroRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_MACRO;
+
+	RESTDropMacroRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! The schema of the macro.
+	vector<string> schema_path;
+	//! The name of the macro.
+	string name;
+	//! The type of the macro.
+	string macro_type = string("scalar");
+};
+
+//! The `set_option` request of a commit.
+struct RESTSetOptionRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::SET_OPTION;
+
+	RESTSetOptionRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! The option.
+	RESTOptionSetting option;
+	//! Reset the option instead of setting it.
+	bool reset = false;
+};
+
+//! The `create_name_map` request of a commit.
+struct RESTCreateNameMapRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::CREATE_NAME_MAP;
+
+	RESTCreateNameMapRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! The table.
+	int64_t table_id = 0;
+	//! The name map.
+	DuckLakeColumnMappingInfo mapping;
+};
+
+//! The `insert_rows` request of a commit.
+struct RESTInsertRowsRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::INSERT_ROWS;
+
+	RESTInsertRowsRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! The table.
+	int64_t table_id = 0;
+	//! The types of the columns of the rows, in the order of the columns of the table.
+	vector<LogicalType> column_types;
+	//! The rows, as arrays of values.
+	RESTRows rows;
+	//! The row ids of the rows (for updates that keep the row ids of the updated rows).
+	vector<int64_t> row_ids;
+	//! The statistics of the rows per column.
+	map<FieldIndex, DuckLakeColumnStats> column_stats;
+};
+
+//! The `insert_files` request of a commit.
+struct RESTInsertFilesRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::INSERT_FILES;
+
+	RESTInsertFilesRequest() : RESTCommitRequest(TYPE) {
+	}
+
+	//! The table.
+	int64_t table_id = 0;
+	//! The files.
+	vector<DuckLakeDataFile> files;
+};
+
+//! The `delete_data` request of a commit.
 struct RESTDeleteDataRequest : public RESTCommitRequest {
 	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DELETE_DATA;
 
@@ -1594,59 +1678,7 @@ struct RESTDeleteDataRequest : public RESTCommitRequest {
 	bool delete_attempted = false;
 };
 
-//! The parameters of `drop_macro`.
-struct RESTDropMacroRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_MACRO;
-
-	RESTDropMacroRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The schema of the macro.
-	vector<string> schema_path;
-	//! The name of the macro.
-	string name;
-	//! The type of the macro.
-	string macro_type = string("scalar");
-};
-
-//! The parameters of `drop_schema`.
-struct RESTDropSchemaRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_SCHEMA;
-
-	RESTDropSchemaRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The path of the schema.
-	vector<string> schema_path;
-};
-
-//! The parameters of `drop_table`.
-struct RESTDropTableRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_TABLE;
-
-	RESTDropTableRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The schema of the table.
-	vector<string> schema_path;
-	//! The name of the table.
-	string name;
-};
-
-//! The parameters of `drop_view`.
-struct RESTDropViewRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_VIEW;
-
-	RESTDropViewRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The schema of the view.
-	vector<string> schema_path;
-	//! The name of the view.
-	string name;
-};
-
-//! The parameters of `flush_inlined_data`.
+//! The `flush_inlined_data` request of a commit.
 struct RESTFlushInlinedDataRequest : public RESTCommitRequest {
 	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::FLUSH_INLINED_DATA;
 
@@ -1659,49 +1691,17 @@ struct RESTFlushInlinedDataRequest : public RESTCommitRequest {
 	vector<RESTFlushedFileDeletions> file_deletions;
 };
 
-//! The parameters of `insert_files`.
-struct RESTInsertFilesRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::INSERT_FILES;
+//! The `compact` request of a commit.
+struct RESTCompactRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::COMPACT;
 
-	RESTInsertFilesRequest() : RESTCommitRequest(TYPE) {
+	RESTCompactRequest() : RESTCommitRequest(TYPE) {
 	}
 
 	//! The table.
 	int64_t table_id = 0;
-	//! The files.
-	vector<DuckLakeDataFile> files;
-};
-
-//! The parameters of `insert_rows`.
-struct RESTInsertRowsRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::INSERT_ROWS;
-
-	RESTInsertRowsRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The table.
-	int64_t table_id = 0;
-	//! The types of the columns of the rows, in the order of the columns of the table.
-	vector<LogicalType> column_types;
-	//! The rows, as arrays of values.
-	RESTRows rows;
-	//! The row ids of the rows (for updates that keep the row ids of the updated rows).
-	vector<int64_t> row_ids;
-	//! The statistics of the rows per column.
-	map<FieldIndex, DuckLakeColumnStats> column_stats;
-};
-
-//! The parameters of `set_option`.
-struct RESTSetOptionRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::SET_OPTION;
-
-	RESTSetOptionRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The option.
-	RESTOptionSetting option;
-	//! Reset the option instead of setting it.
-	bool reset = false;
+	//! The compactions.
+	vector<DuckLakeCompactionEntry> compactions;
 };
 
 //===--------------------------------------------------------------------===//
@@ -1773,31 +1773,68 @@ public:
 	void Apply(RESTCommitRequest &request);
 
 protected:
-	virtual void AlterTable(RESTAlterTableRequest &request) = 0;
-	virtual void AlterView(RESTAlterViewRequest &request) = 0;
-	virtual void Compact(RESTCompactRequest &request) = 0;
-	virtual void CreateMacro(RESTCreateMacroRequest &request) = 0;
-	virtual void CreateNameMap(RESTCreateNameMapRequest &request) = 0;
 	virtual void CreateSchema(RESTCreateSchemaRequest &request) = 0;
 	virtual void CreateTable(RESTCreateTableRequest &request) = 0;
 	virtual void CreateView(RESTCreateViewRequest &request) = 0;
-	virtual void DeleteData(RESTDeleteDataRequest &request) = 0;
-	virtual void DropMacro(RESTDropMacroRequest &request) = 0;
+	virtual void CreateMacro(RESTCreateMacroRequest &request) = 0;
+	virtual void AlterTable(RESTAlterTableRequest &request) = 0;
+	virtual void AlterView(RESTAlterViewRequest &request) = 0;
 	virtual void DropSchema(RESTDropSchemaRequest &request) = 0;
 	virtual void DropTable(RESTDropTableRequest &request) = 0;
 	virtual void DropView(RESTDropViewRequest &request) = 0;
-	virtual void FlushInlinedData(RESTFlushInlinedDataRequest &request) = 0;
-	virtual void InsertFiles(RESTInsertFilesRequest &request) = 0;
-	virtual void InsertRows(RESTInsertRowsRequest &request) = 0;
+	virtual void DropMacro(RESTDropMacroRequest &request) = 0;
 	virtual void SetOption(RESTSetOptionRequest &request) = 0;
+	virtual void CreateNameMap(RESTCreateNameMapRequest &request) = 0;
+	virtual void InsertRows(RESTInsertRowsRequest &request) = 0;
+	virtual void InsertFiles(RESTInsertFilesRequest &request) = 0;
+	virtual void DeleteData(RESTDeleteDataRequest &request) = 0;
+	virtual void FlushInlinedData(RESTFlushInlinedDataRequest &request) = 0;
+	virtual void Compact(RESTCompactRequest &request) = 0;
 };
 
 //! Handles the JSON body of a request to an endpoint, returns the JSON body of the response
 typedef string (*rest_endpoint_t)(DuckLakeRESTRequest &request, const string &body);
 
+enum class RESTParameterType : uint8_t {
+	STRING,
+	UINT,
+	INT,
+	BOOL,
+	UINT_LIST,
+};
+
+//! A member of a request that is sent in the path or the query of the URL instead of the body
+struct RESTRouteParameter {
+	string name;
+	RESTParameterType type;
+	//! The name in the query, empty for a parameter in the path
+	string query_name;
+};
+
+//! The HTTP method and path of an endpoint, see ducklake_rest_route.cpp
+struct RESTRoute {
+	string endpoint;
+	string method;
+	//! The path, in which {name} is replaced by the parameter of that name
+	string path;
+	vector<RESTRouteParameter> parameters;
+
+	//! Splits the JSON of a request into the URL to send it to and the body, which the parameters are not part of
+	string ClientTarget(const string &request_json, string &body) const;
+	//! The regular expression that matches the paths of the route, the groups are the parameters of the path
+	string PathPattern() const;
+	//! Combines the parameters of the URL with the body into the JSON of the request
+	string ServerRequest(const vector<string> &path_values, const vector<pair<string, string>> &query,
+	                     const string &body) const;
+};
+
 struct DuckLakeRESTAPI {
 	//! The endpoints of the API, by their name
 	static const unordered_map<string, rest_endpoint_t> &GetEndpoints();
+	//! The routes of the endpoints
+	static const vector<RESTRoute> &GetRoutes();
+	//! The route of an endpoint
+	static const RESTRoute &GetRoute(const string &endpoint);
 };
 
 //===--------------------------------------------------------------------===//
@@ -1845,42 +1882,8 @@ public:
 	RESTTableSizesResponse TableSizes(const RESTTableSizesRequest &request);
 	//! Returns the tables that have data files that are not deleted.
 	RESTTablesWithLiveDataFilesResponse TablesWithLiveDataFiles(const RESTTablesWithLiveDataFilesRequest &request);
-	//! Alters a table.
-	RESTCommitTransactionResponse AlterTable(const RESTAlterTableRequest &request);
-	//! Alters a view.
-	RESTCommitTransactionResponse AlterView(const RESTAlterViewRequest &request);
 	//! Commits a set of changes atomically.
 	RESTCommitTransactionResponse CommitTransaction(const RESTCommitTransactionRequest &request);
-	//! Replaces data files with compacted files that were written by the client.
-	RESTCommitTransactionResponse Compact(const RESTCompactRequest &request);
-	//! Creates a macro.
-	RESTCommitTransactionResponse CreateMacro(const RESTCreateMacroRequest &request);
-	//! Registers a name map for files that are inserted later in the transaction.
-	RESTCommitTransactionResponse CreateNameMap(const RESTCreateNameMapRequest &request);
-	//! Creates a schema.
-	RESTCommitTransactionResponse CreateSchema(const RESTCreateSchemaRequest &request);
-	//! Creates a table.
-	RESTCommitTransactionResponse CreateTable(const RESTCreateTableRequest &request);
-	//! Creates a view.
-	RESTCommitTransactionResponse CreateView(const RESTCreateViewRequest &request);
-	//! Deletes rows from a table.
-	RESTCommitTransactionResponse DeleteData(const RESTDeleteDataRequest &request);
-	//! Drops a macro.
-	RESTCommitTransactionResponse DropMacro(const RESTDropMacroRequest &request);
-	//! Drops a schema, which has to be empty.
-	RESTCommitTransactionResponse DropSchema(const RESTDropSchemaRequest &request);
-	//! Drops a table.
-	RESTCommitTransactionResponse DropTable(const RESTDropTableRequest &request);
-	//! Drops a view.
-	RESTCommitTransactionResponse DropView(const RESTDropViewRequest &request);
-	//! Marks inlined data as flushed.
-	RESTCommitTransactionResponse FlushInlinedData(const RESTFlushInlinedDataRequest &request);
-	//! Registers Parquet files that were written by the client.
-	RESTCommitTransactionResponse InsertFiles(const RESTInsertFilesRequest &request);
-	//! Inserts rows that are inlined in the catalog.
-	RESTCommitTransactionResponse InsertRows(const RESTInsertRowsRequest &request);
-	//! Sets or resets a DuckLake option (`ducklake_metadata`).
-	RESTCommitTransactionResponse SetOption(const RESTSetOptionRequest &request);
 
 	//! Maps the paths of the requests and responses to and from the data path of the server, if set
 	virtual optional_ptr<const RESTPathMapper> GetPathMapper() const {
@@ -1890,7 +1893,7 @@ public:
 	//! Sends the JSON body of a request to an endpoint, returns the JSON body of the response
 	//! Rethrows the error reported by the server
 	//! Requests of idempotent endpoints can be sent again, e.g. if the connection was closed by the server
-	virtual string Post(const string &endpoint, const string &body, bool idempotent) = 0;
+	virtual string Call(const string &endpoint, const string &body, bool idempotent) = 0;
 };
 
 } // namespace duckdb

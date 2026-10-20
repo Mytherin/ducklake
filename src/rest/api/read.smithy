@@ -9,7 +9,7 @@ use ducklake.rest.codegen#cppType
 /// Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 ///
 /// The `data_path` is the resolved data path of the served DuckLake.
-@http(method: "POST", uri: "/v1/config")
+@http(method: "GET", uri: "/v1/config")
 @readonly
 operation Config {
     output: Metadata
@@ -19,7 +19,7 @@ operation Config {
 ///
 /// Clients pass `cached_metadata_version` and `cached_data_version` when they start a transaction, so they get the
 /// latest snapshot and, if it changed since, its catalog and statistics in a single round-trip.
-@http(method: "POST", uri: "/v1/snapshot_data")
+@http(method: "POST", uri: "/v1/snapshots/load")
 @readonly
 operation SnapshotData {
     input := with [SnapshotReference] {
@@ -68,12 +68,13 @@ operation SnapshotData {
 /// inlined deletions, and optionally the rows of the table that are inlined in the catalog. With
 /// `include_inlined_data`, `inlined_data` holds the visible rows of the table for each schema version that it has
 /// inlined rows for, with the row id, the begin and end snapshot and all columns of the table at that schema version.
-@http(method: "POST", uri: "/v1/select")
+@http(method: "POST", uri: "/v1/tables/{table_id}/scan")
 @readonly
 operation Select {
     input := with [SnapshotReference] {
         /// The table to scan.
         @required
+        @httpLabel
         table_id: UInt64
 
         /// Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`.
@@ -107,12 +108,13 @@ operation Select {
 ///
 /// These are all rows that were inserted up to the snapshot, including the rows that were deleted, in the order in
 /// which they are flushed. The rows that the transaction of the client deleted are not flushed.
-@http(method: "POST", uri: "/v1/inlined_data_for_flush")
+@http(method: "POST", uri: "/v1/tables/{table_id}/inlined-data")
 @readonly
 operation InlinedDataForFlush {
     input := with [SnapshotReference] {
         /// The table.
         @required
+        @httpLabel
         table_id: UInt64
 
         /// The schema version of the table whose columns the rows have (see `inlined_tables`).
@@ -138,12 +140,13 @@ operation InlinedDataForFlush {
 /// Returns the deleted versions of the inlined rows of a table that a flush writes.
 ///
 /// The client writes delete files for the flushed rows with them.
-@http(method: "POST", uri: "/v1/deleted_inlined_rows")
+@http(method: "POST", uri: "/v1/tables/{table_id}/deleted-inlined-rows")
 @readonly
 operation DeletedInlinedRows {
     input := with [SnapshotReference] {
         /// The table.
         @required
+        @httpLabel
         table_id: UInt64
 
         /// The schema version of the inlined rows.
@@ -164,12 +167,13 @@ operation DeletedInlinedRows {
 /// Returns the deletions of rows of data files that are inlined in the catalog.
 ///
 /// Each deletion comes with the delete file of its data file, so that a client can write them to delete files.
-@http(method: "POST", uri: "/v1/inlined_file_deletions")
+@http(method: "POST", uri: "/v1/tables/{table_id}/inlined-file-deletions")
 @readonly
 operation InlinedFileDeletions {
     input := with [SnapshotReference] {
         /// The table.
         @required
+        @httpLabel
         table_id: UInt64
     }
 
@@ -180,12 +184,13 @@ operation InlinedFileDeletions {
 }
 
 /// Returns the data files of a table that are candidates for compaction, together with their delete files.
-@http(method: "POST", uri: "/v1/files_for_compaction")
+@http(method: "POST", uri: "/v1/tables/{table_id}/compaction-files")
 @readonly
 operation FilesForCompaction {
     input := with [SnapshotReference] {
         /// The table.
         @required
+        @httpLabel
         table_id: UInt64
 
         /// The type of the compaction.
@@ -219,12 +224,13 @@ operation FilesForCompaction {
 }
 
 /// Returns when a table and its schema versions were created.
-@http(method: "POST", uri: "/v1/table_schema_versions")
+@http(method: "POST", uri: "/v1/tables/{table_id}/schema-versions")
 @readonly
 operation TableSchemaVersions {
     input := with [SnapshotReference] {
         /// The table. With a snapshot, the first and last schema version of the table at it are also returned.
         @required
+        @httpLabel
         table_id: UInt64
 
         /// Also return the snapshot that created this schema version.
@@ -248,7 +254,7 @@ operation TableSchemaVersions {
 }
 
 /// Counts the rows of a table that are visible in a snapshot.
-@http(method: "POST", uri: "/v1/row_count")
+@http(method: "POST", uri: "/v1/tables/{table_id}/row-count")
 @readonly
 operation RowCount {
     input := with [SnapshotReference] {
@@ -258,6 +264,7 @@ operation RowCount {
 
         /// The table.
         @required
+        @httpLabel
         table_id: UInt64
 
         /// For inlined counts: the schema version of the inlined rows.
@@ -271,12 +278,13 @@ operation RowCount {
 }
 
 /// Returns the schema versions that a table has inlined rows for.
-@http(method: "POST", uri: "/v1/inlined_tables")
+@http(method: "POST", uri: "/v1/tables/{table_id}/inlined-tables")
 @readonly
 operation InlinedTables {
     input := with [SnapshotReference] {
         /// The table.
         @required
+        @httpLabel
         table_id: UInt64
     }
 
@@ -288,12 +296,13 @@ operation InlinedTables {
 }
 
 /// Returns the next free column (field) id of a table.
-@http(method: "POST", uri: "/v1/next_column_id")
+@http(method: "GET", uri: "/v1/tables/{table_id}/next-column-id")
 @readonly
 operation NextColumnId {
     input := {
         /// The table.
         @required
+        @httpLabel
         table_id: UInt64
     }
 
@@ -305,19 +314,22 @@ operation NextColumnId {
 }
 
 /// Returns the snapshots, optionally filtered.
-@http(method: "POST", uri: "/v1/list_snapshots")
+@http(method: "GET", uri: "/v1/snapshots")
 @readonly
 operation ListSnapshots {
     input := {
         /// Exclude the latest snapshot.
+        @httpQuery("exclude_latest")
         exclude_latest: Boolean = false
 
         /// Only snapshots created before this timestamp.
         @cppType("string")
+        @httpQuery("older_than")
         older_than: Timestamp
 
         /// Only these snapshots.
         @cppType("RESTOptional<vector<idx_t>>")
+        @httpQuery("snapshot_id")
         snapshot_ids: UInt64List
     }
 
@@ -328,7 +340,7 @@ operation ListSnapshots {
 }
 
 /// Returns the storage used by each table at a snapshot.
-@http(method: "POST", uri: "/v1/table_sizes")
+@http(method: "POST", uri: "/v1/table-sizes")
 @readonly
 operation TableSizes {
     input := with [SnapshotReference] {}
@@ -340,7 +352,7 @@ operation TableSizes {
 }
 
 /// Returns the tables that have data files that are not deleted.
-@http(method: "POST", uri: "/v1/tables_with_live_data_files")
+@http(method: "GET", uri: "/v1/tables/with-data-files")
 @readonly
 operation TablesWithLiveDataFiles {
     input := {}
@@ -352,11 +364,12 @@ operation TablesWithLiveDataFiles {
 }
 
 /// Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
-@http(method: "POST", uri: "/v1/column_mappings")
+@http(method: "GET", uri: "/v1/column-mappings")
 @readonly
 operation ColumnMappings {
     input := {
         /// The first mapping id to return.
+        @httpQuery("start_from")
         start_from: UInt64
     }
 
@@ -371,12 +384,13 @@ operation ColumnMappings {
 /// With `include_inlined_data`, `inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted
 /// (`deletions`) in the range for each schema version that the table has inlined rows for, with the row id, the begin
 /// and end snapshot and all columns of the table at that schema version.
-@http(method: "POST", uri: "/v1/table_changes")
+@http(method: "POST", uri: "/v1/tables/{table_id}/changes")
 @readonly
 operation TableChanges {
     input := with [SnapshotReference] {
         /// The table. The snapshot is the last snapshot of the range.
         @required
+        @httpLabel
         table_id: UInt64
 
         /// The first snapshot of the range.
@@ -414,7 +428,7 @@ operation TableChanges {
 ///
 /// In SQL, `ducklake_metadata_table('lake', 'ducklake_snapshot')` reads a table of the metadata catalog of any
 /// DuckLake.
-@http(method: "POST", uri: "/v1/ducklake_tables")
+@http(method: "GET", uri: "/v1/metadata-tables")
 @readonly
 operation DuckLakeTables {
     output := {
@@ -426,12 +440,13 @@ operation DuckLakeTables {
 /// Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
 ///
 /// This makes it possible to inspect a DuckLake or to export all of its metadata.
-@http(method: "POST", uri: "/v1/ducklake_table")
+@http(method: "GET", uri: "/v1/metadata-tables/{table_name}")
 @readonly
 operation DuckLakeTable {
     input := {
         /// The table, e.g. `ducklake_snapshot`.
         @required
+        @httpLabel
         table_name: String
     }
 

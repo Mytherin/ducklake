@@ -27,15 +27,15 @@ public:
 	DuckLakeRESTClient(string base_url, string token);
 	~DuckLakeRESTClient() override;
 
-	string Post(const string &endpoint, const string &body, bool idempotent) override;
+	string Call(const string &endpoint, const string &json, bool idempotent) override;
 
 	//! The client has another view of the data path than the server: paths are mapped between the two
 	void SetPathMapping(string client_path, string server_path);
 	optional_ptr<const RESTPathMapper> GetPathMapper() const override {
 		return path_mapper.get();
 	}
-	//! Sends a request body to an endpoint, returns the status code and the body of the response
-	int32_t PostRaw(const string &endpoint, const string &body, string &response);
+	//! Sends an HTTP request, returns the status code and the body of the response
+	int32_t SendRaw(const string &method, const string &target, const string &body, string &response);
 
 	const string &BaseURL() const {
 		return base_url;
@@ -56,7 +56,7 @@ private:
 	unique_ptr<duckdb_httplib::Client> GetConnection(bool &reused);
 	void ReturnConnection(unique_ptr<duckdb_httplib::Client> connection);
 	//! Sends a request, returns the status code and the body of the response
-	int32_t Send(const string &endpoint, const string &body, bool idempotent, string &response);
+	int32_t Send(const string &method, const string &target, const string &body, bool idempotent, string &response);
 
 private:
 	unique_ptr<RESTPathMapper> path_mapper;

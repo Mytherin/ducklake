@@ -36,8 +36,8 @@ analyzed_plan	<REGEX>:.*Total Files Read: 1.*
 statement ok
 CREATE MACRO select_files(filter_expressions) AS (
 	SELECT json_array_length(response->'$.files')
-	FROM ducklake_rest_request('{rest_server}', 'select',
-	     '{"table_id": 1, "filters": {"expressions": ' || to_json(filter_expressions) || '}}')
+	FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan',
+	     '{"filters": {"expressions": ' || to_json(filter_expressions) || '}}')
 )
 
 query I

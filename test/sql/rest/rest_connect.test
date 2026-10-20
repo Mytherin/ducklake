@@ -60,7 +60,7 @@ SELECT count(*) FROM ducklake_list_files('dl', 't') WHERE data_file LIKE '%rest_
 1
 
 query I
-SELECT response->>'$.files[0].file.path' LIKE '%{BASE_TEST_NAME}_rest_files%' FROM ducklake_rest_request('{rest_server}', 'select', '{"table_id": 1}')
+SELECT response->>'$.files[0].file.path' LIKE '%{BASE_TEST_NAME}_rest_files%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}')
 ----
 true
 

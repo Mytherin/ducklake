@@ -32,11 +32,12 @@ SELECT listen_uri FROM ducklake_rest_serve('ducklake:metadata.ducklake', port :=
 The function returns the `listen_uri` of the server. Starting a server on a port that is in use by another server of
 the same process replaces that server. `ducklake_rest_stop(listen_uri)` stops a server.
 
-`ducklake_rest_request(listen_uri, endpoint, body)` sends a request to a server and returns the status code and the
-JSON response, which is useful to explore the API:
+`ducklake_rest_request(listen_uri, method, path, body)` sends an HTTP request to a server and returns the status code
+and the JSON response, which is useful to explore the API:
 
 ```sql
-SELECT response FROM ducklake_rest_request('http://localhost:8181', 'snapshot_data', '{}');
+SELECT response FROM ducklake_rest_request('http://localhost:8181', 'GET', '/v1/snapshots?exclude_latest=true', '');
+SELECT response FROM ducklake_rest_request('http://localhost:8181', 'POST', '/v1/snapshots/load', '{}');
 ```
 
 ### Connecting to a server
@@ -58,13 +59,15 @@ client directly, so the data path has to be accessible from both the client and 
 
 ## Conventions
 
-* All endpoints live under `/v1/<endpoint>`. Requests and responses are JSON objects. Every endpoint accepts `POST`
-  with a JSON body; read-only endpoints also accept `GET` with a JSON body.
+* All endpoints live under `/v1/`. The resources a request refers to are in the path (`/v1/tables/{table_id}/scan`),
+  reads without further input are `GET` requests whose filters are query parameters, and the other requests are `POST`
+  requests with a JSON object as body (reads that take a snapshot, filters or projections, and `POST
+  /v1/transactions/commit`). Responses are JSON objects. The parameters of the URL are not part of the body.
 * Each request runs in a transaction of its own on the server.
 * Errors are reported with a non-200 status code and a body of the form
-  `{"error": {"type": "<DuckDB exception type>", "message": "..."}}`. The status code is `409` for transaction
-  conflicts, `404` for catalog errors (e.g. entries that do not exist), `400` for invalid input, `401` for a missing or
-  invalid token and `500` otherwise.
+  `{"error": {"type": "<DuckDB exception type>", "message": "...", "code": <status>}}`. The status code is `409` for
+  transaction conflicts, `404` for catalog errors (e.g. entries that do not exist) and unknown endpoints, `400` for
+  invalid input, `401` for a missing or invalid token, `501` for unsupported operations and `500` otherwise.
 * Identifiers (`snapshot_id`, `table_id`, `column_id`, ...) are the ids of the DuckLake specification.
 * Optional values are `null` or absent.
 * Read requests identify the snapshot to read with a `snapshot` object (as returned by `snapshot_data`), or with a
@@ -115,7 +118,7 @@ Values without a known type (e.g. tags) are `null`, a JSON string for `VARCHAR` 
 ## Specification
 
 The API is specified as a [Smithy](https://smithy.io) model in `src/rest/api/*.smithy`: the `DuckLake` service, an
-operation per endpoint (`POST /v1/<endpoint>`) and the shapes they exchange. The reference below, the request and
+operation per endpoint (with `@http`, `@httpLabel` and `@httpQuery` for the URL) and the shapes they exchange. The reference below, the request and
 response structures of the server and the client, and their JSON conversions are generated from it with
 `python3 scripts/generate_rest_api.py`, which reads the model with the
 [Smithy CLI](https://smithy.io/2.0/guides/smithy-cli/cli_installation.html) (`smithy` on the `PATH`, or `SMITHY`).
@@ -155,11 +158,15 @@ These endpoints read the catalog. Each request runs in a transaction of its own 
 
 Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
 
-Request:
+`GET /v1/column-mappings`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `start_from` | `uint64` (optional) | The first mapping id to return. |
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `start_from` | query | `uint64` | The first mapping id to return. |
+
+Request: no body.
 
 Response:
 
@@ -173,7 +180,9 @@ Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`
 
 The `data_path` is the resolved data path of the served DuckLake.
 
-Request: an empty object.
+`GET /v1/config`
+
+Request: no body.
 
 Response: [`Metadata`](#metadata).
 
@@ -183,13 +192,20 @@ Returns the deleted versions of the inlined rows of a table that a flush writes.
 
 The client writes delete files for the flushed rows with them.
 
+`POST /v1/tables/{table_id}/deleted-inlined-rows`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table. |
+
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `table_id` | `uint64` | The table. |
 | `schema_version` | `uint64` | The schema version of the inlined rows. |
 | `deleted_row_ids` | list of `uint64` (default `[]`) | Rows that the transaction of the client deleted, which are not flushed. |
 
@@ -205,11 +221,15 @@ Returns the contents of a table of the DuckLake specification, as it is stored i
 
 This makes it possible to inspect a DuckLake or to export all of its metadata.
 
-Request:
+`GET /v1/metadata-tables/{table_name}`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_name` | `string` | The table, e.g. `ducklake_snapshot`. |
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_name` | path | `string` | The table, e.g. `ducklake_snapshot`. |
+
+Request: no body.
 
 Response: [`InlinedRows`](#inlinedrows).
 
@@ -220,7 +240,9 @@ Returns the names of the tables of the DuckLake specification (`ducklake_snapsho
 In SQL, `ducklake_metadata_table('lake', 'ducklake_snapshot')` reads a table of the metadata catalog of any
 DuckLake.
 
-Request: an empty object.
+`GET /v1/metadata-tables`
+
+Request: no body.
 
 Response:
 
@@ -232,13 +254,20 @@ Response:
 
 Returns the data files of a table that are candidates for compaction, together with their delete files.
 
+`POST /v1/tables/{table_id}/compaction-files`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table. |
+
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `table_id` | `uint64` | The table. |
 | `type` | [`CompactionType`](#compactiontype) | The type of the compaction. |
 | `delete_threshold` | `double` (optional) | For `rewrite_delete`: the fraction of deleted rows above which files are rewritten. |
 | `min_file_size` | `uint64` (optional) | Only consider files of at least this size. |
@@ -260,13 +289,20 @@ Reads the inlined rows of a table that a flush writes.
 These are all rows that were inserted up to the snapshot, including the rows that were deleted, in the order in
 which they are flushed. The rows that the transaction of the client deleted are not flushed.
 
+`POST /v1/tables/{table_id}/inlined-data`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table. |
+
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `table_id` | `uint64` | The table. |
 | `schema_version` | `uint64` | The schema version of the table whose columns the rows have (see `inlined_tables`). |
 | `columns` | list of `string` | The columns to read, e.g. `["i"]`. Columns can be cast to the type to read them as, e.g. `"i::BIGINT"`. |
 | `order_by` | `string` (default `""`) | The sort order of the table, as an `ORDER BY` list (e.g. `i DESC NULLS LAST`). The rows are ordered by it, then by their row id. |
@@ -280,13 +316,20 @@ Returns the deletions of rows of data files that are inlined in the catalog.
 
 Each deletion comes with the delete file of its data file, so that a client can write them to delete files.
 
+`POST /v1/tables/{table_id}/inlined-file-deletions`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table. |
+
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `table_id` | `uint64` | The table. |
 
 Response:
 
@@ -298,13 +341,20 @@ Response:
 
 Returns the schema versions that a table has inlined rows for.
 
+`POST /v1/tables/{table_id}/inlined-tables`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table. |
+
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `table_id` | `uint64` | The table. |
 
 Response:
 
@@ -316,13 +366,17 @@ Response:
 
 Returns the snapshots, optionally filtered.
 
-Request:
+`GET /v1/snapshots`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `exclude_latest` | `bool` (default `false`) | Exclude the latest snapshot. |
-| `older_than` | `timestamp` (optional) | Only snapshots created before this timestamp. |
-| `snapshot_ids` | list of `uint64` (optional) | Only these snapshots. |
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `exclude_latest` | query | `bool` | Exclude the latest snapshot. |
+| `older_than` | query | `timestamp` | Only snapshots created before this timestamp. |
+| `snapshot_id` (repeated) | query | list of `uint64` | Only these snapshots. |
+
+Request: no body.
 
 Response:
 
@@ -334,11 +388,15 @@ Response:
 
 Returns the next free column (field) id of a table.
 
-Request:
+`GET /v1/tables/{table_id}/next-column-id`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_id` | `uint64` | The table. |
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table. |
+
+Request: no body.
 
 Response:
 
@@ -350,6 +408,14 @@ Response:
 
 Counts the rows of a table that are visible in a snapshot.
 
+`POST /v1/tables/{table_id}/row-count`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table. |
+
 Request:
 
 | Field | Type | Description |
@@ -357,7 +423,6 @@ Request:
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `count` | [`RowCountType`](#rowcounttype) | What to count. |
-| `table_id` | `uint64` | The table. |
 | `schema_version` | `uint64` (optional) | For inlined counts: the schema version of the inlined rows. |
 
 Response:
@@ -375,13 +440,20 @@ inlined deletions, and optionally the rows of the table that are inlined in the 
 `include_inlined_data`, `inlined_data` holds the visible rows of the table for each schema version that it has
 inlined rows for, with the row id, the begin and end snapshot and all columns of the table at that schema version.
 
+`POST /v1/tables/{table_id}/scan`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table to scan. |
+
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `table_id` | `uint64` | The table to scan. |
 | `extended` | `bool` (default `false`) | Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`. |
 | `filters` | [`ScanFilters`](#scanfilters) (optional) | Filters to prune files with. |
 | `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows of the table that are visible in the snapshot. |
@@ -401,6 +473,8 @@ Returns a snapshot together with (optionally) the catalog and the table statisti
 
 Clients pass `cached_metadata_version` and `cached_data_version` when they start a transaction, so they get the
 latest snapshot and, if it changed since, its catalog and statistics in a single round-trip.
+
+`POST /v1/snapshots/load`
 
 Request:
 
@@ -432,13 +506,20 @@ With `include_inlined_data`, `inlined_data` holds the inlined rows that were ins
 (`deletions`) in the range for each schema version that the table has inlined rows for, with the row id, the begin
 and end snapshot and all columns of the table at that schema version.
 
+`POST /v1/tables/{table_id}/changes`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table. The snapshot is the last snapshot of the range. |
+
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `table_id` | `uint64` | The table. The snapshot is the last snapshot of the range. |
 | `start_snapshot` | [`Snapshot`](#snapshot) (optional) | The first snapshot of the range. |
 | `start_snapshot_id` | `uint64` (optional) | The id of the first snapshot of the range. |
 | `changes` | [`TableChangeType`](#tablechangetype) | The changes to return. |
@@ -457,13 +538,20 @@ Response:
 
 Returns when a table and its schema versions were created.
 
+`POST /v1/tables/{table_id}/schema-versions`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table. With a snapshot, the first and last schema version of the table at it are also returned. |
+
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `table_id` | `uint64` | The table. With a snapshot, the first and last schema version of the table at it are also returned. |
 | `schema_version` | `uint64` (optional) | Also return the snapshot that created this schema version. |
 
 Response:
@@ -478,6 +566,8 @@ Response:
 ### `table_sizes`
 
 Returns the storage used by each table at a snapshot.
+
+`POST /v1/table-sizes`
 
 Request:
 
@@ -496,7 +586,9 @@ Response:
 
 Returns the tables that have data files that are not deleted.
 
-Request: an empty object.
+`GET /v1/tables/with-data-files`
+
+Request: no body.
 
 Response:
 
@@ -511,9 +603,6 @@ are a list of requests that are applied in order; later requests can refer to en
 through negative placeholder ids: `-1` is the first entry (schema, table, view, ...) created in the transaction,
 `-2` the second one, etc.
 
-Every request of a commit can also be sent on its own to the endpoint of its name (e.g. `POST /v1/create_table`),
-which commits a transaction with only that request, based on the latest snapshot.
-
 Clients send the deletes of committed data first, then the catalog changes in the order in which they were made,
 and then the inserted data in the format of the tables at the end of the transaction. This order matters: e.g. a
 `SET NOT NULL` that follows a delete of the `NULL` rows only succeeds after the delete.
@@ -521,35 +610,6 @@ and then the inserted data in the format of the tables at the end of the transac
 Requests that refer to existing entries identify them by `schema_path` and `name`. They are applied in order, so a
 name always refers to the entry as it is at that point of the transaction. An empty `schema_path` refers to the
 default schema.
-
-### `alter_table`
-
-Alters a table.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `schema_path` | list of `string` (default `[]`) | The schema of the table. |
-| `name` | `string` | The name of the table. |
-| `alter` | [`Alteration`](#alteration) | The change. |
-| `partition_id` | `uint64` (optional) | For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`). |
-
-Response: as for [`commit_transaction`](#commit_transaction).
-
-### `alter_view`
-
-Alters a view.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `schema_path` | list of `string` (default `[]`) | The schema of the view. |
-| `name` | `string` | The name of the view. |
-| `alter` | [`Alteration`](#alteration) | The change. |
-
-Response: as for [`commit_transaction`](#commit_transaction).
 
 ### `commit_transaction`
 
@@ -559,6 +619,8 @@ If the transaction conflicts with a transaction that committed after its snapsho
 commit when that is safe; otherwise it fails with a `409`. The snapshot is the snapshot the changes are based
 on: the server detects conflicts with every snapshot committed after it. Without a snapshot, the changes are
 based on the latest snapshot.
+
+`POST /v1/transactions/commit`
 
 Request:
 
@@ -579,48 +641,6 @@ Response:
 | `table_ids` | list of [`CreatedTable`](#createdtable) (default `[]`) | The ids of the tables the transaction created. |
 | `entry_ids` | list of [`CreatedEntry`](#createdentry) (default `[]`) | The ids of the created entries whose requests had an `entry_reference`. |
 | `table_options` | list of [`OptionSetting`](#optionsetting) (default `[]`) | The options of the tables the transaction created or altered, with the ids the commit gave the tables. |
-
-### `compact`
-
-Replaces data files with compacted files that were written by the client.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_id` | `int64` | The table. |
-| `compactions` | list of [`Compaction`](#compaction) | The compactions. |
-
-Response: as for [`commit_transaction`](#commit_transaction).
-
-### `create_macro`
-
-Creates a macro.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `entry_reference` | `uint64` (optional) | See `create_schema`. |
-| `schema_path` | list of `string` (default `[]`) | The schema of the macro. |
-| `macro` | [`MacroInfo`](#macroinfo) | The macro (its ids are ignored). |
-
-Response: as for [`commit_transaction`](#commit_transaction).
-
-### `create_name_map`
-
-Registers a name map for files that are inserted later in the transaction.
-
-`mapping.mapping_id` is an id of the client, which files of the transaction refer to with their `mapping_id`.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_id` | `int64` | The table. |
-| `mapping` | [`NameMap`](#namemap) | The name map. |
-
-Response: as for [`commit_transaction`](#commit_transaction).
 
 ### `create_schema`
 
@@ -684,34 +704,46 @@ Request:
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
-### `delete_data`
+### `create_macro`
 
-Deletes rows from a table.
+Creates a macro.
 
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `table_id` | `int64` | The table. |
-| `delete_files` | list of [`DeleteFile`](#deletefile) (default `[]`) | Delete files written by the client. |
-| `inlined_deletes` | list of [`InlinedRowDeletes`](#inlinedrowdeletes) (default `[]`) | Deletes of inlined rows. |
-| `file_row_deletes` | list of [`FileRowDeletes`](#filerowdeletes) (default `[]`) | Deletes of rows of data files that are inlined in the catalog. |
-| `dropped_files` | list of [`DroppedFile`](#droppedfile) (default `[]`) | Data files that are deleted entirely. |
-| `delete_attempted` | `bool` (default `false`) | Whether a delete was evaluated against the table, even if it did not delete any rows. This makes the commit conflict with concurrent inserts. |
+| `entry_reference` | `uint64` (optional) | See `create_schema`. |
+| `schema_path` | list of `string` (default `[]`) | The schema of the macro. |
+| `macro` | [`MacroInfo`](#macroinfo) | The macro (its ids are ignored). |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
-### `drop_macro`
+### `alter_table`
 
-Drops a macro.
+Alters a table.
 
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_path` | list of `string` (default `[]`) | The schema of the macro. |
-| `name` | `string` | The name of the macro. |
-| `macro_type` | [`MacroType`](#macrotype) (default `"scalar"`) | The type of the macro. |
+| `schema_path` | list of `string` (default `[]`) | The schema of the table. |
+| `name` | `string` | The name of the table. |
+| `alter` | [`Alteration`](#alteration) | The change. |
+| `partition_id` | `uint64` (optional) | For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`). |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `alter_view`
+
+Alters a view.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `schema_path` | list of `string` (default `[]`) | The schema of the view. |
+| `name` | `string` | The name of the view. |
+| `alter` | [`Alteration`](#alteration) | The change. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
@@ -753,32 +785,45 @@ Request:
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
-### `flush_inlined_data`
+### `drop_macro`
 
-Marks inlined data as flushed.
-
-The rows are deleted from the inlined data tables when the transaction commits. The files that hold the flushed rows
-are inserted with `insert_files`.
+Drops a macro.
 
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `inlined_tables` | list of [`FlushedInlinedTable`](#flushedinlinedtable) (default `[]`) | The inlined data tables whose rows up to the snapshot were flushed. |
-| `file_deletions` | list of [`FlushedFileDeletions`](#flushedfiledeletions) (default `[]`) | The tables whose inlined deletions of data file rows up to the snapshot were flushed to delete files (registered with `delete_data`). |
+| `schema_path` | list of `string` (default `[]`) | The schema of the macro. |
+| `name` | `string` | The name of the macro. |
+| `macro_type` | [`MacroType`](#macrotype) (default `"scalar"`) | The type of the macro. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
-### `insert_files`
+### `set_option`
 
-Registers Parquet files that were written by the client.
+Sets or resets a DuckLake option (`ducklake_metadata`).
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `option` | [`OptionSetting`](#optionsetting) | The option. |
+| `reset` | `bool` (default `false`) | Reset the option instead of setting it. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `create_name_map`
+
+Registers a name map for files that are inserted later in the transaction.
+
+`mapping.mapping_id` is an id of the client, which files of the transaction refer to with their `mapping_id`.
 
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `table_id` | `int64` | The table. |
-| `files` | list of [`DataFile`](#datafile) | The files. |
+| `mapping` | [`NameMap`](#namemap) | The name map. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
@@ -798,16 +843,62 @@ Request:
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
-### `set_option`
+### `insert_files`
 
-Sets or resets a DuckLake option (`ducklake_metadata`).
+Registers Parquet files that were written by the client.
 
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `option` | [`OptionSetting`](#optionsetting) | The option. |
-| `reset` | `bool` (default `false`) | Reset the option instead of setting it. |
+| `table_id` | `int64` | The table. |
+| `files` | list of [`DataFile`](#datafile) | The files. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `delete_data`
+
+Deletes rows from a table.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `int64` | The table. |
+| `delete_files` | list of [`DeleteFile`](#deletefile) (default `[]`) | Delete files written by the client. |
+| `inlined_deletes` | list of [`InlinedRowDeletes`](#inlinedrowdeletes) (default `[]`) | Deletes of inlined rows. |
+| `file_row_deletes` | list of [`FileRowDeletes`](#filerowdeletes) (default `[]`) | Deletes of rows of data files that are inlined in the catalog. |
+| `dropped_files` | list of [`DroppedFile`](#droppedfile) (default `[]`) | Data files that are deleted entirely. |
+| `delete_attempted` | `bool` (default `false`) | Whether a delete was evaluated against the table, even if it did not delete any rows. This makes the commit conflict with concurrent inserts. |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `flush_inlined_data`
+
+Marks inlined data as flushed.
+
+The rows are deleted from the inlined data tables when the transaction commits. The files that hold the flushed rows
+are inserted with `insert_files`.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `inlined_tables` | list of [`FlushedInlinedTable`](#flushedinlinedtable) (default `[]`) | The inlined data tables whose rows up to the snapshot were flushed. |
+| `file_deletions` | list of [`FlushedFileDeletions`](#flushedfiledeletions) (default `[]`) | The tables whose inlined deletions of data file rows up to the snapshot were flushed to delete files (registered with `delete_data`). |
+
+Response: as for [`commit_transaction`](#commit_transaction).
+
+### `compact`
+
+Replaces data files with compacted files that were written by the client.
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `table_id` | `int64` | The table. |
+| `compactions` | list of [`Compaction`](#compaction) | The compactions. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 

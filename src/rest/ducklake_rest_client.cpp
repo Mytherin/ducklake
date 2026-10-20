@@ -48,7 +48,8 @@ void DuckLakeRESTClient::ReturnConnection(unique_ptr<duckdb_httplib::Client> con
 	idle_connections.push_back({std::move(connection), std::chrono::steady_clock::now()});
 }
 
-int32_t DuckLakeRESTClient::Send(const string &endpoint, const string &body, bool idempotent, string &response) {
+int32_t DuckLakeRESTClient::Send(const string &method, const string &target, const string &body, bool idempotent,
+                                 string &response) {
 	duckdb_httplib::Headers headers;
 	if (!token.empty()) {
 		headers.emplace("Authorization", "Bearer " + token);
@@ -56,7 +57,8 @@ int32_t DuckLakeRESTClient::Send(const string &endpoint, const string &body, boo
 	for (idx_t attempt = 0;; attempt++) {
 		bool reused;
 		auto connection = GetConnection(reused);
-		auto result = connection->Post("/v1/" + endpoint, headers, body, "application/json");
+		auto result = method == "GET" ? connection->Get(target, headers)
+		                              : connection->Post(target, headers, body, "application/json");
 		if (result) {
 			ReturnConnection(std::move(connection));
 			response = result->body;
@@ -70,29 +72,32 @@ int32_t DuckLakeRESTClient::Send(const string &endpoint, const string &body, boo
 			// requests are not, as the server might have applied them
 			continue;
 		}
-		throw IOException("Failed to send DuckLake REST request \"%s\" to %s: %s", endpoint, base_url,
+		throw IOException("Failed to send DuckLake REST request \"%s %s\" to %s: %s", method, target, base_url,
 		                  duckdb_httplib::to_string(error));
 	}
 }
 
-int32_t DuckLakeRESTClient::PostRaw(const string &endpoint, const string &body, string &response) {
-	return Send(endpoint, body, false, response);
+int32_t DuckLakeRESTClient::SendRaw(const string &method, const string &target, const string &body, string &response) {
+	return Send(method, target, body, false, response);
 }
 
 void DuckLakeRESTClient::SetPathMapping(string client_path, string server_path) {
 	path_mapper = make_uniq<RESTPathMapper>(std::move(client_path), std::move(server_path));
 }
 
-string DuckLakeRESTClient::Post(const string &endpoint, const string &body, bool idempotent) {
+string DuckLakeRESTClient::Call(const string &endpoint, const string &json, bool idempotent) {
+	auto &route = DuckLakeRESTAPI::GetRoute(endpoint);
+	string body;
+	auto target = route.ClientTarget(json, body);
 	string response;
-	auto status = Send(endpoint, body, idempotent, response);
+	auto status = Send(route.method, target, body, idempotent, response);
 	if (status != 200) {
 		RESTErrorResponse error;
 		try {
 			RESTJsonReader document(response);
 			error = DuckLakeRESTSerializer::Read<RESTErrorResponse>(document.Root());
 		} catch (std::exception &) {
-			throw IOException("DuckLake REST request \"%s\" failed with status %d", endpoint, status);
+			throw IOException("DuckLake REST request \"%s %s\" failed with status %d", route.method, target, status);
 		}
 		auto type = Exception::StringToExceptionType(error.error.type);
 		ErrorData(type, error.error.message).Throw();

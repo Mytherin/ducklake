@@ -14,7 +14,7 @@ use ducklake.rest.codegen#rowTypes
 /// commit when that is safe; otherwise it fails with a `409`. The snapshot is the snapshot the changes are based
 /// on: the server detects conflicts with every snapshot committed after it. Without a snapshot, the changes are
 /// based on the latest snapshot.
-@http(method: "POST", uri: "/v1/commit_transaction")
+@http(method: "POST", uri: "/v1/transactions/commit")
 operation CommitTransaction {
     input := with [SnapshotReference] {
         /// The commit information of the snapshot.
@@ -46,12 +46,6 @@ operation CommitTransaction {
 }
 
 /// Creates a schema.
-@http(method: "POST", uri: "/v1/create_schema")
-operation CreateSchema {
-    input: CreateSchemaRequest
-}
-
-/// The parameters of `create_schema`.
 structure CreateSchemaRequest {
     /// A number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can
     /// use it to keep track of the entries it created, e.g. to keep their oids stable.
@@ -75,12 +69,6 @@ structure CreateSchemaRequest {
 ///
 /// Columns get the field ids `1..n` in the order of the columns (nested fields are numbered depth-first), as in `CREATE
 /// TABLE`.
-@http(method: "POST", uri: "/v1/create_table")
-operation CreateTable {
-    input: CreateTableRequest
-}
-
-/// The parameters of `create_table`.
 structure CreateTableRequest {
     /// The placeholder id of the table.
     table_id: Long
@@ -124,12 +112,6 @@ structure CreateTableRequest {
 }
 
 /// Creates a view.
-@http(method: "POST", uri: "/v1/create_view")
-operation CreateView {
-    input: CreateViewRequest
-}
-
-/// The parameters of `create_view`.
 structure CreateViewRequest {
     /// See `create_schema`.
     entry_reference: UInt64
@@ -163,12 +145,6 @@ structure CreateViewRequest {
 }
 
 /// Creates a macro.
-@http(method: "POST", uri: "/v1/create_macro")
-operation CreateMacro {
-    input: CreateMacroRequest
-}
-
-/// The parameters of `create_macro`.
 structure CreateMacroRequest {
     /// See `create_schema`.
     entry_reference: UInt64
@@ -182,12 +158,6 @@ structure CreateMacroRequest {
 }
 
 /// Alters a table.
-@http(method: "POST", uri: "/v1/alter_table")
-operation AlterTable {
-    input: AlterTableRequest
-}
-
-/// The parameters of `alter_table`.
 structure AlterTableRequest {
     /// The schema of the table.
     schema_path: StringList = []
@@ -205,12 +175,6 @@ structure AlterTableRequest {
 }
 
 /// Alters a view.
-@http(method: "POST", uri: "/v1/alter_view")
-operation AlterView {
-    input: AlterViewRequest
-}
-
-/// The parameters of `alter_view`.
 structure AlterViewRequest {
     /// The schema of the view.
     schema_path: StringList = []
@@ -225,12 +189,6 @@ structure AlterViewRequest {
 }
 
 /// Drops a schema, which has to be empty.
-@http(method: "POST", uri: "/v1/drop_schema")
-operation DropSchema {
-    input: DropSchemaRequest
-}
-
-/// The parameters of `drop_schema`.
 structure DropSchemaRequest {
     /// The path of the schema.
     @required
@@ -238,12 +196,6 @@ structure DropSchemaRequest {
 }
 
 /// Drops a table.
-@http(method: "POST", uri: "/v1/drop_table")
-operation DropTable {
-    input: DropTableRequest
-}
-
-/// The parameters of `drop_table`.
 structure DropTableRequest {
     /// The schema of the table.
     schema_path: StringList = []
@@ -254,12 +206,6 @@ structure DropTableRequest {
 }
 
 /// Drops a view.
-@http(method: "POST", uri: "/v1/drop_view")
-operation DropView {
-    input: DropViewRequest
-}
-
-/// The parameters of `drop_view`.
 structure DropViewRequest {
     /// The schema of the view.
     schema_path: StringList = []
@@ -270,12 +216,6 @@ structure DropViewRequest {
 }
 
 /// Drops a macro.
-@http(method: "POST", uri: "/v1/drop_macro")
-operation DropMacro {
-    input: DropMacroRequest
-}
-
-/// The parameters of `drop_macro`.
 structure DropMacroRequest {
     /// The schema of the macro.
     schema_path: StringList = []
@@ -289,12 +229,6 @@ structure DropMacroRequest {
 }
 
 /// Sets or resets a DuckLake option (`ducklake_metadata`).
-@http(method: "POST", uri: "/v1/set_option")
-operation SetOption {
-    input: SetOptionRequest
-}
-
-/// The parameters of `set_option`.
 structure SetOptionRequest {
     /// The option.
     @required
@@ -307,12 +241,6 @@ structure SetOptionRequest {
 /// Registers a name map for files that are inserted later in the transaction.
 ///
 /// `mapping.mapping_id` is an id of the client, which files of the transaction refer to with their `mapping_id`.
-@http(method: "POST", uri: "/v1/create_name_map")
-operation CreateNameMap {
-    input: CreateNameMapRequest
-}
-
-/// The parameters of `create_name_map`.
 structure CreateNameMapRequest {
     /// The table.
     @required
@@ -324,12 +252,6 @@ structure CreateNameMapRequest {
 }
 
 /// Inserts rows that are inlined in the catalog.
-@http(method: "POST", uri: "/v1/insert_rows")
-operation InsertRows {
-    input: InsertRowsRequest
-}
-
-/// The parameters of `insert_rows`.
 structure InsertRowsRequest {
     /// The table.
     @required
@@ -354,12 +276,6 @@ structure InsertRowsRequest {
 }
 
 /// Registers Parquet files that were written by the client.
-@http(method: "POST", uri: "/v1/insert_files")
-operation InsertFiles {
-    input: InsertFilesRequest
-}
-
-/// The parameters of `insert_files`.
 structure InsertFilesRequest {
     /// The table.
     @required
@@ -371,12 +287,6 @@ structure InsertFilesRequest {
 }
 
 /// Deletes rows from a table.
-@http(method: "POST", uri: "/v1/delete_data")
-operation DeleteData {
-    input: DeleteDataRequest
-}
-
-/// The parameters of `delete_data`.
 structure DeleteDataRequest {
     /// The table.
     @required
@@ -403,12 +313,6 @@ structure DeleteDataRequest {
 ///
 /// The rows are deleted from the inlined data tables when the transaction commits. The files that hold the flushed rows
 /// are inserted with `insert_files`.
-@http(method: "POST", uri: "/v1/flush_inlined_data")
-operation FlushInlinedData {
-    input: FlushInlinedDataRequest
-}
-
-/// The parameters of `flush_inlined_data`.
 structure FlushInlinedDataRequest {
     /// The inlined data tables whose rows up to the snapshot were flushed.
     inlined_tables: FlushedInlinedTableList = []
@@ -419,12 +323,6 @@ structure FlushInlinedDataRequest {
 }
 
 /// Replaces data files with compacted files that were written by the client.
-@http(method: "POST", uri: "/v1/compact")
-operation Compact {
-    input: CompactRequest
-}
-
-/// The parameters of `compact`.
 structure CompactRequest {
     /// The table.
     @required
