@@ -156,6 +156,24 @@ static void SplitIntoPlanTasks(DuckLakeRESTRequest &request, TableIndex table_id
 	}
 }
 
+//! Adds the column mappings that the files refer to, except for the ones that the client has
+template <class T>
+static void AddMappingIds(const vector<T> &entries, set<idx_t> &mapping_ids) {
+	for (auto &entry : entries) {
+		if (entry.mapping_id.IsValid()) {
+			mapping_ids.insert(entry.mapping_id.index);
+		}
+	}
+}
+
+static vector<DuckLakeColumnMappingInfo> GetColumnMappings(DuckLakeRESTRequest &request, set<idx_t> mapping_ids,
+                                                           const set<idx_t> &known_mappings) {
+	for (auto known : known_mappings) {
+		mapping_ids.erase(known);
+	}
+	return request.GetMetadataManager().GetColumnMappings(mapping_ids);
+}
+
 //===--------------------------------------------------------------------===//
 // Read Endpoints
 //===--------------------------------------------------------------------===//
@@ -379,6 +397,10 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	SplitIntoPlanTasks(request, table.GetTableId(), result.files, &DuckLakeRESTPlan::files, result.plan_tasks);
 	SplitIntoPlanTasks(request, table.GetTableId(), result.extended_files, &DuckLakeRESTPlan::extended_files,
 	                   result.plan_tasks);
+	set<idx_t> mapping_ids;
+	AddMappingIds(result.files, mapping_ids);
+	AddMappingIds(result.extended_files, mapping_ids);
+	result.column_mappings = GetColumnMappings(request, std::move(mapping_ids), parameters.known_column_mappings);
 	if (!parameters.include_inlined_data) {
 		return result;
 	}
@@ -440,16 +462,6 @@ RESTTableSizesResponse DuckLakeRESTEndpoints::TableSizes(DuckLakeRESTRequest &re
 	return result;
 }
 
-RESTColumnMappingsResponse DuckLakeRESTEndpoints::ColumnMappings(DuckLakeRESTRequest &request,
-                                                                 const RESTColumnMappingsRequest &parameters) {
-	RESTColumnMappingsResponse result;
-	result.mappings = request.GetMetadataManager().GetColumnMappings(parameters.start_from);
-	GetKeyPage(
-	    request, result.mappings, [](const DuckLakeColumnMappingInfo &mapping) { return mapping.mapping_id.index; },
-	    parameters.page_size, parameters.page_token, result.next_page_token);
-	return result;
-}
-
 RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest &request,
                                                              const RESTTableChangesRequest &parameters) {
 	auto snapshot = request.GetSnapshot(parameters);
@@ -467,6 +479,10 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 		SplitIntoPlanTasks(request, table.GetTableId(), result.insertions, &DuckLakeRESTPlan::insertions,
 		                   result.plan_tasks);
 	}
+	set<idx_t> mapping_ids;
+	AddMappingIds(result.insertions, mapping_ids);
+	AddMappingIds(result.deletions, mapping_ids);
+	result.column_mappings = GetColumnMappings(request, std::move(mapping_ids), parameters.known_column_mappings);
 	if (parameters.include_inlined_data) {
 		result.inlined_data = ReadInlinedRows(
 		    request, table, snapshot,
@@ -563,6 +579,12 @@ RESTFetchPlanTaskResponse DuckLakeRESTEndpoints::FetchPlanTask(DuckLakeRESTReque
 	get_task(plan->extended_files, result.extended_files);
 	get_task(plan->insertions, result.insertions);
 	get_task(plan->deletions, result.deletions);
+	set<idx_t> mapping_ids;
+	AddMappingIds(result.files, mapping_ids);
+	AddMappingIds(result.extended_files, mapping_ids);
+	AddMappingIds(result.insertions, mapping_ids);
+	AddMappingIds(result.deletions, mapping_ids);
+	result.column_mappings = GetColumnMappings(request, std::move(mapping_ids), parameters.known_column_mappings);
 	return result;
 }
 

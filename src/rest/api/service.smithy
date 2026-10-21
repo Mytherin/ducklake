@@ -77,7 +77,6 @@ service DuckLake {
         ListSnapshots
         TableSizes
         Compact
-        ColumnMappings
         TableChanges
         DuckLakeTables
         DuckLakeTable

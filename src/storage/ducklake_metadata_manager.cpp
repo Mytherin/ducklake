@@ -4648,6 +4648,21 @@ vector<DuckLakeColumnMappingInfo> DuckLakeMetadataManager::GetColumnMappings(opt
 	if (start_from.IsValid()) {
 		filter = "WHERE mapping_id >= " + to_string(start_from.GetIndex());
 	}
+	return GetColumnMappingsWhere(filter);
+}
+
+vector<DuckLakeColumnMappingInfo> DuckLakeMetadataManager::GetColumnMappings(const set<idx_t> &mapping_ids) {
+	if (mapping_ids.empty()) {
+		return {};
+	}
+	vector<string> ids;
+	for (auto mapping_id : mapping_ids) {
+		ids.push_back(to_string(mapping_id));
+	}
+	return GetColumnMappingsWhere("WHERE mapping_id IN (" + StringUtil::Join(ids, ", ") + ")");
+}
+
+vector<DuckLakeColumnMappingInfo> DuckLakeMetadataManager::GetColumnMappingsWhere(const string &filter) {
 	auto result = Query(StringUtil::Format(R"(
 SELECT mapping_id, table_id, type, column_id, source_name, target_field_id, parent_column, is_partition
 FROM {METADATA_CATALOG}.ducklake_column_mapping

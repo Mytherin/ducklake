@@ -367,6 +367,10 @@ public:
 	bool IsREST() const {
 		return rest_client != nullptr;
 	}
+	//! The ids of the name maps that are loaded
+	set<idx_t> GetLoadedNameMapIds();
+	//! Adds name maps that are not loaded yet, e.g. the ones that a REST server returns with a scan
+	void AddNameMaps(vector<DuckLakeColumnMappingInfo> column_mappings);
 	//! The client of the REST server that serves the metadata, for REST catalogs
 	DuckLakeRESTClient &GetRESTClient();
 	DuckLakeOptions &GetOptions() {

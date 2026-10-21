@@ -3275,78 +3275,6 @@ DuckLakeViewInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTColumnMappingsRequest &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.start_from)) {
-		result.Add("start_from", RESTWriteValue<RESTUInt64Codec>(writer, value.start_from));
-	}
-	if (!RESTIsNull(value.page_size)) {
-		result.Add("page_size", RESTWriteValue<RESTUInt64Codec>(writer, value.page_size));
-	}
-	if (!RESTIsNull(value.page_token)) {
-		result.Add("page_token", RESTWriteValue<RESTStringCodec>(writer, value.page_token));
-	}
-	return result;
-}
-
-template <>
-RESTColumnMappingsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for ColumnMappingsRequest");
-	}
-	RESTColumnMappingsRequest result;
-	{
-		auto entry = in.TryGet("start_from");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.start_from);
-		}
-	}
-	{
-		auto entry = in.TryGet("page_size");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.page_size);
-		}
-	}
-	{
-		auto entry = in.TryGet("page_token");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.page_token);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTColumnMappingsResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("mappings",
-	           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(writer, value.mappings));
-	if (!RESTIsNull(value.next_page_token)) {
-		result.Add("next_page_token", RESTWriteValue<RESTStringCodec>(writer, value.next_page_token));
-	}
-	return result;
-}
-
-template <>
-RESTColumnMappingsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for ColumnMappingsResponse");
-	}
-	RESTColumnMappingsResponse result;
-	{
-		auto entry = in.TryGet("mappings");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(entry, result.mappings);
-		}
-	}
-	{
-		auto entry = in.TryGet("next_page_token");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.next_page_token);
-		}
-	}
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTConfigRequest &value) {
 	auto result = writer.CreateObject();
 	if (!RESTIsNull(value.catalog_name)) {
@@ -3505,6 +3433,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFet
 	auto result = writer.CreateObject();
 	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
 	result.Add("plan_task", RESTWriteValue<RESTStringCodec>(writer, value.plan_task));
+	result.Add("known_column_mappings",
+	           RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.known_column_mappings));
 	return result;
 }
 
@@ -3516,6 +3446,12 @@ RESTFetchPlanTaskRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	RESTFetchPlanTaskRequest result;
 	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
 	RESTReadValue<RESTStringCodec>(in.Get("plan_task"), result.plan_task);
+	{
+		auto entry = in.TryGet("known_column_mappings");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.known_column_mappings);
+		}
+	}
 	return result;
 }
 
@@ -3530,6 +3466,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFet
 	           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeFileListEntry>>>(writer, value.insertions));
 	result.Add("deletions",
 	           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeDeleteScanEntry>>>(writer, value.deletions));
+	result.Add("column_mappings", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(
+	                                  writer, value.column_mappings));
 	return result;
 }
 
@@ -3561,6 +3499,12 @@ RESTFetchPlanTaskResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("deletions");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeDeleteScanEntry>>>(entry, result.deletions);
+		}
+	}
+	{
+		auto entry = in.TryGet("column_mappings");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(entry, result.column_mappings);
 		}
 	}
 	return result;
@@ -3746,6 +3690,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSel
 	if (!RESTIsNull(value.time_zone)) {
 		result.Add("time_zone", RESTWriteValue<RESTStringCodec>(writer, value.time_zone));
 	}
+	result.Add("known_column_mappings",
+	           RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.known_column_mappings));
 	if (!RESTIsNull(value.columns)) {
 		result.Add("columns", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.columns));
 	}
@@ -3800,6 +3746,12 @@ RESTSelectRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		}
 	}
 	{
+		auto entry = in.TryGet("known_column_mappings");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.known_column_mappings);
+		}
+	}
+	{
 		auto entry = in.TryGet("columns");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.columns);
@@ -3819,6 +3771,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSel
 		result.Add("inlined_data", RESTWriteValue<RESTObjectCodec<RESTInlinedRows>>(writer, value.inlined_data));
 	}
 	result.Add("plan_tasks", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.plan_tasks));
+	result.Add("column_mappings", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(
+	                                  writer, value.column_mappings));
 	return result;
 }
 
@@ -3850,6 +3804,12 @@ RESTSelectResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("plan_tasks");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.plan_tasks);
+		}
+	}
+	{
+		auto entry = in.TryGet("column_mappings");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(entry, result.column_mappings);
 		}
 	}
 	return result;
@@ -4005,6 +3965,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTab
 	if (!RESTIsNull(value.time_zone)) {
 		result.Add("time_zone", RESTWriteValue<RESTStringCodec>(writer, value.time_zone));
 	}
+	result.Add("known_column_mappings",
+	           RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.known_column_mappings));
 	if (!RESTIsNull(value.columns)) {
 		result.Add("columns", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.columns));
 	}
@@ -4058,6 +4020,12 @@ RESTTableChangesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		}
 	}
 	{
+		auto entry = in.TryGet("known_column_mappings");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.known_column_mappings);
+		}
+	}
+	{
 		auto entry = in.TryGet("columns");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.columns);
@@ -4076,6 +4044,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTab
 		result.Add("inlined_data", RESTWriteValue<RESTObjectCodec<RESTInlinedRows>>(writer, value.inlined_data));
 	}
 	result.Add("plan_tasks", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.plan_tasks));
+	result.Add("column_mappings", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(
+	                                  writer, value.column_mappings));
 	return result;
 }
 
@@ -4107,6 +4077,12 @@ RESTTableChangesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("plan_tasks");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.plan_tasks);
+		}
+	}
+	{
+		auto entry = in.TryGet("column_mappings");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(entry, result.column_mappings);
 		}
 	}
 	return result;
@@ -5382,13 +5358,6 @@ void RESTAlterationCodec::Read(RESTJsonIn in, unique_ptr<RESTAlteration> &result
 //===--------------------------------------------------------------------===//
 // Server
 //===--------------------------------------------------------------------===//
-static string ColumnMappingsEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTColumnMappingsRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::ColumnMappings(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
 static string ConfigEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTConfigRequest>(document.Root());
@@ -5482,7 +5451,6 @@ static string CommitTransactionEndpoint(DuckLakeRESTRequest &request, const stri
 
 const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	static const unordered_map<string, rest_endpoint_t> endpoints = {
-	    {"column_mappings", ColumnMappingsEndpoint},
 	    {"config", ConfigEndpoint},
 	    {"ducklake_table", DuckLakeTableEndpoint},
 	    {"ducklake_tables", DuckLakeTablesEndpoint},
@@ -5502,12 +5470,6 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 
 const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	static const vector<RESTRoute> routes = {
-	    {"column_mappings",
-	     "GET",
-	     "/v1/column-mappings",
-	     {{"start_from", RESTParameterType::UINT, "start_from"},
-	      {"page_size", RESTParameterType::UINT, "page_size"},
-	      {"page_token", RESTParameterType::STRING, "page_token"}}},
 	    {"config", "GET", "/v1/config", {{"catalog_name", RESTParameterType::STRING, "catalog"}}, true},
 	    {"ducklake_table",
 	     "GET",
@@ -5553,12 +5515,6 @@ const RESTRoute &DuckLakeRESTAPI::GetRoute(const string &endpoint) {
 //===--------------------------------------------------------------------===//
 // Client
 //===--------------------------------------------------------------------===//
-RESTColumnMappingsResponse DuckLakeRESTClientAPI::ColumnMappings(const RESTColumnMappingsRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("column_mappings", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTColumnMappingsResponse>(document.Root());
-}
-
 RESTConfigResponse DuckLakeRESTClientAPI::Config(const RESTConfigRequest &request) {
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("config", DuckLakeRESTSerializer::ToJSON(request), true));

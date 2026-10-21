@@ -562,6 +562,8 @@ public:
 	static string WriteNewMacros(const vector<DuckLakeMacroInfo> &new_macros);
 
 	virtual vector<DuckLakeColumnMappingInfo> GetColumnMappings(optional_idx start_from);
+	//! The column mappings with the ids
+	vector<DuckLakeColumnMappingInfo> GetColumnMappings(const set<idx_t> &mapping_ids);
 	static string WriteNewColumnMappings(const vector<DuckLakeColumnMappingInfo> &new_column_mappings);
 	//! Caller supplies one resolved path per compaction, in the same order.
 	static string WriteMergeAdjacent(const vector<DuckLakeCompactedFileInfo> &compactions,
@@ -711,6 +713,7 @@ public:
 	                              const string &base_data_path, const string &separator);
 
 protected:
+	vector<DuckLakeColumnMappingInfo> GetColumnMappingsWhere(const string &filter);
 	string GetInlinedTableQuery(const DuckLakeTableInfo &table, const string &table_name);
 	bool CanInlineColumn(const string &name, const LogicalType &type);
 	string GetColumnType(const DuckLakeColumnInfo &col);

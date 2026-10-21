@@ -157,8 +157,6 @@ struct RESTSetOptions;
 struct RESTSetPartitionedBy;
 struct RESTSetSortedBy;
 struct RESTSnapshotReference;
-struct RESTColumnMappingsRequest;
-struct RESTColumnMappingsResponse;
 struct RESTConfigRequest;
 struct RESTConfigResponse;
 struct RESTDuckLakeTableRequest;
@@ -282,8 +280,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeTag &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeViewColumnTag &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeViewInfo &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnMappingsRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnMappingsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTConfigRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTConfigResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTableRequest &value);
@@ -466,10 +462,6 @@ template <>
 DuckLakeViewColumnTag DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeViewInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTColumnMappingsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTColumnMappingsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTConfigRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -1059,22 +1051,6 @@ struct RESTSnapshotReference {
 	optional_idx snapshot_id;
 };
 
-struct RESTColumnMappingsRequest {
-	//! The first mapping id to return.
-	optional_idx start_from;
-	//! The maximum number of entries to return. The server picks a number if absent, and can return fewer entries.
-	optional_idx page_size;
-	//! The `next_page_token` of the previous page. The first page if absent.
-	string page_token;
-};
-
-struct RESTColumnMappingsResponse {
-	//! The name maps, ordered by their ids.
-	vector<DuckLakeColumnMappingInfo> mappings;
-	//! The token of the next page, absent on the last page.
-	string next_page_token;
-};
-
 struct RESTConfigRequest {
 	//! The name that the catalog is served under. The catalog of the server if it serves exactly one.
 	string catalog_name;
@@ -1115,6 +1091,8 @@ struct RESTFetchPlanTaskRequest {
 	idx_t table_id = 0;
 	//! The plan task.
 	string plan_task;
+	//! The ids of the column mappings that the client has: the response only has the other column mappings that its
+	set<idx_t> known_column_mappings;
 };
 
 struct RESTFetchPlanTaskResponse {
@@ -1126,6 +1104,8 @@ struct RESTFetchPlanTaskResponse {
 	vector<DuckLakeFileListEntry> insertions;
 	//! The files of a plan task of `changes` with `deletions`.
 	vector<DuckLakeDeleteScanEntry> deletions;
+	//! The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
+	vector<DuckLakeColumnMappingInfo> column_mappings;
 };
 
 struct RESTGetMetadataRequest {};
@@ -1173,6 +1153,8 @@ struct RESTSelectRequest : public RESTSnapshotReference {
 	bool include_inlined_data = false;
 	//! The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
 	string time_zone;
+	//! The ids of the column mappings that the client has: the response only has the other column mappings that its
+	set<idx_t> known_column_mappings;
 	//! The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
 	RESTOptional<vector<idx_t>> columns;
 };
@@ -1186,6 +1168,8 @@ struct RESTSelectResponse {
 	unique_ptr<RESTInlinedRows> inlined_data;
 	//! Plan tasks for the files that are not in this response, if there are many files. Each plan task is sent to
 	vector<string> plan_tasks;
+	//! The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
+	vector<DuckLakeColumnMappingInfo> column_mappings;
 };
 
 struct RESTSnapshotDataRequest : public RESTSnapshotReference {
@@ -1227,6 +1211,8 @@ struct RESTTableChangesRequest : public RESTSnapshotReference {
 	bool include_inlined_data = false;
 	//! The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
 	string time_zone;
+	//! The ids of the column mappings that the client has: the response only has the other column mappings that its
+	set<idx_t> known_column_mappings;
 	//! The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
 	RESTOptional<vector<idx_t>> columns;
 };
@@ -1240,6 +1226,8 @@ struct RESTTableChangesResponse {
 	unique_ptr<RESTInlinedRows> inlined_data;
 	//! Plan tasks for the files that are not in this response, see `scan`.
 	vector<string> plan_tasks;
+	//! The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
+	vector<DuckLakeColumnMappingInfo> column_mappings;
 };
 
 struct RESTTableSizesRequest : public RESTSnapshotReference {
@@ -1566,9 +1554,6 @@ struct RESTDeleteDataRequest : public RESTCommitRequest {
 //===--------------------------------------------------------------------===//
 //! The handlers of the endpoints of the server, see ducklake_rest_endpoints.cpp
 struct DuckLakeRESTEndpoints {
-	//! Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
-	static RESTColumnMappingsResponse ColumnMappings(DuckLakeRESTRequest &request,
-	                                                 const RESTColumnMappingsRequest &parameters);
 	//! Returns how a client connects to a catalog of the server. This is the first request of a client.
 	static RESTConfigResponse Config(DuckLakeRESTRequest &request, const RESTConfigRequest &parameters);
 	//! Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
@@ -1688,8 +1673,6 @@ public:
 	virtual ~DuckLakeRESTClientAPI() {
 	}
 
-	//! Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
-	RESTColumnMappingsResponse ColumnMappings(const RESTColumnMappingsRequest &request);
 	//! Returns how a client connects to a catalog of the server. This is the first request of a client.
 	RESTConfigResponse Config(const RESTConfigRequest &request);
 	//! Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.

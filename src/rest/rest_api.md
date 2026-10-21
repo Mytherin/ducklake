@@ -86,7 +86,7 @@ client directly, so the data path has to be accessible from both the client and 
   requests with a JSON object as body (reads that take a snapshot, filters or projections, and `POST
   /v1/transactions/commit`). Responses are JSON objects. The parameters of the URL are not part of the body.
 * Each request runs in a transaction of its own on the server.
-* Lists that grow with the data are returned in pages: `snapshots`, `table-sizes`, `column-mappings` and
+* Lists that grow with the data are returned in pages: `snapshots`, `table-sizes` and
   `metadata-tables/{table_name}` take a `page_size` and a `page_token`, and return a `next_page_token` if there are more
   entries. The first page has no token, a page token is only valid for the request that returned it, and the server
   picks the number of entries (and can return fewer than the `page_size`, and at most 10000). A response without
@@ -185,29 +185,6 @@ Members that are not `@required` and have no default are optional: they can be `
 
 These endpoints read the catalog. Each request runs in a transaction of its own on the server.
 
-### `column_mappings`
-
-Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
-
-`GET /v1/column-mappings`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `start_from` | query | `uint64` | The first mapping id to return. |
-| `page_size` | query | `uint64` | The maximum number of entries to return. The server picks a number if absent, and can return fewer entries. |
-| `page_token` | query | `string` | The `next_page_token` of the previous page. The first page if absent. |
-
-Request: no body.
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `mappings` | list of [`NameMap`](#namemap) (default `[]`) | The name maps, ordered by their ids. |
-| `next_page_token` | `string` (optional) | The token of the next page, absent on the last page. |
-
 ### `config`
 
 Returns how a client connects to a catalog of the server. This is the first request of a client.
@@ -299,6 +276,7 @@ Request:
 | Field | Type | Description |
 |-------|------|-------------|
 | `plan_task` | `string` | The plan task. |
+| `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
 
 Response:
 
@@ -308,6 +286,7 @@ Response:
 | `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of a plan task of `scan` with `extended`. |
 | `insertions` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of a plan task of `changes` with `insertions`. |
 | `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | The files of a plan task of `changes` with `deletions`. |
+| `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
 
 ### `get_metadata`
 
@@ -400,6 +379,7 @@ Request:
 | `filters` | [`ScanFilters`](#scanfilters) (optional) | Filters to prune files with. |
 | `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows of the table that are visible in the snapshot. |
 | `time_zone` | `string` (optional) | The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The time zone of the server if absent. |
+| `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
 | `columns` | list of `uint64` (optional) | The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
 
 Response:
@@ -410,6 +390,7 @@ Response:
 | `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of the scan, for `extended` scans. |
 | `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows of the table, for `include_inlined_data`. |
 | `plan_tasks` | list of `string` (default `[]`) | Plan tasks for the files that are not in this response, if there are many files. Each plan task is sent to `plan-tasks`, which returns its files. The files of the scan are the files of the response and the files of all its plan tasks. |
+| `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
 
 ### `snapshot_data`
 
@@ -469,6 +450,7 @@ Request:
 | `changes` | [`TableChangeType`](#tablechangetype) | The changes to return. |
 | `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows that changed. |
 | `time_zone` | `string` (optional) | The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The time zone of the server if absent. |
+| `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
 | `columns` | list of `uint64` (optional) | The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
 
 Response:
@@ -479,6 +461,7 @@ Response:
 | `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | For `deletions`: the files with deleted rows. |
 | `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows that changed, for `include_inlined_data`. |
 | `plan_tasks` | list of `string` (default `[]`) | Plan tasks for the files that are not in this response, see `scan`. |
+| `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
 
 ### `table_sizes`
 

@@ -120,6 +120,11 @@ operation Select {
         /// time zone of the server if absent.
         time_zone: String
 
+        /// The ids of the column mappings that the client has: the response only has the other column mappings that its
+        /// files refer to.
+        @cppType("set<idx_t>")
+        known_column_mappings: UInt64List = []
+
         /// The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
         /// columns, besides the row id and the begin and end snapshot. All columns of the table if absent.
         @cppType("RESTOptional<vector<idx_t>>")
@@ -140,6 +145,10 @@ operation Select {
         /// `plan-tasks`, which returns its files. The files of the scan are the files of the response and the files of
         /// all its plan tasks.
         plan_tasks: StringList = []
+
+        /// The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
+        /// not have. They map the columns of files that were added with `ducklake_add_data_files` by name.
+        column_mappings: NameMapList = []
     }
 }
 
@@ -160,6 +169,11 @@ operation FetchPlanTask {
         /// The plan task.
         @required
         plan_task: String
+
+        /// The ids of the column mappings that the client has: the response only has the other column mappings that its
+        /// files refer to.
+        @cppType("set<idx_t>")
+        known_column_mappings: UInt64List = []
     }
 
     output := {
@@ -174,6 +188,10 @@ operation FetchPlanTask {
 
         /// The files of a plan task of `changes` with `deletions`.
         deletions: DeleteScanEntryList = []
+
+        /// The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
+        /// not have. They map the columns of files that were added with `ducklake_add_data_files` by name.
+        column_mappings: NameMapList = []
     }
 }
 
@@ -258,33 +276,6 @@ operation TableSizes {
     }
 }
 
-/// Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
-@http(method: "GET", uri: "/v1/column-mappings")
-@readonly
-operation ColumnMappings {
-    input := {
-        /// The first mapping id to return.
-        @httpQuery("start_from")
-        start_from: UInt64
-
-        /// The maximum number of entries to return. The server picks a number if absent, and can return fewer entries.
-        @httpQuery("page_size")
-        page_size: UInt64
-
-        /// The `next_page_token` of the previous page. The first page if absent.
-        @httpQuery("page_token")
-        page_token: String
-    }
-
-    output := {
-        /// The name maps, ordered by their ids.
-        mappings: NameMapList = []
-
-        /// The token of the next page, absent on the last page.
-        next_page_token: String
-    }
-}
-
 /// Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 ///
 /// With `include_inlined_data`, `inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted
@@ -316,6 +307,11 @@ operation TableChanges {
         /// time zone of the server if absent.
         time_zone: String
 
+        /// The ids of the column mappings that the client has: the response only has the other column mappings that its
+        /// files refer to.
+        @cppType("set<idx_t>")
+        known_column_mappings: UInt64List = []
+
         /// The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
         /// columns, besides the row id and the begin and end snapshot. All columns of the table if absent.
         @cppType("RESTOptional<vector<idx_t>>")
@@ -334,6 +330,10 @@ operation TableChanges {
 
         /// Plan tasks for the files that are not in this response, see `scan`.
         plan_tasks: StringList = []
+
+        /// The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
+        /// not have. They map the columns of files that were added with `ducklake_add_data_files` by name.
+        column_mappings: NameMapList = []
     }
 }
 

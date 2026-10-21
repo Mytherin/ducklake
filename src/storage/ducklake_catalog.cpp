@@ -927,6 +927,24 @@ unique_ptr<DuckLakeCatalogSet> DuckLakeCatalog::LoadSchemaForSnapshot(DuckLakeTr
 	return schema_set;
 }
 
+set<idx_t> DuckLakeCatalog::GetLoadedNameMapIds() {
+	lock_guard<mutex> guard(name_maps_lock);
+	set<idx_t> result;
+	for (auto &entry : name_maps.name_maps) {
+		result.insert(entry.first.index);
+	}
+	return result;
+}
+
+void DuckLakeCatalog::AddNameMaps(vector<DuckLakeColumnMappingInfo> column_mappings) {
+	lock_guard<mutex> guard(name_maps_lock);
+	for (auto &column_mapping : column_mappings) {
+		if (name_maps.name_maps.find(column_mapping.mapping_id) == name_maps.name_maps.end()) {
+			name_maps.Add(DuckLakeNameMap::FromColumnMapping(std::move(column_mapping)));
+		}
+	}
+}
+
 void DuckLakeCatalog::LoadNameMaps(DuckLakeTransaction &transaction) {
 	auto snapshot = transaction.GetSnapshot();
 	if (loaded_name_map_index.IsValid() && snapshot.next_file_id <= loaded_name_map_index.GetIndex()) {
