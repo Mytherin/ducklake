@@ -79,13 +79,13 @@ bool RESTInlinedRowsCache::HasResponse(const RESTInlinedRowsKey &key) const {
 	return entry != responses.end() && !entry->second.empty();
 }
 
-bool RESTInlinedRowsCache::GetSchemaVersions(idx_t snapshot_id, idx_t table_id, vector<idx_t> &schema_versions) const {
+bool RESTInlinedRowsCache::HasInlinedRows(idx_t snapshot_id, idx_t table_id, bool &has_inlined_rows) const {
 	lock_guard<mutex> guard(lock);
 	for (auto &entry : responses) {
 		if (entry.first.snapshot_id != snapshot_id || entry.first.table_id != table_id || entry.second.empty()) {
 			continue;
 		}
-		schema_versions = entry.second.back()->schema_versions;
+		has_inlined_rows = entry.second.back()->rows != nullptr;
 		return true;
 	}
 	return false;
@@ -93,15 +93,12 @@ bool RESTInlinedRowsCache::GetSchemaVersions(idx_t snapshot_id, idx_t table_id, 
 
 shared_ptr<RESTInlinedRowsResponse> RESTInlinedRowsCache::Add(const RESTInlinedRowsKey &key,
                                                               const RESTInlinedProjection &projection,
-                                                              vector<RESTInlinedTableRows> &inlined_data) {
+                                                              unique_ptr<RESTInlinedRows> inlined_data) {
 	auto response = make_shared_ptr<RESTInlinedRowsResponse>();
 	response->projection = projection;
-	for (auto &inlined_table : inlined_data) {
-		auto rows = make_shared_ptr<RESTCachedInlinedRows>();
-		rows->rows.columns = std::move(inlined_table.columns);
-		rows->rows.rows = std::move(inlined_table.rows);
-		response->schema_versions.push_back(inlined_table.schema_version);
-		response->rows[inlined_table.schema_version] = std::move(rows);
+	if (inlined_data) {
+		response->rows = make_shared_ptr<RESTCachedInlinedRows>();
+		response->rows->rows = std::move(*inlined_data);
 	}
 	lock_guard<mutex> guard(lock);
 	auto &entries = responses[key];
@@ -120,7 +117,7 @@ shared_ptr<RESTInlinedRowsResponse> RESTInlinedRowsCache::Add(const RESTInlinedR
 	return response;
 }
 
-shared_ptr<RESTCachedInlinedRows> RESTInlinedRowsCache::Find(const RESTInlinedRowsKey &key, idx_t schema_version,
+shared_ptr<RESTCachedInlinedRows> RESTInlinedRowsCache::Find(const RESTInlinedRowsKey &key,
                                                              const vector<string> &columns_to_read) const {
 	lock_guard<mutex> guard(lock);
 	auto entry = responses.find(key);
@@ -128,19 +125,19 @@ shared_ptr<RESTCachedInlinedRows> RESTInlinedRowsCache::Find(const RESTInlinedRo
 		return nullptr;
 	}
 	for (idx_t i = entry->second.size(); i > 0; i--) {
-		auto rows = entry->second[i - 1]->rows.find(schema_version);
-		if (rows == entry->second[i - 1]->rows.end()) {
+		auto &rows = entry->second[i - 1]->rows;
+		if (!rows) {
 			continue;
 		}
 		bool has_columns = true;
 		for (auto &column : columns_to_read) {
-			if (!HasColumn(rows->second->rows, column)) {
+			if (!HasColumn(rows->rows, column)) {
 				has_columns = false;
 				break;
 			}
 		}
 		if (has_columns) {
-			return rows->second;
+			return rows;
 		}
 	}
 	return nullptr;

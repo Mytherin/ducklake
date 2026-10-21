@@ -228,6 +228,15 @@ map<TableIndex, idx_t> RESTMetadataManager::GetTableRecordCounts(DuckLakeSnapsho
 	return result;
 }
 
+//! The time zone of the client, which the server casts inlined rows with
+static string GetClientTimeZone(ClientContext &context) {
+	Value time_zone;
+	if (context.TryGetCurrentSetting("TimeZone", time_zone) && !time_zone.IsNull()) {
+		return time_zone.ToString();
+	}
+	return string();
+}
+
 //! Sets the columns of a request that returns inlined rows, all columns if they are not set
 template <class REQUEST>
 static void SetProjection(REQUEST &request, const RESTInlinedProjection &projection) {
@@ -267,13 +276,16 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 	RESTInlinedRowsKey inlined_key {RESTInlinedRowsKind::SCAN, 0, snapshot.snapshot_id, table.GetTableId().index};
 	auto plan = PlanInlinedRows(inlined_key, projection);
 	request.include_inlined_data = plan.fetch;
+	if (plan.fetch) {
+		request.time_zone = GetClientTimeZone(*transaction.context.lock());
+	}
 	SetProjection(request, plan.projection);
 	if (filter_info) {
 		request.filters = make_uniq<RESTScanFilters>(DuckLakeRESTFilters::Write(*filter_info, table));
 	}
 	auto response = GetClient().Select(request);
 	if (plan.fetch) {
-		inlined_rows_cache.Add(inlined_key, plan.projection, response.inlined_data);
+		inlined_rows_cache.Add(inlined_key, plan.projection, std::move(response.inlined_data));
 	}
 	return std::move(response.files);
 }
@@ -292,13 +304,16 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 	RESTInlinedRowsKey inlined_key {RESTInlinedRowsKind::SCAN, 0, snapshot.snapshot_id, table.GetTableId().index};
 	auto plan = PlanInlinedRows(inlined_key, projection);
 	request.include_inlined_data = plan.fetch;
+	if (plan.fetch) {
+		request.time_zone = GetClientTimeZone(*transaction.context.lock());
+	}
 	SetProjection(request, plan.projection);
 	if (filter_info) {
 		request.filters = make_uniq<RESTScanFilters>(DuckLakeRESTFilters::Write(*filter_info, table));
 	}
 	auto response = GetClient().Select(request);
 	if (plan.fetch) {
-		inlined_rows_cache.Add(inlined_key, plan.projection, response.inlined_data);
+		inlined_rows_cache.Add(inlined_key, plan.projection, std::move(response.inlined_data));
 	}
 	return std::move(response.extended_files);
 }
@@ -316,12 +331,13 @@ unique_ptr<QueryResult> RESTMetadataManager::ToQueryResult(RESTInlinedRows rows)
 shared_ptr<RESTInlinedRowsResponse> RESTMetadataManager::FetchInlinedRows(const RESTInlinedRowsKey &key,
                                                                           DuckLakeSnapshot start_snapshot,
                                                                           DuckLakeSnapshot snapshot) {
-	vector<RESTInlinedTableRows> inlined_data;
+	unique_ptr<RESTInlinedRows> inlined_data;
 	if (key.kind == RESTInlinedRowsKind::SCAN) {
 		RESTSelectRequest request;
 		request.snapshot = snapshot;
 		request.table_id = key.table_id;
 		request.include_inlined_data = true;
+		request.time_zone = GetClientTimeZone(*transaction.context.lock());
 		inlined_data = std::move(GetClient().Select(request).inlined_data);
 	} else {
 		RESTTableChangesRequest request;
@@ -330,9 +346,10 @@ shared_ptr<RESTInlinedRowsResponse> RESTMetadataManager::FetchInlinedRows(const 
 		request.snapshot = snapshot;
 		request.changes = key.kind == RESTInlinedRowsKind::INSERTIONS ? "insertions" : "deletions";
 		request.include_inlined_data = true;
+		request.time_zone = GetClientTimeZone(*transaction.context.lock());
 		inlined_data = std::move(GetClient().TableChanges(request).inlined_data);
 	}
-	return inlined_rows_cache.Add(key, RESTInlinedProjection(), inlined_data);
+	return inlined_rows_cache.Add(key, RESTInlinedProjection(), std::move(inlined_data));
 }
 
 unique_ptr<QueryResult> RESTMetadataManager::ReadCachedInlinedRows(RESTInlinedRowsKind kind,
@@ -343,18 +360,17 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadCachedInlinedRows(RESTInlinedRo
 	auto handle = ParseInlinedTableName(inlined_table_name);
 	idx_t start_snapshot_id = kind == RESTInlinedRowsKind::SCAN ? 0 : start_snapshot.snapshot_id;
 	RESTInlinedRowsKey key {kind, start_snapshot_id, snapshot.snapshot_id, handle.table_id.index};
-	auto rows_ptr = inlined_rows_cache.Find(key, handle.schema_version, columns_to_read);
+	auto rows_ptr = inlined_rows_cache.Find(key, columns_to_read);
 	if (!rows_ptr) {
 		// the rows usually came along with the file list of the scan. Otherwise (or if they came with other
 		// columns) the server returns all columns, which are read from the response itself: the cache can have
 		// changed in the meantime
 		auto response = FetchInlinedRows(key, start_snapshot, snapshot);
-		auto entry = response->rows.find(handle.schema_version);
-		if (entry == response->rows.end()) {
+		rows_ptr = response->rows;
+		if (!rows_ptr) {
 			throw InvalidInputException("DuckLake REST: the server did not return the inlined rows of \"%s\"",
 			                            inlined_table_name);
 		}
-		rows_ptr = entry->second;
 	}
 	// scans of the table can read the rows at the same time
 	lock_guard<mutex> read_guard(rows_ptr->read_lock);
@@ -489,7 +505,6 @@ optional_idx RESTMetadataManager::GetRowCount(DuckLakeSnapshot snapshot, const s
 	request.snapshot = snapshot;
 	request.count = count;
 	request.table_id = table_id.index;
-	request.schema_version = schema_version;
 	return GetClient().RowCount(request).row_count;
 }
 
@@ -506,42 +521,26 @@ idx_t RESTMetadataManager::GetNetInlinedRowCount(const string &inlined_table_nam
 	return GetRowCount(snapshot, "inlined", handle.table_id, handle.schema_version).GetIndex();
 }
 
-unordered_set<string> RESTMetadataManager::GetInlinedTableNames(TableIndex table_id) {
-	if (IsTransactionLocal(table_id)) {
-		return {};
-	}
-	RESTInlinedTablesRequest request;
-	request.table_id = table_id.index;
-	unordered_set<string> result;
-	for (auto schema_version : GetClient().InlinedTables(request).schema_versions) {
-		result.insert(InlinedTableName(table_id, schema_version));
-	}
-	return result;
-}
-
 vector<DuckLakeInlinedTableInfo> RESTMetadataManager::GetInlinedDataTables(const DuckLakeTableEntry &table,
                                                                            DuckLakeSnapshot snapshot) {
 	auto table_id = table.GetTableId();
 	if (IsTransactionLocal(table_id)) {
 		return {};
 	}
-	vector<idx_t> schema_versions;
-	// the scan of the table came with the schema versions it has inlined rows for
-	bool cached = inlined_rows_cache.GetSchemaVersions(snapshot.snapshot_id, table_id.index, schema_versions);
-	if (!cached) {
-		RESTInlinedTablesRequest request;
-		request.snapshot = snapshot;
-		request.table_id = table_id.index;
-		schema_versions = GetClient().InlinedTables(request).schema_versions;
+	// the server returns the inlined rows of the table as one set of rows, which the core reads as the inlined data
+	// of the table at this snapshot
+	bool has_inlined_rows;
+	if (!inlined_rows_cache.HasInlinedRows(snapshot.snapshot_id, table_id.index, has_inlined_rows)) {
+		RESTInlinedRowsKey key {RESTInlinedRowsKind::SCAN, 0, snapshot.snapshot_id, table_id.index};
+		has_inlined_rows = FetchInlinedRows(key, snapshot, snapshot)->rows != nullptr;
 	}
-	vector<DuckLakeInlinedTableInfo> result;
-	for (auto schema_version : schema_versions) {
-		DuckLakeInlinedTableInfo inlined_table;
-		inlined_table.table_name = InlinedTableName(table_id, schema_version);
-		inlined_table.schema_version = schema_version;
-		result.push_back(std::move(inlined_table));
+	if (!has_inlined_rows) {
+		return {};
 	}
-	return result;
+	DuckLakeInlinedTableInfo inlined_table;
+	inlined_table.table_name = InlinedTableName(table_id, snapshot.schema_version);
+	inlined_table.schema_version = snapshot.schema_version;
+	return {std::move(inlined_table)};
 }
 
 vector<DuckLakeSnapshotInfo> RESTMetadataManager::GetAllSnapshots(const DuckLakeSnapshotFilter &filter) {
@@ -637,10 +636,13 @@ RESTTableChangesResponse RESTMetadataManager::GetTableChanges(DuckLakeTableEntry
 	RESTInlinedRowsKey inlined_key {kind, start_snapshot.snapshot_id, snapshot.snapshot_id, table.GetTableId().index};
 	auto plan = PlanInlinedRows(inlined_key, projection);
 	request.include_inlined_data = plan.fetch;
+	if (plan.fetch) {
+		request.time_zone = GetClientTimeZone(*transaction.context.lock());
+	}
 	SetProjection(request, plan.projection);
 	auto response = GetClient().TableChanges(request);
 	if (plan.fetch) {
-		inlined_rows_cache.Add(inlined_key, plan.projection, response.inlined_data);
+		inlined_rows_cache.Add(inlined_key, plan.projection, std::move(response.inlined_data));
 	}
 	return response;
 }
@@ -893,10 +895,7 @@ void RESTMetadataManager::AddDeletes(const TransactionChangeInformation &transac
 			}
 		}
 		for (auto &inlined_entry : changes.new_inlined_data_deletes) {
-			RESTInlinedRowDeletes deletes;
-			deletes.schema_version = ParseInlinedTableName(inlined_entry.first).schema_version;
-			deletes.row_ids = inlined_entry.second->rows;
-			request.inlined_deletes.push_back(std::move(deletes));
+			request.inlined_row_ids.insert(inlined_entry.second->rows.begin(), inlined_entry.second->rows.end());
 		}
 		if (changes.new_inlined_file_deletes) {
 			for (auto &file_entry : changes.new_inlined_file_deletes->file_deletes) {

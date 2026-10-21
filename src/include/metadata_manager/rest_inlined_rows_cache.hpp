@@ -28,18 +28,17 @@ struct RESTInlinedProjection {
 	unordered_set<idx_t> columns;
 };
 
-//! The inlined rows of a table at a schema version
+//! The inlined rows of a table
 struct RESTCachedInlinedRows {
 	RESTInlinedRows rows;
 	//! Scans of the same table read the rows at the same time
 	mutex read_lock;
 };
 
-//! One response of the server: the inlined rows of every schema version that the table has inlined rows for
+//! One response of the server: the inlined rows of the table, none if the table has no inlined rows
 struct RESTInlinedRowsResponse {
 	RESTInlinedProjection projection;
-	vector<idx_t> schema_versions;
-	map<idx_t, shared_ptr<RESTCachedInlinedRows>> rows;
+	shared_ptr<RESTCachedInlinedRows> rows;
 };
 
 //! The rows to be read: the table at a snapshot, or the changes of the table in a range of snapshots
@@ -62,15 +61,13 @@ public:
 	bool Covers(const RESTInlinedRowsKey &key, const RESTInlinedProjection &projection) const;
 	//! Whether any response is known
 	bool HasResponse(const RESTInlinedRowsKey &key) const;
-	//! The schema versions that a table has inlined rows for at a snapshot, if a response of any kind knows them
-	bool GetSchemaVersions(idx_t snapshot_id, idx_t table_id, vector<idx_t> &schema_versions) const;
+	//! Whether a table has inlined rows at a snapshot, if a response of any kind knows
+	bool HasInlinedRows(idx_t snapshot_id, idx_t table_id, bool &has_inlined_rows) const;
 	//! Adds a response, which takes over the responses that have a subset of its columns
 	shared_ptr<RESTInlinedRowsResponse> Add(const RESTInlinedRowsKey &key, const RESTInlinedProjection &projection,
-	                                        vector<RESTInlinedTableRows> &inlined_data);
-	//! The rows of a schema version of a response that has the columns to read, which are column names that are
-	//! optionally cast
-	shared_ptr<RESTCachedInlinedRows> Find(const RESTInlinedRowsKey &key, idx_t schema_version,
-	                                       const vector<string> &columns_to_read) const;
+	                                        unique_ptr<RESTInlinedRows> inlined_data);
+	//! The rows of a response that has the columns to read, which are column names that are optionally cast
+	shared_ptr<RESTCachedInlinedRows> Find(const RESTInlinedRowsKey &key, const vector<string> &columns_to_read) const;
 
 private:
 	mutable mutex lock;

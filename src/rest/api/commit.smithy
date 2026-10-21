@@ -295,8 +295,9 @@ structure DeleteDataRequest {
     /// Delete files written by the client.
     delete_files: DeleteFileList = []
 
-    /// Deletes of inlined rows.
-    inlined_deletes: InlinedRowDeletesList = []
+    /// The row ids of the inlined rows that are deleted.
+    @cppType("set<idx_t>")
+    inlined_row_ids: UInt64List = []
 
     /// Deletes of rows of data files that are inlined in the catalog.
     file_row_deletes: FileRowDeletesList = []
@@ -363,18 +364,6 @@ structure OptionSetting {
 
     /// The table, for options of a table. Can be a placeholder.
     table_id: Long
-}
-
-/// Deletes of inlined rows.
-structure InlinedRowDeletes {
-    /// The schema version of the inlined rows.
-    @required
-    schema_version: UInt64
-
-    /// The row ids of the deleted rows.
-    @required
-    @cppType("set<idx_t>")
-    row_ids: UInt64List
 }
 
 /// Deletes of rows of a data file that are inlined in the catalog.

@@ -66,8 +66,9 @@ operation SnapshotData {
 ///
 /// Returns the data files of the table that are visible in a snapshot, together with their delete files and
 /// inlined deletions, and optionally the rows of the table that are inlined in the catalog. With
-/// `include_inlined_data`, `inlined_data` holds the visible rows of the table for each schema version that it has
-/// inlined rows for, with the row id, the begin and end snapshot and all columns of the table at that schema version.
+/// `include_inlined_data`, `inlined_data` holds the visible inlined rows, with the row id, the begin and end snapshot
+/// and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. It is
+/// absent if the table has no inlined rows.
 @http(method: "POST", uri: "/v1/tables/{table_id}/scan")
 @readonly
 operation Select {
@@ -86,6 +87,10 @@ operation Select {
         /// Also return the inlined rows of the table that are visible in the snapshot.
         include_inlined_data: Boolean = false
 
+        /// The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
+        /// time zone of the server if absent.
+        time_zone: String
+
         /// The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
         /// columns, besides the row id and the begin and end snapshot. All columns of the table if absent.
         @cppType("RESTOptional<vector<idx_t>>")
@@ -100,7 +105,7 @@ operation Select {
         extended_files: FileListExtendedEntryList
 
         /// The inlined rows of the table, for `include_inlined_data`.
-        inlined_data: InlinedTableRowsList
+        inlined_data: InlinedRows
     }
 }
 
@@ -147,32 +152,11 @@ operation RowCount {
         @required
         @httpLabel
         table_id: UInt64
-
-        /// For inlined counts: the schema version of the inlined rows.
-        schema_version: UInt64
     }
 
     output := {
         /// The number of rows.
         row_count: UInt64
-    }
-}
-
-/// Returns the schema versions that a table has inlined rows for.
-@http(method: "POST", uri: "/v1/tables/{table_id}/inlined-tables")
-@readonly
-operation InlinedTables {
-    input := with [SnapshotReference] {
-        /// The table.
-        @required
-        @httpLabel
-        table_id: UInt64
-    }
-
-    output := {
-        /// The schema versions of the table whose columns inlined rows have. Rows are inlined per schema version
-        /// and read with `select`.
-        schema_versions: UInt64List = []
     }
 }
 
@@ -233,8 +217,8 @@ operation ColumnMappings {
 /// Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 ///
 /// With `include_inlined_data`, `inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted
-/// (`deletions`) in the range for each schema version that the table has inlined rows for, with the row id, the begin
-/// and end snapshot and all columns of the table at that schema version.
+/// (`deletions`) in the range, with the row id, the begin and end snapshot and the columns of the table at the last
+/// snapshot of the range. It is absent if the table has no inlined rows.
 @http(method: "POST", uri: "/v1/tables/{table_id}/changes")
 @readonly
 operation TableChanges {
@@ -257,6 +241,10 @@ operation TableChanges {
         /// Also return the inlined rows that changed.
         include_inlined_data: Boolean = false
 
+        /// The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
+        /// time zone of the server if absent.
+        time_zone: String
+
         /// The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
         /// columns, besides the row id and the begin and end snapshot. All columns of the table if absent.
         @cppType("RESTOptional<vector<idx_t>>")
@@ -271,7 +259,7 @@ operation TableChanges {
         deletions: DeleteScanEntryList = []
 
         /// The inlined rows that changed, for `include_inlined_data`.
-        inlined_data: InlinedTableRowsList
+        inlined_data: InlinedRows
     }
 }
 
@@ -385,7 +373,7 @@ enum RowCountType {
     /// The same, absent if it cannot be computed exactly.
     DATA_FILES_EXACT = "data_files_exact"
 
-    /// The inlined rows of a table at a schema version.
+    /// The inlined rows of a table.
     INLINED = "inlined"
 }
 

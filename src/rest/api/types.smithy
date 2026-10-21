@@ -1058,13 +1058,6 @@ structure RowSet {
 /// ```
 structure InlinedRows with [RowSet] {}
 
-/// The rows of the inlined data of a table at a schema version.
-structure InlinedTableRows with [RowSet] {
-    /// The schema version of the table whose columns the rows have.
-    @required
-    schema_version: UInt64
-}
-
 /// The definition of a column in a catalog change.
 structure ColumnDefinition {
     /// The name of the column.
@@ -1185,14 +1178,6 @@ list InlinedFileDeletionList {
 
 list InlinedFileDeletionsEntryList {
     member: InlinedFileDeletionsEntry
-}
-
-list InlinedRowDeletesList {
-    member: InlinedRowDeletes
-}
-
-list InlinedTableRowsList {
-    member: InlinedTableRows
 }
 
 list LogicalTypeList {

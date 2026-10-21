@@ -105,7 +105,6 @@ public:
 	idx_t GetNetDataFileRowCount(TableIndex table_id, DuckLakeSnapshot snapshot) override;
 	optional_idx GetNetDataFileRowCountForStats(TableIndex table_id, DuckLakeSnapshot snapshot) override;
 	idx_t GetNetInlinedRowCount(const string &inlined_table_name, DuckLakeSnapshot snapshot) override;
-	unordered_set<string> GetInlinedTableNames(TableIndex table_id) override;
 	vector<DuckLakeInlinedTableInfo> GetInlinedDataTables(const DuckLakeTableEntry &table,
 	                                                      DuckLakeSnapshot snapshot) override;
 

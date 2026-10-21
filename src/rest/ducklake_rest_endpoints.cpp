@@ -58,19 +58,6 @@ static void ReadQueryResult(RESTRowSet &rows, QueryResult &result, const vector<
 	rows.rows = RESTRows(std::move(collection));
 }
 
-//! The name of the inlined data table of a table at a schema version. Requests refer to inlined data by the table and
-//! the schema version, the names are the ones of the catalog.
-static string GetInlinedTableName(DuckLakeTransaction &transaction, const DuckLakeTableEntry &table,
-                                  DuckLakeSnapshot snapshot, idx_t schema_version) {
-	for (auto &inlined_table : table.GetInlinedDataTables(transaction, snapshot, false)) {
-		if (inlined_table.schema_version == schema_version) {
-			return inlined_table.table_name;
-		}
-	}
-	throw CatalogException("Table %llu has no inlined data for schema version %llu", table.GetTableId().index,
-	                       schema_version);
-}
-
 static bool IsColumnName(const ParsedExpression &expression) {
 	return expression.GetExpressionClass() == ExpressionClass::COLUMN_REF &&
 	       !expression.Cast<ColumnRefExpression>().IsQualified();
@@ -146,43 +133,145 @@ RESTSnapshotDataResponse DuckLakeRESTEndpoints::SnapshotData(DuckLakeRESTRequest
 	return result;
 }
 
-//! Reads the inlined rows of a table for every schema version that it has inlined rows for, with the row id, the begin
-//! and end snapshot and all columns of the table at that schema version
-static vector<RESTInlinedTableRows>
-ReadInlinedTableRows(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
-                     const std::function<unique_ptr<QueryResult>(const string &, const vector<string> &)> &read_rows,
-                     const RESTOptional<vector<idx_t>> &projection = RESTOptional<vector<idx_t>>()) {
+//! The value of a field in rows that were written before the field existed
+static string MissingFieldExpression(const DuckLakeFieldId &field) {
+	auto initial_default = field.GetInitialDefault();
+	return StringUtil::Format("CAST(%s AS %s)", initial_default ? initial_default->ToString() : "NULL",
+	                          field.Type().ToString());
+}
+
+//! The expression that turns a value of a field as it was written into a value of the field as it is, matching the
+//! (nested) fields by their field ids
+static string EvolveFieldExpression(const string &expression, const DuckLakeFieldId &written,
+                                    const DuckLakeFieldId &field, idx_t depth) {
+	if (written.Type() == field.Type()) {
+		return expression;
+	}
+	auto &written_children = written.Children();
+	auto &children = field.Children();
+	auto variable = "x" + to_string(depth);
+	switch (field.Type().id()) {
+	case LogicalTypeId::STRUCT: {
+		if (written.Type().id() != LogicalTypeId::STRUCT) {
+			break;
+		}
+		vector<string> entries;
+		for (auto &child : children) {
+			optional_ptr<const DuckLakeFieldId> written_child;
+			for (auto &candidate : written_children) {
+				if (candidate->GetFieldIndex() == child->GetFieldIndex()) {
+					written_child = candidate.get();
+				}
+			}
+			string value;
+			if (written_child) {
+				auto extracted = StringUtil::Format("struct_extract(%s, %s)", expression,
+				                                    SQLString::ToString(written_child->Name()));
+				value = EvolveFieldExpression(extracted, *written_child, *child, depth + 1);
+			} else {
+				value = MissingFieldExpression(*child);
+			}
+			entries.push_back(StringUtil::Format("%s: %s", SQLString::ToString(child->Name()), value));
+		}
+		return StringUtil::Format("CASE WHEN %s IS NULL THEN NULL ELSE {%s} END", expression,
+		                          StringUtil::Join(entries, ", "));
+	}
+	case LogicalTypeId::LIST:
+		if (written.Type().id() != LogicalTypeId::LIST || written_children.size() != 1 || children.size() != 1) {
+			break;
+		}
+		return StringUtil::Format("list_transform(%s, lambda %s: %s)", expression, variable,
+		                          EvolveFieldExpression(variable, *written_children[0], *children[0], depth + 1));
+	case LogicalTypeId::MAP:
+		if (written.Type().id() != LogicalTypeId::MAP || written_children.size() != 2 || children.size() != 2) {
+			break;
+		}
+		return StringUtil::Format(
+		    "map_from_entries(list_transform(map_entries(%s), lambda %s: {'key': %s, 'value': %s}))", expression,
+		    variable,
+		    EvolveFieldExpression(StringUtil::Format("struct_extract(%s, 'key')", variable), *written_children[0],
+		                          *children[0], depth + 1),
+		    EvolveFieldExpression(StringUtil::Format("struct_extract(%s, 'value')", variable), *written_children[1],
+		                          *children[1], depth + 1));
+	default:
+		break;
+	}
+	return StringUtil::Format("CAST(%s AS %s)", expression, field.Type().ToString());
+}
+
+//! Reads the inlined rows of a table, in the schema that the table has at the snapshot: the inlined rows of each schema
+//! version of the table are turned into rows of that schema. The rows have the row id, the begin and end snapshot and
+//! the columns of the table. Returns nothing if the table has no inlined rows.
+static unique_ptr<RESTInlinedRows>
+ReadInlinedRows(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
+                const std::function<unique_ptr<QueryResult>(const string &, const vector<string> &)> &read_rows,
+                const RESTOptional<vector<idx_t>> &projection, const string &time_zone) {
+	auto inlined_tables = table.GetInlinedDataTables(*request.transaction, snapshot);
+	if (inlined_tables.empty()) {
+		return nullptr;
+	}
+	if (!time_zone.empty()) {
+		// casts of columns that were changed to TIMESTAMPTZ depend on the time zone
+		auto result = request.transaction->GetConnection().Query("SET TimeZone = " + SQLString::ToString(time_zone));
+		result->ThrowIfError();
+	}
 	unordered_set<idx_t> projected_fields(projection.value.begin(), projection.value.end());
 	auto &metadata_manager = request.GetMetadataManager();
 	auto col_names = metadata_manager.InlinedColNames();
-	vector<RESTInlinedTableRows> result;
-	for (auto &inlined_table : table.GetInlinedDataTables(*request.transaction, snapshot)) {
+	vector<string> names {col_names.row_id, col_names.begin_snapshot, col_names.end_snapshot};
+	vector<reference<const DuckLakeFieldId>> fields;
+	for (auto &column : table.GetColumns().Physical()) {
+		auto &field = table.GetFieldId(column.Physical());
+		if (projection.has_value && projected_fields.find(field.GetFieldIndex().index) == projected_fields.end()) {
+			continue;
+		}
+		names.push_back(column.Name().GetIdentifierName());
+		fields.push_back(field);
+	}
+	auto result = make_uniq<RESTInlinedRows>();
+	unique_ptr<ColumnDataCollection> collection;
+	for (auto &inlined_table : inlined_tables) {
 		auto table_at_version = request.catalog->GetTableAtSchemaVersion(*request.transaction, table.GetTableId(),
 		                                                                 inlined_table.schema_version);
 		if (!table_at_version) {
 			continue;
 		}
-		vector<string> names {col_names.row_id, col_names.begin_snapshot, col_names.end_snapshot};
 		vector<string> columns;
-		for (auto &name : names) {
-			columns.push_back(SQLIdentifier::ToString(name));
+		for (idx_t i = 0; i < DuckLakeInlinedColNames::COLUMN_COUNT; i++) {
+			columns.push_back(SQLIdentifier::ToString(names[i]));
 		}
-		for (auto &column : table_at_version->GetColumns().Physical()) {
-			auto field_id = table_at_version->GetFieldId(column.Physical()).GetFieldIndex().index;
-			if (projection.has_value && projected_fields.find(field_id) == projected_fields.end()) {
+		for (auto &field : fields) {
+			auto written = table_at_version->GetFieldData().GetByFieldIndex(field.get().GetFieldIndex());
+			if (!written) {
+				columns.push_back(MissingFieldExpression(field.get()));
 				continue;
 			}
-			names.push_back(column.Name().GetIdentifierName());
-			columns.push_back(
-			    metadata_manager.CastColumnToTarget(SQLIdentifier::ToString(names.back()), column.Type()));
+			auto read = metadata_manager.CastColumnToTarget(SQLIdentifier::ToString(written->Name()), written->Type());
+			columns.push_back(EvolveFieldExpression(read, *written, field.get(), 0));
 		}
 		auto query_result = read_rows(inlined_table.table_name, columns);
 		query_result->ThrowIfError("Failed to read inlined data: ");
-		RESTInlinedTableRows rows;
-		rows.schema_version = inlined_table.schema_version;
-		ReadQueryResult(rows, *query_result, names);
-		result.push_back(std::move(rows));
+		if (!collection) {
+			for (idx_t col_idx = 0; col_idx < query_result->ColumnCount(); col_idx++) {
+				RESTResultColumn column;
+				column.name = names[col_idx];
+				column.type = query_result->GetTypes()[col_idx];
+				result->columns.push_back(std::move(column));
+			}
+			collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), query_result->GetTypes());
+		}
+		while (true) {
+			auto chunk = query_result->Fetch();
+			if (!chunk || chunk->size() == 0) {
+				break;
+			}
+			collection->Append(*chunk);
+		}
 	}
+	if (!collection) {
+		return nullptr;
+	}
+	result->rows = RESTRows(std::move(collection));
 	return result;
 }
 
@@ -203,12 +292,12 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	if (!parameters.include_inlined_data) {
 		return result;
 	}
-	result.inlined_data = ReadInlinedTableRows(
+	result.inlined_data = ReadInlinedRows(
 	    request, table, snapshot,
 	    [&](const string &inlined_table_name, const vector<string> &columns) {
 		    return metadata_manager.ReadInlinedData(snapshot, inlined_table_name, columns);
 	    },
-	    parameters.columns);
+	    parameters.columns, parameters.time_zone);
 	return result;
 }
 
@@ -238,12 +327,12 @@ RESTRowCountResponse DuckLakeRESTEndpoints::RowCount(DuckLakeRESTRequest &reques
 	RESTRowCountResponse result;
 	auto table_id = TableIndex(parameters.table_id);
 	if (parameters.count == "inlined") {
-		if (!parameters.schema_version.IsValid()) {
-			throw InvalidInputException("row_count: counting inlined rows requires a schema_version");
+		auto &table = GetTableEntry(request, snapshot, table_id);
+		idx_t row_count = 0;
+		for (auto &inlined_table : table.GetInlinedDataTables(*request.transaction, snapshot, false)) {
+			row_count += metadata_manager.GetNetInlinedRowCount(inlined_table.table_name, snapshot);
 		}
-		auto table_name = GetInlinedTableName(*request.transaction, GetTableEntry(request, snapshot, table_id),
-		                                      snapshot, parameters.schema_version.GetIndex());
-		result.row_count = metadata_manager.GetNetInlinedRowCount(table_name, snapshot);
+		result.row_count = row_count;
 		return result;
 	}
 	if (parameters.count == "data_files") {
@@ -251,17 +340,6 @@ RESTRowCountResponse DuckLakeRESTEndpoints::RowCount(DuckLakeRESTRequest &reques
 	} else {
 		D_ASSERT(parameters.count == "data_files_exact");
 		result.row_count = metadata_manager.GetNetDataFileRowCountForStats(table_id, snapshot);
-	}
-	return result;
-}
-
-RESTInlinedTablesResponse DuckLakeRESTEndpoints::InlinedTables(DuckLakeRESTRequest &request,
-                                                               const RESTInlinedTablesRequest &parameters) {
-	auto snapshot = request.GetSnapshot(parameters);
-	auto &table = GetTableEntry(request, snapshot, TableIndex(parameters.table_id));
-	RESTInlinedTablesResponse result;
-	for (auto &inlined_table : table.GetInlinedDataTables(*request.transaction, snapshot, false)) {
-		result.schema_versions.push_back(inlined_table.schema_version);
 	}
 	return result;
 }
@@ -306,7 +384,7 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 		result.insertions = metadata_manager.GetTableInsertions(table, start_snapshot, snapshot);
 	}
 	if (parameters.include_inlined_data) {
-		result.inlined_data = ReadInlinedTableRows(
+		result.inlined_data = ReadInlinedRows(
 		    request, table, snapshot,
 		    [&](const string &inlined_table_name, const vector<string> &columns) {
 			    if (deletions) {
@@ -316,7 +394,7 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 			    return metadata_manager.ReadInlinedDataInsertions(start_snapshot, snapshot, inlined_table_name,
 			                                                      columns);
 		    },
-		    parameters.columns);
+		    parameters.columns, parameters.time_zone);
 	}
 	return result;
 }
@@ -439,6 +517,8 @@ private:
 	           optional_idx partition_id);
 	void Drop(CatalogType type, const vector<string> &schema_path, const string &name);
 	void RemapNameMap(DuckLakeDataFile &file);
+	//! Deletes inlined rows, which are in the inlined data of any schema version of the table
+	void AddInlinedDeletes(DuckLakeTableEntry &table, const set<idx_t> &row_ids);
 	//! Maps the id of a partitioning that the client set to the id of the partitioning of the table
 	void RegisterPartition(DuckLakeTableEntry &table, optional_idx client_partition_id);
 	//! Files written for a partitioning that the transaction set refer to the partitioning of the client
@@ -679,16 +759,45 @@ void DuckLakeRESTCommit::DropMacro(RESTDropMacroRequest &parameters) {
 	Drop(type, parameters.schema_path, parameters.name);
 }
 
+void DuckLakeRESTCommit::AddInlinedDeletes(DuckLakeTableEntry &table, const set<idx_t> &row_ids) {
+	auto &metadata_manager = transaction.GetMetadataManager();
+	auto col_names = metadata_manager.InlinedColNames();
+	for (auto &inlined_table : table.GetInlinedDataTables(transaction, transaction.GetSnapshot(), false)) {
+		set<idx_t> deleted_row_ids;
+		vector<string> batch;
+		auto flush_batch = [&]() {
+			if (batch.empty()) {
+				return;
+			}
+			auto result = metadata_manager.Query(StringUtil::Format(
+			    "SELECT %s FROM {METADATA_CATALOG}.%s WHERE %s IN (%s)", SQLIdentifier::ToString(col_names.row_id),
+			    SQLIdentifier::ToString(inlined_table.table_name), SQLIdentifier::ToString(col_names.row_id),
+			    StringUtil::Join(batch, ", ")));
+			result->ThrowIfError("Failed to find the inlined rows to delete: ");
+			for (auto &row : *result) {
+				deleted_row_ids.insert(row.GetValue<idx_t>(0));
+			}
+			batch.clear();
+		};
+		for (auto row_id : row_ids) {
+			batch.push_back(to_string(row_id));
+			if (batch.size() >= 1000) {
+				flush_batch();
+			}
+		}
+		flush_batch();
+		transaction.AddNewInlinedDeletes(table.GetTableId(), inlined_table.table_name, std::move(deleted_row_ids));
+	}
+}
+
 void DuckLakeRESTCommit::DeleteData(RESTDeleteDataRequest &parameters) {
 	auto &table = GetTable(GetTableId(parameters.table_id));
 	auto table_id = table.GetTableId();
 	if (!parameters.delete_files.empty()) {
 		transaction.AddDeletes(table_id, std::move(parameters.delete_files));
 	}
-	for (auto &deletes : parameters.inlined_deletes) {
-		auto inlined_table_name =
-		    GetInlinedTableName(transaction, table, transaction.GetSnapshot(), deletes.schema_version);
-		transaction.AddNewInlinedDeletes(table_id, inlined_table_name, std::move(deletes.row_ids));
+	if (!parameters.inlined_row_ids.empty()) {
+		AddInlinedDeletes(table, parameters.inlined_row_ids);
 	}
 	for (auto &deletes : parameters.file_row_deletes) {
 		transaction.AddNewInlinedFileDeletes(table_id, deletes.data_file_id, std::move(deletes.row_ids));

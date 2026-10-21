@@ -136,9 +136,7 @@ struct RESTDynamicFilter;
 struct RESTErrorInfo;
 struct RESTErrorResponse;
 struct RESTFileRowDeletes;
-struct RESTInlinedRowDeletes;
 struct RESTInlinedRows;
-struct RESTInlinedTableRows;
 struct RESTOptionSetting;
 struct RESTRemoveColumn;
 struct RESTRemoveField;
@@ -165,8 +163,6 @@ struct RESTConfigRequest;
 struct RESTDuckLakeTableRequest;
 struct RESTDuckLakeTablesRequest;
 struct RESTDuckLakeTablesResponse;
-struct RESTInlinedTablesRequest;
-struct RESTInlinedTablesResponse;
 struct RESTListSnapshotsRequest;
 struct RESTListSnapshotsResponse;
 struct RESTRowCountRequest;
@@ -242,9 +238,7 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeGlobalColumnStatsInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeGlobalStatsInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeInlinedFileDeletionEntry &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedRowDeletes &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedRows &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedTableRows &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeMacroImplementation &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeMacroInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeMacroParameters &value);
@@ -291,8 +285,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTableRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedTablesRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedTablesResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTRowCountRequest &value);
@@ -387,11 +379,7 @@ DuckLakeGlobalStatsInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeInlinedFileDeletionEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTInlinedRowDeletes DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
 RESTInlinedRows DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTInlinedTableRows DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeMacroImplementation DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -484,10 +472,6 @@ template <>
 RESTDuckLakeTablesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDuckLakeTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTInlinedTablesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTInlinedTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTListSnapshotsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -844,14 +828,6 @@ struct RESTFileRowDeletes {
 	set<idx_t> row_ids;
 };
 
-//! Deletes of inlined rows.
-struct RESTInlinedRowDeletes {
-	//! The schema version of the inlined rows.
-	idx_t schema_version = 0;
-	//! The row ids of the deleted rows.
-	set<idx_t> row_ids;
-};
-
 //! A column of a set of rows.
 struct RESTResultColumn {
 	//! The name of the column.
@@ -870,12 +846,6 @@ struct RESTRowSet {
 
 //! A set of rows, e.g. the rows of an inlined data table.
 struct RESTInlinedRows : public RESTRowSet {};
-
-//! The rows of the inlined data of a table at a schema version.
-struct RESTInlinedTableRows : public RESTRowSet {
-	//! The schema version of the table whose columns the rows have.
-	idx_t schema_version = 0;
-};
 
 //! An option of the DuckLake.
 struct RESTOptionSetting {
@@ -1101,16 +1071,6 @@ struct RESTDuckLakeTablesResponse {
 	vector<string> table_names;
 };
 
-struct RESTInlinedTablesRequest : public RESTSnapshotReference {
-	//! The table.
-	idx_t table_id = 0;
-};
-
-struct RESTInlinedTablesResponse {
-	//! The schema versions of the table whose columns inlined rows have. Rows are inlined per schema version
-	vector<idx_t> schema_versions;
-};
-
 struct RESTListSnapshotsRequest {
 	//! Exclude the latest snapshot.
 	bool exclude_latest = false;
@@ -1130,8 +1090,6 @@ struct RESTRowCountRequest : public RESTSnapshotReference {
 	string count;
 	//! The table.
 	idx_t table_id = 0;
-	//! For inlined counts: the schema version of the inlined rows.
-	optional_idx schema_version;
 };
 
 struct RESTRowCountResponse {
@@ -1148,6 +1106,8 @@ struct RESTSelectRequest : public RESTSnapshotReference {
 	unique_ptr<RESTScanFilters> filters;
 	//! Also return the inlined rows of the table that are visible in the snapshot.
 	bool include_inlined_data = false;
+	//! The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
+	string time_zone;
 	//! The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
 	RESTOptional<vector<idx_t>> columns;
 };
@@ -1158,7 +1118,7 @@ struct RESTSelectResponse {
 	//! The files of the scan, for `extended` scans.
 	vector<DuckLakeFileListExtendedEntry> extended_files;
 	//! The inlined rows of the table, for `include_inlined_data`.
-	vector<RESTInlinedTableRows> inlined_data;
+	unique_ptr<RESTInlinedRows> inlined_data;
 };
 
 struct RESTSnapshotDataRequest : public RESTSnapshotReference {
@@ -1198,6 +1158,8 @@ struct RESTTableChangesRequest : public RESTSnapshotReference {
 	string changes;
 	//! Also return the inlined rows that changed.
 	bool include_inlined_data = false;
+	//! The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
+	string time_zone;
 	//! The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
 	RESTOptional<vector<idx_t>> columns;
 };
@@ -1208,7 +1170,7 @@ struct RESTTableChangesResponse {
 	//! For `deletions`: the files with deleted rows.
 	vector<DuckLakeDeleteScanEntry> deletions;
 	//! The inlined rows that changed, for `include_inlined_data`.
-	vector<RESTInlinedTableRows> inlined_data;
+	unique_ptr<RESTInlinedRows> inlined_data;
 };
 
 struct RESTTableSchemaVersionsRequest : public RESTSnapshotReference {
@@ -1531,8 +1493,8 @@ struct RESTDeleteDataRequest : public RESTCommitRequest {
 	int64_t table_id = 0;
 	//! Delete files written by the client.
 	vector<DuckLakeDeleteFile> delete_files;
-	//! Deletes of inlined rows.
-	vector<RESTInlinedRowDeletes> inlined_deletes;
+	//! The row ids of the inlined rows that are deleted.
+	set<idx_t> inlined_row_ids;
 	//! Deletes of rows of data files that are inlined in the catalog.
 	vector<RESTFileRowDeletes> file_row_deletes;
 	//! Data files that are deleted entirely.
@@ -1556,9 +1518,6 @@ struct DuckLakeRESTEndpoints {
 	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
 	static RESTDuckLakeTablesResponse DuckLakeTables(DuckLakeRESTRequest &request,
 	                                                 const RESTDuckLakeTablesRequest &parameters);
-	//! Returns the schema versions that a table has inlined rows for.
-	static RESTInlinedTablesResponse InlinedTables(DuckLakeRESTRequest &request,
-	                                               const RESTInlinedTablesRequest &parameters);
 	//! Returns the snapshots, optionally filtered.
 	static RESTListSnapshotsResponse ListSnapshots(DuckLakeRESTRequest &request,
 	                                               const RESTListSnapshotsRequest &parameters);
@@ -1673,8 +1632,6 @@ public:
 	RESTInlinedRows DuckLakeTable(const RESTDuckLakeTableRequest &request);
 	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
 	RESTDuckLakeTablesResponse DuckLakeTables(const RESTDuckLakeTablesRequest &request);
-	//! Returns the schema versions that a table has inlined rows for.
-	RESTInlinedTablesResponse InlinedTables(const RESTInlinedTablesRequest &request);
 	//! Returns the snapshots, optionally filtered.
 	RESTListSnapshotsResponse ListSnapshots(const RESTListSnapshotsRequest &request);
 	//! Counts the rows of a table that are visible in a snapshot.

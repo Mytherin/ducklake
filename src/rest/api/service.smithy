@@ -73,7 +73,6 @@ service DuckLake {
         Select
         TableSchemaVersions
         RowCount
-        InlinedTables
         ListSnapshots
         TableSizes
         Compact
