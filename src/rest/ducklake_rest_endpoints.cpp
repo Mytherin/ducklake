@@ -301,25 +301,6 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	return result;
 }
 
-RESTTableSchemaVersionsResponse
-DuckLakeRESTEndpoints::TableSchemaVersions(DuckLakeRESTRequest &request,
-                                           const RESTTableSchemaVersionsRequest &parameters) {
-	auto &metadata_manager = request.GetMetadataManager();
-	auto table_id = TableIndex(parameters.table_id);
-	RESTTableSchemaVersionsResponse result;
-	result.begin_snapshot = metadata_manager.GetBeginSnapshotForTable(table_id);
-	if (!RESTIsNull(parameters.snapshot) || parameters.snapshot_id.IsValid()) {
-		auto versions = metadata_manager.GetTableSchemaVersions(table_id, request.GetSnapshot(parameters));
-		result.creation = versions.creation;
-		result.last_change = versions.last_change;
-	}
-	if (parameters.schema_version.IsValid()) {
-		result.schema_version_begin_snapshot =
-		    metadata_manager.GetBeginSnapshotForSchemaVersion(table_id, parameters.schema_version.GetIndex());
-	}
-	return result;
-}
-
 RESTRowCountResponse DuckLakeRESTEndpoints::RowCount(DuckLakeRESTRequest &request,
                                                      const RESTRowCountRequest &parameters) {
 	auto &metadata_manager = request.GetMetadataManager();

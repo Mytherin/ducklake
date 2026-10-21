@@ -173,8 +173,6 @@ struct RESTSnapshotDataRequest;
 struct RESTSnapshotDataResponse;
 struct RESTTableChangesRequest;
 struct RESTTableChangesResponse;
-struct RESTTableSchemaVersionsRequest;
-struct RESTTableSchemaVersionsResponse;
 struct RESTTableSizesRequest;
 struct RESTTableSizesResponse;
 struct RESTCompactRequest;
@@ -295,8 +293,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSnapshotDataResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableChangesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableChangesResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSchemaVersionsRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSchemaVersionsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCompactRequest &value);
@@ -492,10 +488,6 @@ template <>
 RESTTableChangesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTTableChangesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTTableSchemaVersionsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTTableSchemaVersionsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTTableSizesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -1173,24 +1165,6 @@ struct RESTTableChangesResponse {
 	unique_ptr<RESTInlinedRows> inlined_data;
 };
 
-struct RESTTableSchemaVersionsRequest : public RESTSnapshotReference {
-	//! The table. With a snapshot, the first and last schema version of the table at it are also returned.
-	idx_t table_id = 0;
-	//! Also return the snapshot that created this schema version.
-	optional_idx schema_version;
-};
-
-struct RESTTableSchemaVersionsResponse {
-	//! The snapshot that created the table.
-	idx_t begin_snapshot = 0;
-	//! The first schema version of the table at the snapshot.
-	optional_idx creation;
-	//! The last schema version of the table at the snapshot.
-	optional_idx last_change;
-	//! The snapshot that created `schema_version`.
-	optional_idx schema_version_begin_snapshot;
-};
-
 struct RESTTableSizesRequest : public RESTSnapshotReference {};
 
 struct RESTTableSizesResponse {
@@ -1531,9 +1505,6 @@ struct DuckLakeRESTEndpoints {
 	//! Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 	static RESTTableChangesResponse TableChanges(DuckLakeRESTRequest &request,
 	                                             const RESTTableChangesRequest &parameters);
-	//! Returns when a table and its schema versions were created.
-	static RESTTableSchemaVersionsResponse TableSchemaVersions(DuckLakeRESTRequest &request,
-	                                                           const RESTTableSchemaVersionsRequest &parameters);
 	//! Returns the storage used by each table at a snapshot.
 	static RESTTableSizesResponse TableSizes(DuckLakeRESTRequest &request, const RESTTableSizesRequest &parameters);
 	//! Compacts the DuckLake on the server.
@@ -1642,8 +1613,6 @@ public:
 	RESTSnapshotDataResponse SnapshotData(const RESTSnapshotDataRequest &request);
 	//! Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 	RESTTableChangesResponse TableChanges(const RESTTableChangesRequest &request);
-	//! Returns when a table and its schema versions were created.
-	RESTTableSchemaVersionsResponse TableSchemaVersions(const RESTTableSchemaVersionsRequest &request);
 	//! Returns the storage used by each table at a snapshot.
 	RESTTableSizesResponse TableSizes(const RESTTableSizesRequest &request);
 	//! Compacts the DuckLake on the server.

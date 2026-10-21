@@ -81,9 +81,6 @@ public:
 	                                                 const vector<string> &columns_to_read) override;
 	unique_ptr<QueryResult> ReadInlinedData(DuckLakeSnapshot snapshot, const string &inlined_table_name,
 	                                        const vector<string> &columns_to_read) override;
-	idx_t GetBeginSnapshotForTable(TableIndex table_id) override;
-	idx_t GetBeginSnapshotForSchemaVersion(TableIndex table_id, idx_t schema_version) override;
-	DuckLakeTableSchemaVersions GetTableSchemaVersions(TableIndex table_id, DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeSnapshotInfo> GetAllSnapshots(const DuckLakeSnapshotFilter &filter = {}) override;
 	void DeleteSnapshots(const vector<DuckLakeSnapshotInfo> &snapshots) override;
 	vector<DuckLakeFileForCleanup> GetOldFilesForCleanup(const string &older_than) override;

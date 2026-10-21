@@ -109,36 +109,6 @@ operation Select {
     }
 }
 
-/// Returns when a table and its schema versions were created.
-@http(method: "POST", uri: "/v1/tables/{table_id}/schema-versions")
-@readonly
-operation TableSchemaVersions {
-    input := with [SnapshotReference] {
-        /// The table. With a snapshot, the first and last schema version of the table at it are also returned.
-        @required
-        @httpLabel
-        table_id: UInt64
-
-        /// Also return the snapshot that created this schema version.
-        schema_version: UInt64
-    }
-
-    output := {
-        /// The snapshot that created the table.
-        @required
-        begin_snapshot: UInt64
-
-        /// The first schema version of the table at the snapshot.
-        creation: UInt64
-
-        /// The last schema version of the table at the snapshot.
-        last_change: UInt64
-
-        /// The snapshot that created `schema_version`.
-        schema_version_begin_snapshot: UInt64
-    }
-}
-
 /// Counts the rows of a table that are visible in a snapshot.
 @http(method: "POST", uri: "/v1/tables/{table_id}/row-count")
 @readonly

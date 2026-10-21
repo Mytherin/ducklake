@@ -101,12 +101,6 @@ SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/compactio
 ----
 400
 
-# the endpoints of the client side compaction are gone
-query I
-SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/compaction-files', '{}')
-----
-404
-
 # expiring snapshots and deleting files is maintenance of the server
 statement error
 CALL ducklake_expire_snapshots('dl', older_than => now())

@@ -459,43 +459,6 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedDataDeletions(DuckLakeSn
 	                             columns_to_read);
 }
 
-idx_t RESTMetadataManager::GetBeginSnapshotForTable(TableIndex table_id) {
-	RESTTableSchemaVersionsRequest request;
-	request.table_id = table_id.index;
-	return GetClient().TableSchemaVersions(request).begin_snapshot;
-}
-
-idx_t RESTMetadataManager::GetBeginSnapshotForSchemaVersion(TableIndex table_id, idx_t schema_version) {
-	auto &catalog = transaction.GetCatalog();
-	auto cached_snapshot = catalog.TryGetSchemaVersionBeginSnapshot(table_id, schema_version);
-	if (cached_snapshot.IsValid()) {
-		return cached_snapshot.GetIndex();
-	}
-	RESTTableSchemaVersionsRequest request;
-	request.table_id = table_id.index;
-	request.schema_version = schema_version;
-	auto response = GetClient().TableSchemaVersions(request);
-	if (!response.schema_version_begin_snapshot.IsValid()) {
-		throw InvalidInputException("DuckLake REST: the server did not return the snapshot of schema version %llu",
-		                            schema_version);
-	}
-	auto begin_snapshot = response.schema_version_begin_snapshot.GetIndex();
-	catalog.CacheSchemaVersionBeginSnapshot(table_id, schema_version, begin_snapshot);
-	return begin_snapshot;
-}
-
-DuckLakeTableSchemaVersions RESTMetadataManager::GetTableSchemaVersions(TableIndex table_id,
-                                                                        DuckLakeSnapshot snapshot) {
-	RESTTableSchemaVersionsRequest request;
-	request.table_id = table_id.index;
-	request.snapshot = snapshot;
-	auto response = GetClient().TableSchemaVersions(request);
-	DuckLakeTableSchemaVersions result;
-	result.creation = response.creation;
-	result.last_change = response.last_change;
-	return result;
-}
-
 optional_idx RESTMetadataManager::GetRowCount(DuckLakeSnapshot snapshot, const string &count, TableIndex table_id,
                                               optional_idx schema_version) {
 	if (IsTransactionLocal(table_id)) {
@@ -539,7 +502,8 @@ vector<DuckLakeInlinedTableInfo> RESTMetadataManager::GetInlinedDataTables(const
 	}
 	DuckLakeInlinedTableInfo inlined_table;
 	inlined_table.table_name = InlinedTableName(table_id, snapshot.schema_version);
-	inlined_table.schema_version = snapshot.schema_version;
+	// the core reads the inlined rows in the schema of the table at the snapshot
+	inlined_table.schema_version = DConstants::INVALID_INDEX;
 	return {std::move(inlined_table)};
 }
 

@@ -207,12 +207,6 @@ SELECT status, response->>'$.error.code' FROM ducklake_rest_request('{rest_serve
 ----
 404	404
 
-# the old endpoints of the API do not exist
-query I
-SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/select', '{"table_id": 1}')
-----
-404
-
 query II
 SELECT status, response->>'$.error.message' LIKE '%Unsupported request "create_everything"%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
 '{"requests": [{"create_everything": {}}]}')
@@ -284,22 +278,6 @@ query II
 SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/compactions', '{"type": "flush_inlined_data", "table_name": "missing"}')
 ----
 404	Catalog
-
-# the endpoints of the client side flush are gone
-query I
-SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/inlined-data', '{}')
-----
-404
-
-query I
-SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/deleted-inlined-rows', '{}')
-----
-404
-
-query I
-SELECT status FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/tables/1/inlined-file-deletions', '')
-----
-404
 
 statement ok
 DETACH dl

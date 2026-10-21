@@ -471,8 +471,10 @@ OpenFileInfo DuckLakeMultiFileList::GetFile(idx_t i) const {
 		auto &inlined_data_table = inlined_data_tables[inlined_data_index];
 		extended_info->options["table_name"] = inlined_data_table.table_name;
 		extended_info->options["inlined_data"] = Value::BOOLEAN(true);
-		extended_info->options["schema_version"] =
-		    Value::BIGINT(NumericCast<int64_t>(inlined_data_table.schema_version));
+		if (inlined_data_table.schema_version != DConstants::INVALID_INDEX) {
+			extended_info->options["schema_version"] =
+			    Value::BIGINT(NumericCast<int64_t>(inlined_data_table.schema_version));
+		}
 	} else {
 		extended_info->options["file_size"] = Value::UBIGINT(file.file_size_bytes);
 		if (file.footer_size.IsValid()) {

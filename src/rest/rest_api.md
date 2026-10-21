@@ -375,35 +375,6 @@ Response:
 | `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | For `deletions`: the files with deleted rows. |
 | `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows that changed, for `include_inlined_data`. |
 
-### `table_schema_versions`
-
-Returns when a table and its schema versions were created.
-
-`POST /v1/tables/{table_id}/schema-versions`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `table_id` | path | `uint64` | The table. With a snapshot, the first and last schema version of the table at it are also returned. |
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
-| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `schema_version` | `uint64` (optional) | Also return the snapshot that created this schema version. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `begin_snapshot` | `uint64` | The snapshot that created the table. |
-| `creation` | `uint64` (optional) | The first schema version of the table at the snapshot. |
-| `last_change` | `uint64` (optional) | The last schema version of the table at the snapshot. |
-| `schema_version_begin_snapshot` | `uint64` (optional) | The snapshot that created `schema_version`. |
-
 ### `table_sizes`
 
 Returns the storage used by each table at a snapshot.

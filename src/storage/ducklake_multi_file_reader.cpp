@@ -455,6 +455,15 @@ shared_ptr<BaseFileReader> DuckLakeMultiFileReader::TryCreateInlinedDataReader(c
 			return nullptr;
 		}
 		schema_table = *entry;
+	} else {
+		// the inlined data is in the schema of the table at the snapshot of the scan, without the changes of the
+		// transaction
+		auto transaction = read_info.GetTransaction();
+		auto entry =
+		    transaction->GetCatalog().GetEntryById(*transaction, read_info.snapshot, read_info.table.GetTableId());
+		if (entry) {
+			schema_table = entry->Cast<DuckLakeTableEntry>();
+		}
 	}
 	// we are reading from a table - set up the inlined data reader that will read this data when requested
 	auto columns = DuckLakeMultiFileReader::ColumnsFromFieldData(schema_table.get().GetFieldData(), true);

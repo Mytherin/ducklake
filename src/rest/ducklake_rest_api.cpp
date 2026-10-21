@@ -3876,93 +3876,6 @@ RESTTableChangesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTableSchemaVersionsRequest &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.snapshot)) {
-		result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
-	}
-	if (!RESTIsNull(value.snapshot_id)) {
-		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
-	}
-	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
-	if (!RESTIsNull(value.schema_version)) {
-		result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
-	}
-	return result;
-}
-
-template <>
-RESTTableSchemaVersionsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for TableSchemaVersionsRequest");
-	}
-	RESTTableSchemaVersionsRequest result;
-	{
-		auto entry = in.TryGet("snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(entry, result.snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("snapshot_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.snapshot_id);
-		}
-	}
-	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
-	{
-		auto entry = in.TryGet("schema_version");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.schema_version);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTableSchemaVersionsResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("begin_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.begin_snapshot));
-	if (!RESTIsNull(value.creation)) {
-		result.Add("creation", RESTWriteValue<RESTUInt64Codec>(writer, value.creation));
-	}
-	if (!RESTIsNull(value.last_change)) {
-		result.Add("last_change", RESTWriteValue<RESTUInt64Codec>(writer, value.last_change));
-	}
-	if (!RESTIsNull(value.schema_version_begin_snapshot)) {
-		result.Add("schema_version_begin_snapshot",
-		           RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version_begin_snapshot));
-	}
-	return result;
-}
-
-template <>
-RESTTableSchemaVersionsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for TableSchemaVersionsResponse");
-	}
-	RESTTableSchemaVersionsResponse result;
-	RESTReadValue<RESTUInt64Codec>(in.Get("begin_snapshot"), result.begin_snapshot);
-	{
-		auto entry = in.TryGet("creation");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.creation);
-		}
-	}
-	{
-		auto entry = in.TryGet("last_change");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.last_change);
-		}
-	}
-	{
-		auto entry = in.TryGet("schema_version_begin_snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.schema_version_begin_snapshot);
-		}
-	}
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTableSizesRequest &value) {
 	auto result = writer.CreateObject();
 	if (!RESTIsNull(value.snapshot)) {
@@ -5269,13 +5182,6 @@ static string TableChangesEndpoint(DuckLakeRESTRequest &request, const string &b
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
-static string TableSchemaVersionsEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTTableSchemaVersionsRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::TableSchemaVersions(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
 static string TableSizesEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTTableSizesRequest>(document.Root());
@@ -5308,7 +5214,6 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	    {"select", SelectEndpoint},
 	    {"snapshot_data", SnapshotDataEndpoint},
 	    {"table_changes", TableChangesEndpoint},
-	    {"table_schema_versions", TableSchemaVersionsEndpoint},
 	    {"table_sizes", TableSizesEndpoint},
 	    {"compact", CompactEndpoint},
 	    {"commit_transaction", CommitTransactionEndpoint},
@@ -5332,10 +5237,6 @@ const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	    {"select", "POST", "/v1/tables/{table_id}/scan", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"snapshot_data", "POST", "/v1/snapshots/load", {}},
 	    {"table_changes", "POST", "/v1/tables/{table_id}/changes", {{"table_id", RESTParameterType::UINT, ""}}},
-	    {"table_schema_versions",
-	     "POST",
-	     "/v1/tables/{table_id}/schema-versions",
-	     {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"table_sizes", "POST", "/v1/table-sizes", {}},
 	    {"compact", "POST", "/v1/compactions", {}},
 	    {"commit_transaction", "POST", "/v1/transactions/commit", {}},
@@ -5407,13 +5308,6 @@ RESTTableChangesResponse DuckLakeRESTClientAPI::TableChanges(const RESTTableChan
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("table_changes", DuckLakeRESTSerializer::ToJSON(request), true));
 	return DuckLakeRESTSerializer::Read<RESTTableChangesResponse>(document.Root());
-}
-
-RESTTableSchemaVersionsResponse
-DuckLakeRESTClientAPI::TableSchemaVersions(const RESTTableSchemaVersionsRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("table_schema_versions", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTTableSchemaVersionsResponse>(document.Root());
 }
 
 RESTTableSizesResponse DuckLakeRESTClientAPI::TableSizes(const RESTTableSizesRequest &request) {

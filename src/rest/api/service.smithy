@@ -71,7 +71,6 @@ service DuckLake {
         Config
         SnapshotData
         Select
-        TableSchemaVersions
         RowCount
         ListSnapshots
         TableSizes
