@@ -5,13 +5,42 @@ $operationOutputSuffix: "Response"
 namespace ducklake.rest
 
 use ducklake.rest.codegen#cppType
+use ducklake.rest.codegen#noPrefix
+
+/// Returns how a client connects to a catalog of the server. This is the first request of a client.
+///
+/// The client merges the properties of the response with its own: the `defaults` are used unless the client has a
+/// value of its own, and the `overrides` are used whatever the client has. The `prefix` override is the prefix of the
+/// catalog in the URLs of all other requests. The `endpoints` are the requests that the server supports, as the method and
+/// the path without prefix (e.g. `GET /v1/snapshots`).
+@http(method: "GET", uri: "/v1/config")
+@readonly
+@noPrefix
+operation Config {
+    input := {
+        /// The name that the catalog is served under. The catalog of the server if it serves exactly one.
+        @httpQuery("catalog")
+        catalog_name: String
+    }
+
+    output := {
+        /// Properties that the client uses if it has no value for them.
+        defaults: StringMap = {}
+
+        /// Properties that the client uses instead of its own values, e.g. `prefix`.
+        overrides: StringMap = {}
+
+        /// The requests that the server supports.
+        endpoints: StringList = []
+    }
+}
 
 /// Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 ///
 /// The `data_path` is the resolved data path of the served DuckLake.
-@http(method: "GET", uri: "/v1/config")
+@http(method: "GET", uri: "/v1/metadata")
 @readonly
-operation Config {
+operation GetMetadata {
     output: Metadata
 }
 

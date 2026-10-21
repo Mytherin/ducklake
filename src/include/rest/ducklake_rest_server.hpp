@@ -24,6 +24,7 @@ namespace duckdb {
 class DuckLakeCatalog;
 class DuckLakeTransaction;
 class DuckLakeMetadataManager;
+class DuckLakeRESTServer;
 struct DuckLakeSnapshot;
 
 //! The state of a single REST request, which runs in its own transaction on the served catalog
@@ -40,6 +41,9 @@ public:
 	Connection connection;
 	DuckLakeCatalog *catalog;
 	DuckLakeTransaction *transaction;
+	//! The server and the prefix of the catalog that the request is for
+	optional_ptr<DuckLakeRESTServer> server;
+	string prefix;
 };
 
 //! An HTTP server that exposes DuckLake catalogs through the DuckLake REST API. The URLs of a catalog have its prefix
@@ -54,6 +58,14 @@ public:
 	void AddCatalog(const string &prefix, shared_ptr<DatabaseInstance> db, string catalog_name);
 	//! Stops serving the catalog under the prefix, returns whether there was one
 	bool RemoveCatalog(const string &prefix);
+	//! The properties that clients get from the server, besides the prefix of their catalog
+	void SetClientProperties(map<string, string> defaults, map<string, string> overrides);
+	const map<string, string> &ClientDefaults() const {
+		return client_defaults;
+	}
+	const map<string, string> &ClientOverrides() const {
+		return client_overrides;
+	}
 
 	//! Binds the socket and starts serving in the background, returns the bound port
 	idx_t Start(const string &host, idx_t port, idx_t thread_count = 0);
@@ -76,6 +88,7 @@ public:
 
 private:
 	struct ServedCatalog {
+		string prefix;
 		shared_ptr<DatabaseInstance> db;
 		string catalog_name;
 	};
@@ -85,6 +98,8 @@ private:
 private:
 	mutex catalog_lock;
 	map<string, ServedCatalog> catalogs;
+	map<string, string> client_defaults;
+	map<string, string> client_overrides;
 	string token;
 	unique_ptr<duckdb_httplib::Server> server;
 	std::thread server_thread;

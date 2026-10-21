@@ -15,6 +15,11 @@ SET VARIABLE second_listen_uri = (SELECT listen_uri FROM ducklake_rest_serve('se
 
 set variable second_server <variable:rest_server_con:second_listen_uri>
 
+statement ok rest_db:rest_server_con
+SET VARIABLE rest_address_value = regexp_extract(getvariable('rest_listen_uri'), '^(.*://[^/]+)', 1)
+
+set variable rest_address <variable:rest_server_con:rest_address_value>
+
 query I
 SELECT '{rest_server}' LIKE '%/rest_lake' AND '{second_server}' LIKE '%/second_lake'
 ----
@@ -58,6 +63,28 @@ statement error
 SELECT * FROM second.t
 ----
 does not exist
+
+# a client finds the prefix of a catalog with the name of the catalog
+statement ok
+ATTACH 'ducklake:rest:{rest_address}' AS by_name (META_CATALOG 'second_lake')
+
+query I
+SELECT count(*) FROM by_name.u
+----
+1
+
+statement ok
+DETACH by_name
+
+# the server can give clients properties: defaults, and overrides that win over the properties of the client
+statement ok rest_db:rest_server_con
+SELECT * FROM ducklake_rest_serve('rest_lake', port := regexp_extract(getvariable('rest_listen_uri'), ':([0-9]+)/', 1)::UBIGINT, defaults := MAP {'read_ahead': '4'}, overrides := MAP {'region': 'eu', 'prefix': 'ignored'})
+
+query IIII
+SELECT status, response->>'$.defaults.read_ahead', response->>'$.overrides.region', response->>'$.overrides.prefix'
+FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/config?catalog=rest_lake', '')
+----
+200	4	eu	rest_lake
 
 # the prefix is in the path of the URL
 query II

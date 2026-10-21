@@ -166,9 +166,32 @@ SELECT status, response->>'$.error.message' LIKE '%"x" is not a valid value for 
 
 # reads without a body are GET requests, the members of their requests are in the URL
 query I
-SELECT status FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/config', '')
+SELECT status FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/metadata', '')
 ----
 200
+
+# the config tells the client the prefix of the catalog and the requests of the server
+query IIII
+SELECT status, response->>'$.overrides.prefix', response->'$.defaults', json_contains(response->'$.endpoints', '"POST /v1/transactions/commit"')
+FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/config', '')
+----
+200	rest_lake	{}	true
+
+query II
+SELECT status, response->>'$.overrides.prefix' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/config?catalog=rest_lake', '')
+----
+200	rest_lake
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/config?catalog=missing', '')
+----
+404	Catalog
+
+# the config is never prefixed
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/rest_lake/config', '')
+----
+404
 
 query I
 SELECT json_array_length(response->'$.snapshots') >= 1 FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots', '')

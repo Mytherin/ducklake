@@ -160,9 +160,11 @@ struct RESTSnapshotReference;
 struct RESTColumnMappingsRequest;
 struct RESTColumnMappingsResponse;
 struct RESTConfigRequest;
+struct RESTConfigResponse;
 struct RESTDuckLakeTableRequest;
 struct RESTDuckLakeTablesRequest;
 struct RESTDuckLakeTablesResponse;
+struct RESTGetMetadataRequest;
 struct RESTListSnapshotsRequest;
 struct RESTListSnapshotsResponse;
 struct RESTRowCountRequest;
@@ -280,9 +282,11 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnMappingsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnMappingsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTConfigRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTConfigResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTableRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesResponse &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTGetMetadataRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTRowCountRequest &value);
@@ -463,11 +467,15 @@ RESTColumnMappingsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTConfigRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
+RESTConfigResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
 RESTDuckLakeTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDuckLakeTablesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDuckLakeTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTGetMetadataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTListSnapshotsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -1049,7 +1057,19 @@ struct RESTColumnMappingsResponse {
 	vector<DuckLakeColumnMappingInfo> mappings;
 };
 
-struct RESTConfigRequest {};
+struct RESTConfigRequest {
+	//! The name that the catalog is served under. The catalog of the server if it serves exactly one.
+	string catalog_name;
+};
+
+struct RESTConfigResponse {
+	//! Properties that the client uses if it has no value for them.
+	map<string, string> defaults;
+	//! Properties that the client uses instead of its own values, e.g. `prefix`.
+	map<string, string> overrides;
+	//! The requests that the server supports.
+	vector<string> endpoints;
+};
 
 struct RESTDuckLakeTableRequest {
 	//! The table, e.g. `ducklake_snapshot`.
@@ -1062,6 +1082,8 @@ struct RESTDuckLakeTablesResponse {
 	//! The tables.
 	vector<string> table_names;
 };
+
+struct RESTGetMetadataRequest {};
 
 struct RESTListSnapshotsRequest {
 	//! Exclude the latest snapshot.
@@ -1485,13 +1507,15 @@ struct DuckLakeRESTEndpoints {
 	//! Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
 	static RESTColumnMappingsResponse ColumnMappings(DuckLakeRESTRequest &request,
 	                                                 const RESTColumnMappingsRequest &parameters);
-	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
-	static DuckLakeMetadata Config(DuckLakeRESTRequest &request, const RESTConfigRequest &parameters);
+	//! Returns how a client connects to a catalog of the server. This is the first request of a client.
+	static RESTConfigResponse Config(DuckLakeRESTRequest &request, const RESTConfigRequest &parameters);
 	//! Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
 	static RESTInlinedRows DuckLakeTable(DuckLakeRESTRequest &request, const RESTDuckLakeTableRequest &parameters);
 	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
 	static RESTDuckLakeTablesResponse DuckLakeTables(DuckLakeRESTRequest &request,
 	                                                 const RESTDuckLakeTablesRequest &parameters);
+	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
+	static DuckLakeMetadata GetMetadata(DuckLakeRESTRequest &request, const RESTGetMetadataRequest &parameters);
 	//! Returns the snapshots, optionally filtered.
 	static RESTListSnapshotsResponse ListSnapshots(DuckLakeRESTRequest &request,
 	                                               const RESTListSnapshotsRequest &parameters);
@@ -1567,6 +1591,8 @@ struct RESTRoute {
 	//! The path, in which {name} is replaced by the parameter of that name
 	string path;
 	vector<RESTRouteParameter> parameters;
+	//! Whether the URL never has the prefix of a catalog, as it is how clients find the prefix
+	bool no_prefix = false;
 
 	//! Splits the JSON of a request into the URL to send it to and the body, which the parameters are not part of.
 	//! The URL has the prefix of the catalog after the version, if there is one
@@ -1598,12 +1624,14 @@ public:
 
 	//! Returns the name maps of files that were added with `ducklake_add_data_files`, starting from a mapping id.
 	RESTColumnMappingsResponse ColumnMappings(const RESTColumnMappingsRequest &request);
-	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
-	DuckLakeMetadata Config(const RESTConfigRequest &request);
+	//! Returns how a client connects to a catalog of the server. This is the first request of a client.
+	RESTConfigResponse Config(const RESTConfigRequest &request);
 	//! Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
 	RESTInlinedRows DuckLakeTable(const RESTDuckLakeTableRequest &request);
 	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
 	RESTDuckLakeTablesResponse DuckLakeTables(const RESTDuckLakeTablesRequest &request);
+	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
+	DuckLakeMetadata GetMetadata(const RESTGetMetadataRequest &request);
 	//! Returns the snapshots, optionally filtered.
 	RESTListSnapshotsResponse ListSnapshots(const RESTListSnapshotsRequest &request);
 	//! Counts the rows of a table that are visible in a snapshot.

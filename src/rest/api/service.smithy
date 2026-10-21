@@ -69,6 +69,7 @@ service DuckLake {
     version: "1"
     operations: [
         Config
+        GetMetadata
         SnapshotData
         Select
         RowCount

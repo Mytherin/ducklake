@@ -29,6 +29,16 @@ public:
 
 	string Call(const string &endpoint, const string &json, bool idempotent) override;
 
+	//! Asks the server how to connect to a catalog: the properties of the server are merged with the properties of the
+	//! client, which finds the prefix of the catalog. The catalog is the one the URL names, if the name is empty
+	void Discover(const string &catalog_name);
+	//! The value of a property: the value of the server if it overrides it, the client value if it has one, else the
+	//! default
+	string GetProperty(const string &name, const string &client_value = string()) const;
+	const string &Prefix() const {
+		return prefix;
+	}
+
 	//! The client has another view of the data path than the server: paths are mapped between the two
 	void SetPathMapping(string client_path, string server_path);
 	optional_ptr<const RESTPathMapper> GetPathMapper() const override {
@@ -60,6 +70,10 @@ private:
 
 private:
 	unique_ptr<RESTPathMapper> path_mapper;
+	//! The requests that the server supports, as the method and the path, unknown before Discover
+	unordered_set<string> endpoints;
+	map<string, string> defaults;
+	map<string, string> overrides;
 	//! The URL of the server and the prefix of the catalog on the server, which is the path of the URL
 	string base_url;
 	string server_url;

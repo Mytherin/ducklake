@@ -94,8 +94,37 @@ void DuckLakeRESTClient::SetPathMapping(string client_path, string server_path) 
 	path_mapper = make_uniq<RESTPathMapper>(std::move(client_path), std::move(server_path));
 }
 
+void DuckLakeRESTClient::Discover(const string &catalog_name) {
+	RESTConfigRequest request;
+	// the name in the URL is the name of the catalog if there is none
+	request.catalog_name = catalog_name.empty() ? prefix : catalog_name;
+	auto response = Config(request);
+	defaults = std::move(response.defaults);
+	overrides = std::move(response.overrides);
+	endpoints.clear();
+	for (auto &route : response.endpoints) {
+		endpoints.insert(route);
+	}
+	prefix = GetProperty("prefix", prefix);
+}
+
+string DuckLakeRESTClient::GetProperty(const string &name, const string &client_value) const {
+	auto override_entry = overrides.find(name);
+	if (override_entry != overrides.end()) {
+		return override_entry->second;
+	}
+	if (!client_value.empty()) {
+		return client_value;
+	}
+	auto default_entry = defaults.find(name);
+	return default_entry != defaults.end() ? default_entry->second : string();
+}
+
 string DuckLakeRESTClient::Call(const string &endpoint, const string &json, bool idempotent) {
 	auto &route = DuckLakeRESTAPI::GetRoute(endpoint);
+	if (!endpoints.empty() && endpoints.find(route.method + " " + route.path) == endpoints.end()) {
+		throw NotImplementedException("The DuckLake REST server does not support \"%s %s\"", route.method, route.path);
+	}
 	string body;
 	auto target = route.ClientTarget(json, prefix, body);
 	string response;

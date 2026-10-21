@@ -346,7 +346,15 @@ void DuckLakeCatalog::ConnectREST() {
 	if (entry != options.metadata_parameters.end()) {
 		token = entry->second.ToString();
 	}
-	rest_client = make_uniq<DuckLakeRESTClient>(std::move(url), std::move(token));
+	string catalog_name;
+	entry = options.metadata_parameters.find("catalog");
+	if (entry != options.metadata_parameters.end()) {
+		catalog_name = entry->second.ToString();
+	}
+	auto client = make_uniq<DuckLakeRESTClient>(std::move(url), std::move(token));
+	// the server tells the client the prefix of the catalog, and which requests it supports
+	client->Discover(catalog_name);
+	rest_client = std::move(client);
 }
 
 DuckLakeRESTClient &DuckLakeCatalog::GetRESTClient() {

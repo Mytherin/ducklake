@@ -39,7 +39,7 @@ string RESTRoute::ClientTarget(const string &request_json, const string &prefix,
 		throw InternalException("DuckLake REST: the request of \"%s\" is not an object", endpoint);
 	}
 	// the paths start with the version
-	string target = prefix.empty() ? path : "/v1/" + UrlEncode(prefix) + path.substr(3);
+	string target = prefix.empty() || no_prefix ? path : "/v1/" + UrlEncode(prefix) + path.substr(3);
 	string query;
 	RESTJsonWriter writer;
 	auto remaining = writer.writer.CreateObject();

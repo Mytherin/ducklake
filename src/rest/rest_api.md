@@ -29,6 +29,8 @@ SELECT listen_uri FROM ducklake_rest_serve('ducklake:metadata.ducklake', port :=
 | `wait`           | Block until the server is stopped, e.g. to run a server from the CLI.                    |
 | `token`          | Require requests to carry this token (`Authorization: Bearer <token>`).                  |
 | `prefix`         | The prefix of the catalog in the URLs of the server (default: the name of the catalog).  |
+| `defaults`       | A `MAP` of the properties that clients use unless they have a value of their own.        |
+| `overrides`      | A `MAP` of the properties that clients use instead of their own values.                  |
 
 The function returns the `listen_uri` of the catalog: the address of the server and the prefix of the catalog
 (`http://localhost:8181/lake`). A server can serve several catalogs: serving a catalog on the port of a server of the same
@@ -50,8 +52,16 @@ SELECT response FROM ducklake_rest_request('http://localhost:8181', 'POST', '/v1
 ATTACH 'ducklake:rest:http://localhost:8181/lake' AS lake;
 ```
 
-The path of the URL is the prefix of the catalog on the server. A URL without a path connects to the catalog of a server
-that serves exactly one catalog.
+The client starts with a request to `GET /v1/config`, which is never prefixed, and which names the catalog it wants:
+the `catalog` of the request is the `META_CATALOG` option of the `ATTACH` (`ATTACH 'ducklake:rest:http://localhost:8181'
+AS lake (META_CATALOG 'sales')`), or the path of the URL, which is the name that the catalog is served under. A URL
+without a path and without `META_CATALOG` connects to the catalog of a server that serves exactly one catalog.
+
+The response of the server has the `prefix` of the catalog in its `overrides`, which the client puts in the URLs of all
+other requests (`/v1/<prefix>/...`). The other `defaults` and `overrides` are properties for the client: the client uses a
+value of its own over a default, and an override over its own value. The server sets them with the `defaults` and
+`overrides` of `ducklake_rest_serve`. The `endpoints` of the response are the requests that the server supports: the
+client reports requests that the server does not support, instead of sending them.
 
 `ducklake:rest:` only connects to a server that is already running (see [Starting a server](#starting-a-server)): it never
 starts one.
@@ -68,7 +78,7 @@ client directly, so the data path has to be accessible from both the client and 
 
 * All endpoints live under `/v1/`, followed by the prefix of the catalog if there is one: `/v1/<prefix>/tables/{table_id}/scan`
   is the scan of a table of the catalog with that prefix. The paths below are the ones without a prefix, which a server
-  that serves one catalog accepts as well. A server that serves several catalogs answers requests without a prefix, or
+  that serves one catalog accepts as well, except for `config`, which never has a prefix. A server that serves several catalogs answers requests without a prefix, or
   with a prefix of no catalog, with a `404`. The resources a request refers to are in the path (`/v1/tables/{table_id}/scan`),
   reads without further input are `GET` requests whose filters are query parameters, and the other requests are `POST`
   requests with a JSON object as body (reads that take a snapshot, filters or projections, and `POST
@@ -186,15 +196,30 @@ Response:
 
 ### `config`
 
-Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
+Returns how a client connects to a catalog of the server. This is the first request of a client.
 
-The `data_path` is the resolved data path of the served DuckLake.
+The client merges the properties of the response with its own: the `defaults` are used unless the client has a
+value of its own, and the `overrides` are used whatever the client has. The `prefix` override is the prefix of the
+catalog in the URLs of all other requests. The `endpoints` are the requests that the server supports, as the method and
+the path without prefix (e.g. `GET /v1/snapshots`).
 
 `GET /v1/config`
 
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `catalog` | query | `string` | The name that the catalog is served under. The catalog of the server if it serves exactly one. |
+
 Request: no body.
 
-Response: [`Metadata`](#metadata).
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `defaults` | object of `string` (default `{}`) | Properties that the client uses if it has no value for them. |
+| `overrides` | object of `string` (default `{}`) | Properties that the client uses instead of its own values, e.g. `prefix`. |
+| `endpoints` | list of `string` (default `[]`) | The requests that the server supports. |
 
 ### `ducklake_table`
 
@@ -230,6 +255,18 @@ Response:
 | Field | Type | Description |
 |-------|------|-------------|
 | `table_names` | list of `string` (default `[]`) | The tables. |
+
+### `get_metadata`
+
+Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
+
+The `data_path` is the resolved data path of the served DuckLake.
+
+`GET /v1/metadata`
+
+Request: no body.
+
+Response: [`Metadata`](#metadata).
 
 ### `list_snapshots`
 

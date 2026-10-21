@@ -86,7 +86,7 @@ void RESTMetadataManager::InitializeDuckLake(bool has_explicit_schema, DuckLakeE
 }
 
 DuckLakeMetadata RESTMetadataManager::LoadDuckLake() {
-	return GetClient().Config(RESTConfigRequest());
+	return GetClient().GetMetadata(RESTGetMetadataRequest());
 }
 
 //===--------------------------------------------------------------------===//

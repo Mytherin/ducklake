@@ -316,6 +316,7 @@ class Endpoint:
         self.method = spec.get("method")
         self.path = spec.get("path")
         self.parameters = spec.get("parameters", [])
+        self.no_prefix = spec.get("no_prefix", False)
         if self.kind != "commit" and (not self.method or not self.path):
             raise SpecError(f"{self.name}: endpoints need a method and a path")
         self.request = self.body(spec.get("request", {}), "Request", section)
@@ -347,6 +348,7 @@ class Endpoint:
             "method",
             "path",
             "parameters",
+            "no_prefix",
         }
         unknown = set(spec.keys()) - known
         if unknown:
@@ -955,6 +957,7 @@ class SmithyModel:
             "method": http["method"],
             "path": http["uri"],
             "parameters": self.route_parameters(shape_id, operation, http["uri"]),
+            "no_prefix": self.trait(operation, "noPrefix") is not None,
             "idempotent": "smithy.api#readonly" in operation.get("traits", {})
             or "smithy.api#idempotent" in operation.get("traits", {}),
             "summary": summary,
@@ -1545,6 +1548,10 @@ def generate_header(spec):
     )
     lines.append("\tstring path;")
     lines.append("\tvector<RESTRouteParameter> parameters;")
+    lines.append(
+        "\t//! Whether the URL never has the prefix of a catalog, as it is how clients find the prefix"
+    )
+    lines.append("\tbool no_prefix = false;")
     lines.append("")
     lines.append(
         "\t//! Splits the JSON of a request into the URL to send it to and the body, which the parameters are not part of."
@@ -1938,7 +1945,9 @@ def generate_source(spec):
             for p in endpoint.parameters
         )
         lines.append(
-            f"\t    {{{cpp_string(endpoint.name)}, {cpp_string(endpoint.method)}, {cpp_string(endpoint.path)}, {{{parameters}}}}},"
+            f"\t    {{{cpp_string(endpoint.name)}, {cpp_string(endpoint.method)}, {cpp_string(endpoint.path)}, {{{parameters}}}"
+            + (", true" if endpoint.no_prefix else "")
+            + "},"
         )
     lines.append("\t};")
     lines.append("\treturn routes;")

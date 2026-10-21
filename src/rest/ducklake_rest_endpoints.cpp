@@ -85,7 +85,20 @@ static vector<string> GetColumnsToRead(const vector<string> &columns_to_read) {
 //===--------------------------------------------------------------------===//
 // Read Endpoints
 //===--------------------------------------------------------------------===//
-DuckLakeMetadata DuckLakeRESTEndpoints::Config(DuckLakeRESTRequest &request, const RESTConfigRequest &parameters) {
+RESTConfigResponse DuckLakeRESTEndpoints::Config(DuckLakeRESTRequest &request, const RESTConfigRequest &parameters) {
+	RESTConfigResponse result;
+	result.defaults = request.server->ClientDefaults();
+	result.overrides = request.server->ClientOverrides();
+	// the URLs of the catalog have its prefix
+	result.overrides["prefix"] = request.prefix;
+	for (auto &route : DuckLakeRESTAPI::GetRoutes()) {
+		result.endpoints.push_back(route.method + " " + route.path);
+	}
+	return result;
+}
+
+DuckLakeMetadata DuckLakeRESTEndpoints::GetMetadata(DuckLakeRESTRequest &request,
+                                                    const RESTGetMetadataRequest &parameters) {
 	auto metadata = request.GetMetadataManager().LoadDuckLake();
 	for (auto &tag : metadata.tags) {
 		if (tag.key == "data_path") {

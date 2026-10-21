@@ -66,7 +66,13 @@ void DuckLakeRESTServer::AddCatalog(const string &prefix, shared_ptr<DatabaseIns
 		throw InvalidInputException("The prefix of a catalog has to be a name without slashes, not \"%s\"", prefix);
 	}
 	lock_guard<mutex> guard(catalog_lock);
-	catalogs[prefix] = ServedCatalog {std::move(db), std::move(catalog_name)};
+	catalogs[prefix] = ServedCatalog {prefix, std::move(db), std::move(catalog_name)};
+}
+
+void DuckLakeRESTServer::SetClientProperties(map<string, string> defaults, map<string, string> overrides) {
+	lock_guard<mutex> guard(catalog_lock);
+	client_defaults = std::move(defaults);
+	client_overrides = std::move(overrides);
 }
 
 bool DuckLakeRESTServer::RemoveCatalog(const string &prefix) {
@@ -136,6 +142,16 @@ int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, optional_ptr<c
                                           const vector<string> &path_values, const vector<pair<string, string>> &query,
                                           const string &body, string &response) {
 	try {
+		// the catalog of a request that finds the prefix is the one that it asks for, if it asks for one
+		string requested_catalog;
+		if (route.no_prefix) {
+			for (auto &entry : query) {
+				if (entry.first == "catalog" && !entry.second.empty()) {
+					requested_catalog = entry.second;
+				}
+			}
+			prefix = requested_catalog.empty() ? nullptr : optional_ptr<const string>(&requested_catalog);
+		}
 		auto served = GetCatalog(prefix);
 		auto &endpoints = DuckLakeRESTAPI::GetEndpoints();
 		auto entry = endpoints.find(route.endpoint);
@@ -144,6 +160,8 @@ int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, optional_ptr<c
 		}
 		auto request_json = route.ServerRequest(path_values, query, body);
 		DuckLakeRESTRequest request(*served.db, served.catalog_name);
+		request.server = this;
+		request.prefix = served.prefix;
 		try {
 			response = entry->second(request, request_json);
 			if (request.connection.HasActiveTransaction()) {
@@ -173,6 +191,9 @@ idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_cou
 	}
 	for (auto &route : DuckLakeRESTAPI::GetRoutes()) {
 		for (bool with_prefix : {false, true}) {
+			if (with_prefix && route.no_prefix) {
+				continue;
+			}
 			auto handler = [this, &route, with_prefix](const duckdb_httplib::Request &req,
 			                                           duckdb_httplib::Response &res) {
 				string response;
@@ -341,6 +362,22 @@ static Value GetNamedParameter(TableFunctionBindInput &input, const string &name
 	return entry->second;
 }
 
+//! The entries of a MAP(VARCHAR, VARCHAR) value
+static map<string, string> ToStringMap(const Value &value) {
+	map<string, string> result;
+	if (value.IsNull()) {
+		return result;
+	}
+	for (auto &entry : MapValue::GetChildren(value)) {
+		auto &children = StructValue::GetChildren(entry);
+		if (children[0].IsNull() || children[1].IsNull()) {
+			throw InvalidInputException("ducklake_rest_serve: the properties cannot be NULL");
+		}
+		result[StringValue::Get(children[0])] = StringValue::Get(children[1]);
+	}
+	return result;
+}
+
 static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, TableFunctionBindInput &input,
                                                       vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto target = input.inputs[0];
@@ -359,6 +396,8 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	bool wait = !wait_val.IsNull() && BooleanValue::Get(wait_val);
 
 	auto prefix_val = GetNamedParameter(input, "prefix");
+	auto defaults_val = GetNamedParameter(input, "defaults");
+	auto overrides_val = GetNamedParameter(input, "overrides");
 
 	auto &registry = DuckLakeRESTServerRegistry::Get();
 	// a server that already listens on this address serves the catalog as well
@@ -388,6 +427,9 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	}
 	if (!token_val.IsNull()) {
 		server->SetToken(StringValue::Get(token_val));
+	}
+	if (!defaults_val.IsNull() || !overrides_val.IsNull()) {
+		server->SetClientProperties(ToStringMap(defaults_val), ToStringMap(overrides_val));
 	}
 	server->AddCatalog(prefix, std::move(db), catalog_name);
 	auto listen_uri = server->ListenURI() + "/" + prefix;
@@ -452,7 +494,9 @@ DuckLakeRESTServeFunction::DuckLakeRESTServeFunction()
 		    .Add("attach_options", LogicalType::VARCHAR)
 		    .Add("wait", LogicalType::BOOLEAN)
 		    .Add("token", LogicalType::VARCHAR)
-		    .Add("prefix", LogicalType::VARCHAR);
+		    .Add("prefix", LogicalType::VARCHAR)
+		    .Add("defaults", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))
+		    .Add("overrides", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
 	});
 }
 

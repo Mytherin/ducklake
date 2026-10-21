@@ -47,6 +47,10 @@ structure cppMap {
 @trait(selector: "structure")
 string nullIf
 
+/// The endpoint has no prefix of a catalog in its URL: it is how a client finds the prefix.
+@trait(selector: "operation")
+structure noPrefix {}
+
 /// The JSON conversion of the structure is written by hand (src/rest/ducklake_rest_serialization.cpp).
 @trait(selector: "structure")
 structure customSerialization {}

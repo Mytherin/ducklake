@@ -3322,6 +3322,9 @@ RESTColumnMappingsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTConfigRequest &value) {
 	auto result = writer.CreateObject();
+	if (!RESTIsNull(value.catalog_name)) {
+		result.Add("catalog_name", RESTWriteValue<RESTStringCodec>(writer, value.catalog_name));
+	}
 	return result;
 }
 
@@ -3331,6 +3334,47 @@ RESTConfigRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for ConfigRequest");
 	}
 	RESTConfigRequest result;
+	{
+		auto entry = in.TryGet("catalog_name");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTStringCodec>(entry, result.catalog_name);
+		}
+	}
+	return result;
+}
+
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTConfigResponse &value) {
+	auto result = writer.CreateObject();
+	result.Add("defaults", RESTWriteValue<RESTDictCodec<RESTStringCodec>>(writer, value.defaults));
+	result.Add("overrides", RESTWriteValue<RESTDictCodec<RESTStringCodec>>(writer, value.overrides));
+	result.Add("endpoints", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.endpoints));
+	return result;
+}
+
+template <>
+RESTConfigResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for ConfigResponse");
+	}
+	RESTConfigResponse result;
+	{
+		auto entry = in.TryGet("defaults");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTDictCodec<RESTStringCodec>>(entry, result.defaults);
+		}
+	}
+	{
+		auto entry = in.TryGet("overrides");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTDictCodec<RESTStringCodec>>(entry, result.overrides);
+		}
+	}
+	{
+		auto entry = in.TryGet("endpoints");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.endpoints);
+		}
+	}
 	return result;
 }
 
@@ -3382,6 +3426,20 @@ RESTDuckLakeTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.table_names);
 		}
 	}
+	return result;
+}
+
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTGetMetadataRequest &value) {
+	auto result = writer.CreateObject();
+	return result;
+}
+
+template <>
+RESTGetMetadataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for GetMetadataRequest");
+	}
+	RESTGetMetadataRequest result;
 	return result;
 }
 
@@ -5147,6 +5205,13 @@ static string DuckLakeTablesEndpoint(DuckLakeRESTRequest &request, const string 
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
+static string GetMetadataEndpoint(DuckLakeRESTRequest &request, const string &body) {
+	RESTJsonReader document(body);
+	auto parameters = DuckLakeRESTSerializer::Read<RESTGetMetadataRequest>(document.Root());
+	auto result = DuckLakeRESTEndpoints::GetMetadata(request, parameters);
+	return DuckLakeRESTSerializer::ToJSON(result);
+}
+
 static string ListSnapshotsEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTListSnapshotsRequest>(document.Root());
@@ -5209,6 +5274,7 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	    {"config", ConfigEndpoint},
 	    {"ducklake_table", DuckLakeTableEndpoint},
 	    {"ducklake_tables", DuckLakeTablesEndpoint},
+	    {"get_metadata", GetMetadataEndpoint},
 	    {"list_snapshots", ListSnapshotsEndpoint},
 	    {"row_count", RowCountEndpoint},
 	    {"select", SelectEndpoint},
@@ -5224,9 +5290,10 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	static const vector<RESTRoute> routes = {
 	    {"column_mappings", "GET", "/v1/column-mappings", {{"start_from", RESTParameterType::UINT, "start_from"}}},
-	    {"config", "GET", "/v1/config", {}},
+	    {"config", "GET", "/v1/config", {{"catalog_name", RESTParameterType::STRING, "catalog"}}, true},
 	    {"ducklake_table", "GET", "/v1/metadata-tables/{table_name}", {{"table_name", RESTParameterType::STRING, ""}}},
 	    {"ducklake_tables", "GET", "/v1/metadata-tables", {}},
+	    {"get_metadata", "GET", "/v1/metadata", {}},
 	    {"list_snapshots",
 	     "GET",
 	     "/v1/snapshots",
@@ -5262,10 +5329,10 @@ RESTColumnMappingsResponse DuckLakeRESTClientAPI::ColumnMappings(const RESTColum
 	return DuckLakeRESTSerializer::Read<RESTColumnMappingsResponse>(document.Root());
 }
 
-DuckLakeMetadata DuckLakeRESTClientAPI::Config(const RESTConfigRequest &request) {
+RESTConfigResponse DuckLakeRESTClientAPI::Config(const RESTConfigRequest &request) {
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("config", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<DuckLakeMetadata>(document.Root());
+	return DuckLakeRESTSerializer::Read<RESTConfigResponse>(document.Root());
 }
 
 RESTInlinedRows DuckLakeRESTClientAPI::DuckLakeTable(const RESTDuckLakeTableRequest &request) {
@@ -5278,6 +5345,12 @@ RESTDuckLakeTablesResponse DuckLakeRESTClientAPI::DuckLakeTables(const RESTDuckL
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("ducklake_tables", DuckLakeRESTSerializer::ToJSON(request), true));
 	return DuckLakeRESTSerializer::Read<RESTDuckLakeTablesResponse>(document.Root());
+}
+
+DuckLakeMetadata DuckLakeRESTClientAPI::GetMetadata(const RESTGetMetadataRequest &request) {
+	RESTPathScope paths(GetPathMapper());
+	RESTJsonReader document(Call("get_metadata", DuckLakeRESTSerializer::ToJSON(request), true));
+	return DuckLakeRESTSerializer::Read<DuckLakeMetadata>(document.Root());
 }
 
 RESTListSnapshotsResponse DuckLakeRESTClientAPI::ListSnapshots(const RESTListSnapshotsRequest &request) {
