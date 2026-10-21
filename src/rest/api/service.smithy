@@ -70,6 +70,7 @@ service DuckLake {
     operations: [
         Config
         GetMetadata
+        FetchPlanTask
         SnapshotData
         Select
         RowCount

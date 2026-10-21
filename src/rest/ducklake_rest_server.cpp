@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
@@ -67,6 +68,49 @@ void DuckLakeRESTServer::AddCatalog(const string &prefix, shared_ptr<DatabaseIns
 	}
 	lock_guard<mutex> guard(catalog_lock);
 	catalogs[prefix] = ServedCatalog {prefix, std::move(db), std::move(catalog_name)};
+}
+
+//! Plans expire after this many seconds
+static constexpr int64_t PLAN_EXPIRATION_SECONDS = 600;
+//! The number of plans that are kept
+static constexpr idx_t MAX_PLANS = 256;
+
+string DuckLakeRESTPlans::Add(shared_ptr<DuckLakeRESTPlan> plan) {
+	plan->created = std::chrono::steady_clock::now();
+	auto id = UUID::ToString(UUID::GenerateRandomUUID());
+	lock_guard<mutex> guard(lock);
+	for (auto entry = plans.begin(); entry != plans.end();) {
+		if (plan->created - entry->second->created > std::chrono::seconds(PLAN_EXPIRATION_SECONDS)) {
+			entry = plans.erase(entry);
+		} else {
+			entry++;
+		}
+	}
+	while (plans.size() >= MAX_PLANS) {
+		// the oldest plan goes
+		auto oldest = plans.begin();
+		for (auto entry = plans.begin(); entry != plans.end(); entry++) {
+			if (entry->second->created < oldest->second->created) {
+				oldest = entry;
+			}
+		}
+		plans.erase(oldest);
+	}
+	plans.emplace(id, std::move(plan));
+	return id;
+}
+
+shared_ptr<DuckLakeRESTPlan> DuckLakeRESTPlans::Get(const string &id) {
+	lock_guard<mutex> guard(lock);
+	auto entry = plans.find(id);
+	if (entry == plans.end()) {
+		return nullptr;
+	}
+	if (std::chrono::steady_clock::now() - entry->second->created > std::chrono::seconds(PLAN_EXPIRATION_SECONDS)) {
+		plans.erase(entry);
+		return nullptr;
+	}
+	return entry->second;
 }
 
 void DuckLakeRESTServer::SetClientProperties(map<string, string> defaults, map<string, string> overrides) {
@@ -398,6 +442,8 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	auto prefix_val = GetNamedParameter(input, "prefix");
 	auto defaults_val = GetNamedParameter(input, "defaults");
 	auto overrides_val = GetNamedParameter(input, "overrides");
+	auto files_per_task_val = GetNamedParameter(input, "files_per_task");
+	auto page_size_val = GetNamedParameter(input, "page_size");
 
 	auto &registry = DuckLakeRESTServerRegistry::Get();
 	// a server that already listens on this address serves the catalog as well
@@ -427,6 +473,20 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	}
 	if (!token_val.IsNull()) {
 		server->SetToken(StringValue::Get(token_val));
+	}
+	if (!page_size_val.IsNull()) {
+		auto page_size = page_size_val.GetValue<idx_t>();
+		if (page_size == 0) {
+			throw BinderException("ducklake_rest_serve: page_size has to be larger than 0");
+		}
+		server->SetDefaultPageSize(page_size);
+	}
+	if (!files_per_task_val.IsNull()) {
+		auto files_per_task = files_per_task_val.GetValue<idx_t>();
+		if (files_per_task == 0) {
+			throw BinderException("ducklake_rest_serve: files_per_task has to be larger than 0");
+		}
+		server->SetFilesPerTask(files_per_task);
 	}
 	if (!defaults_val.IsNull() || !overrides_val.IsNull()) {
 		server->SetClientProperties(ToStringMap(defaults_val), ToStringMap(overrides_val));
@@ -495,6 +555,8 @@ DuckLakeRESTServeFunction::DuckLakeRESTServeFunction()
 		    .Add("wait", LogicalType::BOOLEAN)
 		    .Add("token", LogicalType::VARCHAR)
 		    .Add("prefix", LogicalType::VARCHAR)
+		    .Add("files_per_task", LogicalType::UBIGINT)
+		    .Add("page_size", LogicalType::UBIGINT)
 		    .Add("defaults", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))
 		    .Add("overrides", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
 	});

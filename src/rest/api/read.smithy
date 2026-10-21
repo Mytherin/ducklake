@@ -135,6 +135,45 @@ operation Select {
 
         /// The inlined rows of the table, for `include_inlined_data`.
         inlined_data: InlinedRows
+
+        /// Plan tasks for the files that are not in this response, if there are many files. Each plan task is sent to
+        /// `plan-tasks`, which returns its files. The files of the scan are the files of the response and the files of
+        /// all its plan tasks.
+        plan_tasks: StringList = []
+    }
+}
+
+/// Returns the files of a plan task of `scan` or `changes`.
+///
+/// A large scan is split into chunks of files: the response of the request has the first chunk, and a plan task for every
+/// other one. The plan tasks of a response can be fetched in parallel, in any order. They are tied to the catalog and the
+/// table of the request, and expire after a while (the request fails with a `404`): a client plans the scan again then.
+@http(method: "POST", uri: "/v1/tables/{table_id}/plan-tasks")
+@readonly
+operation FetchPlanTask {
+    input := {
+        /// The table of the plan task.
+        @required
+        @httpLabel
+        table_id: UInt64
+
+        /// The plan task.
+        @required
+        plan_task: String
+    }
+
+    output := {
+        /// The files of a plan task of `scan`.
+        files: FileListEntryList = []
+
+        /// The files of a plan task of `scan` with `extended`.
+        extended_files: FileListExtendedEntryList
+
+        /// The files of a plan task of `changes` with `insertions`.
+        insertions: FileListEntryList = []
+
+        /// The files of a plan task of `changes` with `deletions`.
+        deletions: DeleteScanEntryList = []
     }
 }
 
@@ -177,11 +216,22 @@ operation ListSnapshots {
         @cppType("RESTOptional<vector<idx_t>>")
         @httpQuery("snapshot_id")
         snapshot_ids: UInt64List
+
+        /// The maximum number of entries to return. The server picks a number if absent, and can return fewer entries.
+        @httpQuery("page_size")
+        page_size: UInt64
+
+        /// The `next_page_token` of the previous page. The first page if absent.
+        @httpQuery("page_token")
+        page_token: String
     }
 
     output := {
-        /// The snapshots.
+        /// The snapshots, ordered by their ids.
         snapshots: SnapshotInfoList = []
+
+        /// The token of the next page, absent on the last page.
+        next_page_token: String
     }
 }
 
@@ -189,11 +239,22 @@ operation ListSnapshots {
 @http(method: "POST", uri: "/v1/table-sizes")
 @readonly
 operation TableSizes {
-    input := with [SnapshotReference] {}
+    input := with [SnapshotReference] {
+        /// The maximum number of entries to return. The server picks a number if absent, and can return fewer entries.
+        @httpQuery("page_size")
+        page_size: UInt64
+
+        /// The `next_page_token` of the previous page. The first page if absent.
+        @httpQuery("page_token")
+        page_token: String
+    }
 
     output := {
-        /// The tables.
+        /// The tables, ordered by their ids.
         tables: TableSizeList = []
+
+        /// The token of the next page, absent on the last page.
+        next_page_token: String
     }
 }
 
@@ -205,11 +266,22 @@ operation ColumnMappings {
         /// The first mapping id to return.
         @httpQuery("start_from")
         start_from: UInt64
+
+        /// The maximum number of entries to return. The server picks a number if absent, and can return fewer entries.
+        @httpQuery("page_size")
+        page_size: UInt64
+
+        /// The `next_page_token` of the previous page. The first page if absent.
+        @httpQuery("page_token")
+        page_token: String
     }
 
     output := {
-        /// The name maps.
+        /// The name maps, ordered by their ids.
         mappings: NameMapList = []
+
+        /// The token of the next page, absent on the last page.
+        next_page_token: String
     }
 }
 
@@ -259,6 +331,9 @@ operation TableChanges {
 
         /// The inlined rows that changed, for `include_inlined_data`.
         inlined_data: InlinedRows
+
+        /// Plan tasks for the files that are not in this response, see `scan`.
+        plan_tasks: StringList = []
     }
 }
 
@@ -286,9 +361,20 @@ operation DuckLakeTable {
         @required
         @httpLabel
         table_name: String
+
+        /// The maximum number of entries to return. The server picks a number if absent, and can return fewer entries.
+        @httpQuery("page_size")
+        page_size: UInt64
+
+        /// The `next_page_token` of the previous page. The first page if absent.
+        @httpQuery("page_token")
+        page_token: String
     }
 
-    output: InlinedRows
+    output := with [RowSet] {
+        /// The token of the next page, absent on the last page. The pages hold consecutive rows.
+        next_page_token: String
+    }
 }
 
 /// The unit of an `AT` clause.

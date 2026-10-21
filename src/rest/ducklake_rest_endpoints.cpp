@@ -18,6 +18,8 @@
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 #include "common/ducklake_util.hpp"
+#include "duckdb/common/operator/cast_operators.hpp"
+#include <algorithm>
 #include "storage/ducklake_catalog.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
 #include "storage/ducklake_schema_entry.hpp"
@@ -80,6 +82,78 @@ static vector<string> GetColumnsToRead(const vector<string> &columns_to_read) {
 		columns.push_back(expressions[0]->ToString());
 	}
 	return columns;
+}
+
+//! The most entries that a page has
+static constexpr idx_t MAX_PAGE_SIZE = 10000;
+
+static idx_t GetPageSize(DuckLakeRESTRequest &request, optional_idx page_size) {
+	if (!page_size.IsValid()) {
+		return request.server->DefaultPageSize();
+	}
+	if (page_size.GetIndex() == 0) {
+		throw InvalidInputException("The page_size has to be larger than 0");
+	}
+	return MinValue<idx_t>(page_size.GetIndex(), MAX_PAGE_SIZE);
+}
+
+//! The position that a page token stands for, 0 for the first page
+static idx_t GetPageStart(const string &page_token) {
+	if (page_token.empty()) {
+		return 0;
+	}
+	idx_t result;
+	if (!TryCast::Operation<string_t, idx_t>(string_t(page_token), result)) {
+		throw InvalidInputException("\"%s\" is not a page token", page_token);
+	}
+	return result;
+}
+
+//! Keeps the page of entries that are ordered by their keys: the page token is the key of the last entry of the page
+//! before, a next page token is returned if there are entries after the page
+template <class T, class KEY>
+static void GetKeyPage(DuckLakeRESTRequest &request, vector<T> &entries, const KEY &get_key, optional_idx page_size,
+                       const string &page_token, string &next_page_token) {
+	std::sort(entries.begin(), entries.end(), [&](const T &a, const T &b) { return get_key(a) < get_key(b); });
+	idx_t start = 0;
+	if (!page_token.empty()) {
+		auto after = GetPageStart(page_token);
+		while (start < entries.size() && get_key(entries[start]) <= after) {
+			start++;
+		}
+	}
+	auto size = GetPageSize(request, page_size);
+	if (start + size >= entries.size()) {
+		entries.erase(entries.begin(), entries.begin() + NumericCast<int64_t>(start));
+		return;
+	}
+	entries.erase(entries.begin() + NumericCast<int64_t>(start + size), entries.end());
+	entries.erase(entries.begin(), entries.begin() + NumericCast<int64_t>(start));
+	next_page_token = to_string(get_key(entries.back()));
+}
+
+//! Moves the entries that follow the first task of a scan into a plan, and returns the plan tasks of the plan
+template <class T>
+static void SplitIntoPlanTasks(DuckLakeRESTRequest &request, TableIndex table_id, vector<T> &entries,
+                               vector<T> DuckLakeRESTPlan::*member, vector<string> &plan_tasks) {
+	auto task_size = request.server->FilesPerTask();
+	if (entries.size() <= task_size) {
+		return;
+	}
+	auto plan = make_shared_ptr<DuckLakeRESTPlan>();
+	plan->prefix = request.prefix;
+	plan->table_id = table_id.index;
+	plan->task_size = task_size;
+	auto &remainder = plan.get()->*member;
+	for (idx_t i = task_size; i < entries.size(); i++) {
+		remainder.push_back(std::move(entries[i]));
+	}
+	entries.erase(entries.begin() + NumericCast<int64_t>(task_size), entries.end());
+	auto task_count = (remainder.size() + task_size - 1) / task_size;
+	auto id = request.server->Plans().Add(std::move(plan));
+	for (idx_t i = 0; i < task_count; i++) {
+		plan_tasks.push_back(id + "." + to_string(i));
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -302,6 +376,9 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	} else {
 		result.files = metadata_manager.GetFilesForTable(table, snapshot, filters.get());
 	}
+	SplitIntoPlanTasks(request, table.GetTableId(), result.files, &DuckLakeRESTPlan::files, result.plan_tasks);
+	SplitIntoPlanTasks(request, table.GetTableId(), result.extended_files, &DuckLakeRESTPlan::extended_files,
+	                   result.plan_tasks);
 	if (!parameters.include_inlined_data) {
 		return result;
 	}
@@ -347,6 +424,9 @@ RESTListSnapshotsResponse DuckLakeRESTEndpoints::ListSnapshots(DuckLakeRESTReque
 	filter.snapshot_ids = parameters.snapshot_ids.value;
 	RESTListSnapshotsResponse result;
 	result.snapshots = request.GetMetadataManager().GetAllSnapshots(filter);
+	GetKeyPage(
+	    request, result.snapshots, [](const DuckLakeSnapshotInfo &snapshot) { return snapshot.id; },
+	    parameters.page_size, parameters.page_token, result.next_page_token);
 	return result;
 }
 
@@ -354,6 +434,9 @@ RESTTableSizesResponse DuckLakeRESTEndpoints::TableSizes(DuckLakeRESTRequest &re
                                                          const RESTTableSizesRequest &parameters) {
 	RESTTableSizesResponse result;
 	result.tables = request.GetMetadataManager().GetTableSizes(request.GetSnapshot(parameters));
+	GetKeyPage(
+	    request, result.tables, [](const DuckLakeTableSizeInfo &table) { return table.table_id.index; },
+	    parameters.page_size, parameters.page_token, result.next_page_token);
 	return result;
 }
 
@@ -361,6 +444,9 @@ RESTColumnMappingsResponse DuckLakeRESTEndpoints::ColumnMappings(DuckLakeRESTReq
                                                                  const RESTColumnMappingsRequest &parameters) {
 	RESTColumnMappingsResponse result;
 	result.mappings = request.GetMetadataManager().GetColumnMappings(parameters.start_from);
+	GetKeyPage(
+	    request, result.mappings, [](const DuckLakeColumnMappingInfo &mapping) { return mapping.mapping_id.index; },
+	    parameters.page_size, parameters.page_token, result.next_page_token);
 	return result;
 }
 
@@ -374,8 +460,12 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 	bool deletions = parameters.changes == "deletions";
 	if (deletions) {
 		result.deletions = metadata_manager.GetTableDeletions(table, start_snapshot, snapshot);
+		SplitIntoPlanTasks(request, table.GetTableId(), result.deletions, &DuckLakeRESTPlan::deletions,
+		                   result.plan_tasks);
 	} else {
 		result.insertions = metadata_manager.GetTableInsertions(table, start_snapshot, snapshot);
+		SplitIntoPlanTasks(request, table.GetTableId(), result.insertions, &DuckLakeRESTPlan::insertions,
+		                   result.plan_tasks);
 	}
 	if (parameters.include_inlined_data) {
 		result.inlined_data = ReadInlinedRows(
@@ -400,11 +490,79 @@ RESTDuckLakeTablesResponse DuckLakeRESTEndpoints::DuckLakeTables(DuckLakeRESTReq
 	return result;
 }
 
-RESTInlinedRows DuckLakeRESTEndpoints::DuckLakeTable(DuckLakeRESTRequest &request,
-                                                     const RESTDuckLakeTableRequest &parameters) {
+RESTDuckLakeTableResponse DuckLakeRESTEndpoints::DuckLakeTable(DuckLakeRESTRequest &request,
+                                                               const RESTDuckLakeTableRequest &parameters) {
 	auto query_result = request.GetMetadataManager().ReadMetadataTable(parameters.table_name);
-	RESTInlinedRows result;
-	ReadQueryResult(result, *query_result);
+	// the page token is the number of rows before the page
+	auto start = GetPageStart(parameters.page_token);
+	auto size = GetPageSize(request, parameters.page_size);
+	auto &types = query_result->GetTypes();
+	RESTDuckLakeTableResponse result;
+	for (idx_t col_idx = 0; col_idx < query_result->ColumnCount(); col_idx++) {
+		RESTResultColumn column;
+		column.name = query_result->GetNames()[col_idx].GetIdentifierName();
+		column.type = types[col_idx];
+		result.columns.push_back(std::move(column));
+	}
+	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
+	idx_t position = 0;
+	bool more_rows = false;
+	while (true) {
+		auto chunk = query_result->Fetch();
+		if (!chunk || chunk->size() == 0) {
+			break;
+		}
+		for (idx_t row = 0; row < chunk->size(); row++, position++) {
+			if (position < start) {
+				continue;
+			}
+			if (position >= start + size) {
+				more_rows = true;
+				break;
+			}
+			DataChunk single;
+			single.Initialize(Allocator::DefaultAllocator(), types);
+			for (idx_t col_idx = 0; col_idx < chunk->ColumnCount(); col_idx++) {
+				single.SetValue(col_idx, 0, chunk->GetValue(col_idx, row));
+			}
+			single.SetCardinality(1);
+			collection->Append(single);
+		}
+		if (more_rows) {
+			break;
+		}
+	}
+	result.rows = RESTRows(std::move(collection));
+	if (more_rows) {
+		result.next_page_token = to_string(start + size);
+	}
+	return result;
+}
+
+RESTFetchPlanTaskResponse DuckLakeRESTEndpoints::FetchPlanTask(DuckLakeRESTRequest &request,
+                                                               const RESTFetchPlanTaskRequest &parameters) {
+	auto separator = parameters.plan_task.rfind('.');
+	shared_ptr<DuckLakeRESTPlan> plan;
+	idx_t index = 0;
+	if (separator != string::npos &&
+	    TryCast::Operation<string_t, idx_t>(string_t(parameters.plan_task.substr(separator + 1)), index)) {
+		plan = request.server->Plans().Get(parameters.plan_task.substr(0, separator));
+	}
+	if (!plan || plan->prefix != request.prefix || plan->table_id != parameters.table_id) {
+		throw CatalogException("The plan task \"%s\" does not exist: it expired or it belongs to another table",
+		                       parameters.plan_task);
+	}
+	auto start = index * plan->task_size;
+	auto get_task = [&](const auto &entries, auto &result) {
+		for (idx_t i = start; i < entries.size() && i < start + plan->task_size; i++) {
+			result.push_back(entries[i]);
+		}
+	};
+	RESTFetchPlanTaskResponse result;
+	get_task(plan->files, result.files);
+	get_task(plan->extended_files, result.extended_files);
+	get_task(plan->insertions, result.insertions);
+	get_task(plan->deletions, result.deletions);
 	return result;
 }
 

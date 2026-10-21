@@ -126,7 +126,7 @@ private:
 		catalog_requests.push_back(std::move(request));
 		return result;
 	}
-	unique_ptr<QueryResult> ToQueryResult(RESTInlinedRows rows);
+	unique_ptr<QueryResult> ToQueryResult(RESTRowSet rows);
 	//! Whether a scan has to ask the server for the inlined rows, and for which columns: other scans of the table at
 	//! the snapshot can have the rows already, and scans that need other columns ask for all columns
 	struct InlinedRowsPlan {

@@ -14,6 +14,7 @@
 #include "duckdb/function/table_function.hpp"
 #include "rest/ducklake_rest_api.hpp"
 
+#include <chrono>
 #include <thread>
 
 namespace duckdb_httplib {
@@ -46,6 +47,33 @@ public:
 	string prefix;
 };
 
+//! The chunks of the scans that were split into plan tasks, which the server keeps for a while
+struct DuckLakeRESTPlan {
+	//! The catalog and the table of the scan
+	string prefix;
+	idx_t table_id = 0;
+	//! The number of entries of a plan task
+	idx_t task_size = 1;
+	//! The entries that are not in the response of the scan, whichever the scan returns
+	vector<DuckLakeFileListEntry> files;
+	vector<DuckLakeFileListExtendedEntry> extended_files;
+	vector<DuckLakeFileListEntry> insertions;
+	vector<DuckLakeDeleteScanEntry> deletions;
+	std::chrono::steady_clock::time_point created;
+};
+
+class DuckLakeRESTPlans {
+public:
+	//! Keeps a plan, returns its id
+	string Add(shared_ptr<DuckLakeRESTPlan> plan);
+	//! The plan with the id, nullptr if it expired
+	shared_ptr<DuckLakeRESTPlan> Get(const string &id);
+
+private:
+	mutex lock;
+	map<string, shared_ptr<DuckLakeRESTPlan>> plans;
+};
+
 //! An HTTP server that exposes DuckLake catalogs through the DuckLake REST API. The URLs of a catalog have its prefix
 //! after the version (`/v1/<prefix>/...`). The URLs without a prefix refer to the catalog that the server serves, if it
 //! serves exactly one.
@@ -58,6 +86,23 @@ public:
 	void AddCatalog(const string &prefix, shared_ptr<DatabaseInstance> db, string catalog_name);
 	//! Stops serving the catalog under the prefix, returns whether there was one
 	bool RemoveCatalog(const string &prefix);
+	//! The number of files of the first response of a scan, and of every plan task of the scan
+	idx_t FilesPerTask() const {
+		return files_per_task;
+	}
+	void SetFilesPerTask(idx_t files_per_task_p) {
+		files_per_task = files_per_task_p;
+	}
+	//! The number of entries of a page if the request does not ask for a number
+	idx_t DefaultPageSize() const {
+		return default_page_size;
+	}
+	void SetDefaultPageSize(idx_t page_size) {
+		default_page_size = page_size;
+	}
+	DuckLakeRESTPlans &Plans() {
+		return plans;
+	}
 	//! The properties that clients get from the server, besides the prefix of their catalog
 	void SetClientProperties(map<string, string> defaults, map<string, string> overrides);
 	const map<string, string> &ClientDefaults() const {
@@ -98,6 +143,9 @@ private:
 private:
 	mutex catalog_lock;
 	map<string, ServedCatalog> catalogs;
+	idx_t files_per_task = 10000;
+	idx_t default_page_size = 1000;
+	DuckLakeRESTPlans plans;
 	map<string, string> client_defaults;
 	map<string, string> client_overrides;
 	string token;

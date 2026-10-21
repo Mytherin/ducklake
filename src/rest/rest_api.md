@@ -29,6 +29,8 @@ SELECT listen_uri FROM ducklake_rest_serve('ducklake:metadata.ducklake', port :=
 | `wait`           | Block until the server is stopped, e.g. to run a server from the CLI.                    |
 | `token`          | Require requests to carry this token (`Authorization: Bearer <token>`).                  |
 | `prefix`         | The prefix of the catalog in the URLs of the server (default: the name of the catalog).  |
+| `files_per_task` | The number of files in a response of a scan and in each of its plan tasks (default 10000). |
+| `page_size`      | The number of entries of a page of a list if the request has no `page_size` (default 1000). |
 | `defaults`       | A `MAP` of the properties that clients use unless they have a value of their own.        |
 | `overrides`      | A `MAP` of the properties that clients use instead of their own values.                  |
 
@@ -84,6 +86,15 @@ client directly, so the data path has to be accessible from both the client and 
   requests with a JSON object as body (reads that take a snapshot, filters or projections, and `POST
   /v1/transactions/commit`). Responses are JSON objects. The parameters of the URL are not part of the body.
 * Each request runs in a transaction of its own on the server.
+* Lists that grow with the data are returned in pages: `snapshots`, `table-sizes`, `column-mappings` and
+  `metadata-tables/{table_name}` take a `page_size` and a `page_token`, and return a `next_page_token` if there are more
+  entries. The first page has no token, a page token is only valid for the request that returned it, and the server
+  picks the number of entries (and can return fewer than the `page_size`, and at most 10000). A response without
+  `next_page_token` is the last page.
+* The files of `scan` and `changes` are split into plan tasks if there are many. The response has the first chunk of
+  files and a list of `plan_tasks`, one for each other chunk. A client sends every plan task to `plan-tasks` of the same
+  table, in parallel and in any order, and gets the files of its chunk. Plan tasks are kept by the server for a few
+  minutes, and fail with a `404` after that (or on another server): a client then plans the scan again.
 * Errors are reported with a non-200 status code and a body of the form
   `{"error": {"type": "<DuckDB exception type>", "message": "...", "code": <status>}}`. The status code is `409` for
   transaction conflicts, `404` for catalog errors (e.g. entries that do not exist) and unknown endpoints, `400` for
@@ -185,6 +196,8 @@ Parameters in the URL (the other fields of the request are the JSON body):
 | Parameter | In | Type | Description |
 |-----------|----|------|-------------|
 | `start_from` | query | `uint64` | The first mapping id to return. |
+| `page_size` | query | `uint64` | The maximum number of entries to return. The server picks a number if absent, and can return fewer entries. |
+| `page_token` | query | `string` | The `next_page_token` of the previous page. The first page if absent. |
 
 Request: no body.
 
@@ -192,7 +205,8 @@ Response:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `mappings` | list of [`NameMap`](#namemap) (default `[]`) | The name maps. |
+| `mappings` | list of [`NameMap`](#namemap) (default `[]`) | The name maps, ordered by their ids. |
+| `next_page_token` | `string` (optional) | The token of the next page, absent on the last page. |
 
 ### `config`
 
@@ -234,10 +248,18 @@ Parameters in the URL (the other fields of the request are the JSON body):
 | Parameter | In | Type | Description |
 |-----------|----|------|-------------|
 | `table_name` | path | `string` | The table, e.g. `ducklake_snapshot`. |
+| `page_size` | query | `uint64` | The maximum number of entries to return. The server picks a number if absent, and can return fewer entries. |
+| `page_token` | query | `string` | The `next_page_token` of the previous page. The first page if absent. |
 
 Request: no body.
 
-Response: [`InlinedRows`](#inlinedrows).
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `columns` | list of [`ResultColumn`](#resultcolumn) | The columns of the rows. |
+| `rows` | `rows` | The rows, as arrays of values of the types of the columns. |
+| `next_page_token` | `string` (optional) | The token of the next page, absent on the last page. The pages hold consecutive rows. |
 
 ### `ducklake_tables`
 
@@ -255,6 +277,37 @@ Response:
 | Field | Type | Description |
 |-------|------|-------------|
 | `table_names` | list of `string` (default `[]`) | The tables. |
+
+### `fetch_plan_task`
+
+Returns the files of a plan task of `scan` or `changes`.
+
+A large scan is split into chunks of files: the response of the request has the first chunk, and a plan task for every
+other one. The plan tasks of a response can be fetched in parallel, in any order. They are tied to the catalog and the
+table of the request, and expire after a while (the request fails with a `404`): a client plans the scan again then.
+
+`POST /v1/tables/{table_id}/plan-tasks`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `table_id` | path | `uint64` | The table of the plan task. |
+
+Request:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `plan_task` | `string` | The plan task. |
+
+Response:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `files` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of a plan task of `scan`. |
+| `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of a plan task of `scan` with `extended`. |
+| `insertions` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of a plan task of `changes` with `insertions`. |
+| `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | The files of a plan task of `changes` with `deletions`. |
 
 ### `get_metadata`
 
@@ -281,6 +334,8 @@ Parameters in the URL (the other fields of the request are the JSON body):
 | `exclude_latest` | query | `bool` | Exclude the latest snapshot. |
 | `older_than` | query | `timestamp` | Only snapshots created before this timestamp. |
 | `snapshot_id` (repeated) | query | list of `uint64` | Only these snapshots. |
+| `page_size` | query | `uint64` | The maximum number of entries to return. The server picks a number if absent, and can return fewer entries. |
+| `page_token` | query | `string` | The `next_page_token` of the previous page. The first page if absent. |
 
 Request: no body.
 
@@ -288,7 +343,8 @@ Response:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `snapshots` | list of [`SnapshotInfo`](#snapshotinfo) (default `[]`) | The snapshots. |
+| `snapshots` | list of [`SnapshotInfo`](#snapshotinfo) (default `[]`) | The snapshots, ordered by their ids. |
+| `next_page_token` | `string` (optional) | The token of the next page, absent on the last page. |
 
 ### `row_count`
 
@@ -353,6 +409,7 @@ Response:
 | `files` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of the scan. |
 | `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of the scan, for `extended` scans. |
 | `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows of the table, for `include_inlined_data`. |
+| `plan_tasks` | list of `string` (default `[]`) | Plan tasks for the files that are not in this response, if there are many files. Each plan task is sent to `plan-tasks`, which returns its files. The files of the scan are the files of the response and the files of all its plan tasks. |
 
 ### `snapshot_data`
 
@@ -421,12 +478,20 @@ Response:
 | `insertions` | list of [`FileListEntry`](#filelistentry) (default `[]`) | For `insertions`: the files with inserted rows. |
 | `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | For `deletions`: the files with deleted rows. |
 | `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows that changed, for `include_inlined_data`. |
+| `plan_tasks` | list of `string` (default `[]`) | Plan tasks for the files that are not in this response, see `scan`. |
 
 ### `table_sizes`
 
 Returns the storage used by each table at a snapshot.
 
 `POST /v1/table-sizes`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `page_size` | query | `uint64` | The maximum number of entries to return. The server picks a number if absent, and can return fewer entries. |
+| `page_token` | query | `string` | The `next_page_token` of the previous page. The first page if absent. |
 
 Request:
 
@@ -439,7 +504,8 @@ Response:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `tables` | list of [`TableSize`](#tablesize) (default `[]`) | The tables. |
+| `tables` | list of [`TableSize`](#tablesize) (default `[]`) | The tables, ordered by their ids. |
+| `next_page_token` | `string` (optional) | The token of the next page, absent on the last page. |
 
 ## Server Commands
 

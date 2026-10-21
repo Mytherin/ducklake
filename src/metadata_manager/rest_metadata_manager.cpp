@@ -1,5 +1,8 @@
 #include "metadata_manager/rest_metadata_manager.hpp"
 
+#include <atomic>
+#include <thread>
+
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/parser/parser.hpp"
@@ -228,6 +231,67 @@ map<TableIndex, idx_t> RESTMetadataManager::GetTableRecordCounts(DuckLakeSnapsho
 	return result;
 }
 
+//! Fetches the plan tasks of a response, which are the chunks of its files, in parallel. The files are added to the
+//! files of the response in the order of the tasks.
+static void AddPlanTasks(DuckLakeRESTClient &client, idx_t table_id, const vector<string> &plan_tasks,
+                         vector<DuckLakeFileListEntry> *files, vector<DuckLakeFileListExtendedEntry> *extended_files,
+                         vector<DuckLakeFileListEntry> *insertions, vector<DuckLakeDeleteScanEntry> *deletions) {
+	if (plan_tasks.empty()) {
+		return;
+	}
+	static constexpr idx_t MAX_PARALLEL_TASKS = 8;
+	vector<RESTFetchPlanTaskResponse> results(plan_tasks.size());
+	std::atomic<idx_t> next_task {0};
+	std::atomic<bool> failed {false};
+	mutex error_lock;
+	std::exception_ptr error;
+	auto fetch = [&]() {
+		while (!failed) {
+			auto task = next_task++;
+			if (task >= plan_tasks.size()) {
+				return;
+			}
+			try {
+				RESTFetchPlanTaskRequest request;
+				request.table_id = table_id;
+				request.plan_task = plan_tasks[task];
+				results[task] = client.FetchPlanTask(request);
+			} catch (...) {
+				lock_guard<mutex> guard(error_lock);
+				if (!error) {
+					error = std::current_exception();
+				}
+				failed = true;
+			}
+		}
+	};
+	vector<std::thread> threads;
+	for (idx_t i = 1; i < MinValue<idx_t>(plan_tasks.size(), MAX_PARALLEL_TASKS); i++) {
+		threads.emplace_back(fetch);
+	}
+	fetch();
+	for (auto &thread : threads) {
+		thread.join();
+	}
+	if (error) {
+		std::rethrow_exception(error);
+	}
+	for (auto &result : results) {
+		if (files) {
+			std::move(result.files.begin(), result.files.end(), std::back_inserter(*files));
+		}
+		if (extended_files) {
+			std::move(result.extended_files.begin(), result.extended_files.end(), std::back_inserter(*extended_files));
+		}
+		if (insertions) {
+			std::move(result.insertions.begin(), result.insertions.end(), std::back_inserter(*insertions));
+		}
+		if (deletions) {
+			std::move(result.deletions.begin(), result.deletions.end(), std::back_inserter(*deletions));
+		}
+	}
+}
+
 //! The time zone of the client, which the server casts inlined rows with
 static string GetClientTimeZone(ClientContext &context) {
 	Value time_zone;
@@ -284,6 +348,8 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 		request.filters = make_uniq<RESTScanFilters>(DuckLakeRESTFilters::Write(*filter_info, table));
 	}
 	auto response = GetClient().Select(request);
+	AddPlanTasks(GetClient(), table.GetTableId().index, response.plan_tasks, &response.files, nullptr, nullptr,
+	             nullptr);
 	if (plan.fetch) {
 		inlined_rows_cache.Add(inlined_key, plan.projection, std::move(response.inlined_data));
 	}
@@ -312,13 +378,15 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 		request.filters = make_uniq<RESTScanFilters>(DuckLakeRESTFilters::Write(*filter_info, table));
 	}
 	auto response = GetClient().Select(request);
+	AddPlanTasks(GetClient(), table.GetTableId().index, response.plan_tasks, nullptr, &response.extended_files, nullptr,
+	             nullptr);
 	if (plan.fetch) {
 		inlined_rows_cache.Add(inlined_key, plan.projection, std::move(response.inlined_data));
 	}
 	return std::move(response.extended_files);
 }
 
-unique_ptr<QueryResult> RESTMetadataManager::ToQueryResult(RESTInlinedRows rows) {
+unique_ptr<QueryResult> RESTMetadataManager::ToQueryResult(RESTRowSet rows) {
 	auto context = transaction.context.lock();
 	vector<Identifier> names;
 	for (auto &column : rows.columns) {
@@ -518,7 +586,15 @@ vector<DuckLakeSnapshotInfo> RESTMetadataManager::GetAllSnapshots(const DuckLake
 		}
 		request.snapshot_ids = filter.snapshot_ids;
 	}
-	return std::move(GetClient().ListSnapshots(request).snapshots);
+	vector<DuckLakeSnapshotInfo> result;
+	while (true) {
+		auto page = GetClient().ListSnapshots(request);
+		std::move(page.snapshots.begin(), page.snapshots.end(), std::back_inserter(result));
+		if (page.next_page_token.empty()) {
+			return result;
+		}
+		request.page_token = std::move(page.next_page_token);
+	}
 }
 
 //! Expiring snapshots and deleting files is performed on the server
@@ -543,7 +619,22 @@ vector<string> RESTMetadataManager::GetMetadataTableNames() {
 unique_ptr<QueryResult> RESTMetadataManager::ReadMetadataTable(const string &table_name) {
 	RESTDuckLakeTableRequest request;
 	request.table_name = table_name;
-	return ToQueryResult(GetClient().DuckLakeTable(request));
+	RESTRowSet result;
+	while (true) {
+		auto page = GetClient().DuckLakeTable(request);
+		if (!result.rows.owned_rows) {
+			result.columns = std::move(page.columns);
+			result.rows = std::move(page.rows);
+		} else {
+			for (auto &chunk : page.rows.rows->Chunks()) {
+				result.rows.owned_rows->Append(chunk);
+			}
+		}
+		if (page.next_page_token.empty()) {
+			return ToQueryResult(std::move(result));
+		}
+		request.page_token = std::move(page.next_page_token);
+	}
 }
 
 vector<string> RESTMetadataManager::GetKnownFilePaths() {
@@ -578,13 +669,29 @@ bool RESTMetadataManager::ResetConfigOption(const DuckLakeConfigOption &option) 
 vector<DuckLakeTableSizeInfo> RESTMetadataManager::GetTableSizes(DuckLakeSnapshot snapshot) {
 	RESTTableSizesRequest request;
 	request.snapshot = snapshot;
-	return std::move(GetClient().TableSizes(request).tables);
+	vector<DuckLakeTableSizeInfo> result;
+	while (true) {
+		auto page = GetClient().TableSizes(request);
+		std::move(page.tables.begin(), page.tables.end(), std::back_inserter(result));
+		if (page.next_page_token.empty()) {
+			return result;
+		}
+		request.page_token = std::move(page.next_page_token);
+	}
 }
 
 vector<DuckLakeColumnMappingInfo> RESTMetadataManager::GetColumnMappings(optional_idx start_from) {
 	RESTColumnMappingsRequest request;
 	request.start_from = start_from;
-	return std::move(GetClient().ColumnMappings(request).mappings);
+	vector<DuckLakeColumnMappingInfo> result;
+	while (true) {
+		auto page = GetClient().ColumnMappings(request);
+		std::move(page.mappings.begin(), page.mappings.end(), std::back_inserter(result));
+		if (page.next_page_token.empty()) {
+			return result;
+		}
+		request.page_token = std::move(page.next_page_token);
+	}
 }
 
 RESTTableChangesResponse RESTMetadataManager::GetTableChanges(DuckLakeTableEntry &table,
@@ -605,6 +712,8 @@ RESTTableChangesResponse RESTMetadataManager::GetTableChanges(DuckLakeTableEntry
 	}
 	SetProjection(request, plan.projection);
 	auto response = GetClient().TableChanges(request);
+	AddPlanTasks(GetClient(), table.GetTableId().index, response.plan_tasks, nullptr, nullptr, &response.insertions,
+	             &response.deletions);
 	if (plan.fetch) {
 		inlined_rows_cache.Add(inlined_key, plan.projection, std::move(response.inlined_data));
 	}
