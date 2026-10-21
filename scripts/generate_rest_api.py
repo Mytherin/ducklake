@@ -1547,15 +1547,18 @@ def generate_header(spec):
     lines.append("\tvector<RESTRouteParameter> parameters;")
     lines.append("")
     lines.append(
-        "\t//! Splits the JSON of a request into the URL to send it to and the body, which the parameters are not part of"
+        "\t//! Splits the JSON of a request into the URL to send it to and the body, which the parameters are not part of."
     )
     lines.append(
-        "\tstring ClientTarget(const string &request_json, string &body) const;"
+        "\t//! The URL has the prefix of the catalog after the version, if there is one"
+    )
+    lines.append(
+        "\tstring ClientTarget(const string &request_json, const string &prefix, string &body) const;"
     )
     lines.append(
         "\t//! The regular expression that matches the paths of the route, the groups are the parameters of the path"
     )
-    lines.append("\tstring PathPattern() const;")
+    lines.append("\tstring PathPattern(bool with_prefix) const;")
     lines.append(
         "\t//! Combines the parameters of the URL with the body into the JSON of the request"
     )

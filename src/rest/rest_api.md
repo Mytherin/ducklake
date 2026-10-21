@@ -28,9 +28,13 @@ SELECT listen_uri FROM ducklake_rest_serve('ducklake:metadata.ducklake', port :=
 | `attach_options` | Options for the isolated `ATTACH`, e.g. `DATA_PATH '...'`.                               |
 | `wait`           | Block until the server is stopped, e.g. to run a server from the CLI.                    |
 | `token`          | Require requests to carry this token (`Authorization: Bearer <token>`).                  |
+| `prefix`         | The prefix of the catalog in the URLs of the server (default: the name of the catalog).  |
 
-The function returns the `listen_uri` of the server. Starting a server on a port that is in use by another server of
-the same process replaces that server. `ducklake_rest_stop(listen_uri)` stops a server.
+The function returns the `listen_uri` of the catalog: the address of the server and the prefix of the catalog
+(`http://localhost:8181/lake`). A server can serve several catalogs: serving a catalog on the port of a server of the same
+process adds it to that server, under its own prefix. Serving a catalog under a prefix that is served already replaces the
+catalog. `ducklake_rest_stop` stops serving the catalog of a `listen_uri` with a prefix, and stops the server for a URI
+without one (`http://localhost:8181`).
 
 `ducklake_rest_request(listen_uri, method, path, body)` sends an HTTP request to a server and returns the status code
 and the JSON response, which is useful to explore the API:
@@ -43,8 +47,11 @@ SELECT response FROM ducklake_rest_request('http://localhost:8181', 'POST', '/v1
 ### Connecting to a server
 
 ```sql
-ATTACH 'ducklake:rest:http://localhost:8181' AS lake;
+ATTACH 'ducklake:rest:http://localhost:8181/lake' AS lake;
 ```
+
+The path of the URL is the prefix of the catalog on the server. A URL without a path connects to the catalog of a server
+that serves exactly one catalog.
 
 `ducklake:rest:` only connects to a server that is already running (see [Starting a server](#starting-a-server)): it never
 starts one.
@@ -59,7 +66,10 @@ client directly, so the data path has to be accessible from both the client and 
 
 ## Conventions
 
-* All endpoints live under `/v1/`. The resources a request refers to are in the path (`/v1/tables/{table_id}/scan`),
+* All endpoints live under `/v1/`, followed by the prefix of the catalog if there is one: `/v1/<prefix>/tables/{table_id}/scan`
+  is the scan of a table of the catalog with that prefix. The paths below are the ones without a prefix, which a server
+  that serves one catalog accepts as well. A server that serves several catalogs answers requests without a prefix, or
+  with a prefix of no catalog, with a `404`. The resources a request refers to are in the path (`/v1/tables/{table_id}/scan`),
   reads without further input are `GET` requests whose filters are query parameters, and the other requests are `POST`
   requests with a JSON object as body (reads that take a snapshot, filters or projections, and `POST
   /v1/transactions/commit`). Responses are JSON objects. The parameters of the URL are not part of the body.

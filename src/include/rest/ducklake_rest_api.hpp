@@ -1568,10 +1568,11 @@ struct RESTRoute {
 	string path;
 	vector<RESTRouteParameter> parameters;
 
-	//! Splits the JSON of a request into the URL to send it to and the body, which the parameters are not part of
-	string ClientTarget(const string &request_json, string &body) const;
+	//! Splits the JSON of a request into the URL to send it to and the body, which the parameters are not part of.
+	//! The URL has the prefix of the catalog after the version, if there is one
+	string ClientTarget(const string &request_json, const string &prefix, string &body) const;
 	//! The regular expression that matches the paths of the route, the groups are the parameters of the path
-	string PathPattern() const;
+	string PathPattern(bool with_prefix) const;
 	//! Combines the parameters of the URL with the body into the JSON of the request
 	string ServerRequest(const vector<string> &path_values, const vector<pair<string, string>> &query,
 	                     const string &body) const;

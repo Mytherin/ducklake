@@ -10,6 +10,15 @@ namespace duckdb {
 DuckLakeRESTClient::DuckLakeRESTClient(string base_url_p, string token_p)
     : base_url(std::move(base_url_p)), token(std::move(token_p)) {
 	StringUtil::RTrim(base_url, "/");
+	// the path of the URL is the prefix of the catalog on the server
+	auto scheme_end = base_url.find("://");
+	auto path_start = base_url.find('/', scheme_end == string::npos ? 0 : scheme_end + 3);
+	if (path_start != string::npos) {
+		prefix = base_url.substr(path_start + 1);
+		server_url = base_url.substr(0, path_start);
+	} else {
+		server_url = base_url;
+	}
 }
 
 DuckLakeRESTClient::~DuckLakeRESTClient() {
@@ -36,7 +45,7 @@ unique_ptr<duckdb_httplib::Client> DuckLakeRESTClient::GetConnection(bool &reuse
 		}
 	}
 	reused = false;
-	auto connection = make_uniq<duckdb_httplib::Client>(base_url);
+	auto connection = make_uniq<duckdb_httplib::Client>(server_url);
 	connection->set_keep_alive(true);
 	connection->set_read_timeout(300, 0);
 	connection->set_write_timeout(300, 0);
@@ -72,7 +81,7 @@ int32_t DuckLakeRESTClient::Send(const string &method, const string &target, con
 			// requests are not, as the server might have applied them
 			continue;
 		}
-		throw IOException("Failed to send DuckLake REST request \"%s %s\" to %s: %s", method, target, base_url,
+		throw IOException("Failed to send DuckLake REST request \"%s %s\" to %s: %s", method, target, server_url,
 		                  duckdb_httplib::to_string(error));
 	}
 }
@@ -88,7 +97,7 @@ void DuckLakeRESTClient::SetPathMapping(string client_path, string server_path) 
 string DuckLakeRESTClient::Call(const string &endpoint, const string &json, bool idempotent) {
 	auto &route = DuckLakeRESTAPI::GetRoute(endpoint);
 	string body;
-	auto target = route.ClientTarget(json, body);
+	auto target = route.ClientTarget(json, prefix, body);
 	string response;
 	auto status = Send(route.method, target, body, idempotent, response);
 	if (status != 200) {

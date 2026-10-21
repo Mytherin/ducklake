@@ -60,7 +60,10 @@ private:
 
 private:
 	unique_ptr<RESTPathMapper> path_mapper;
+	//! The URL of the server and the prefix of the catalog on the server, which is the path of the URL
 	string base_url;
+	string server_url;
+	string prefix;
 	string token;
 	mutex lock;
 	vector<IdleConnection> idle_connections;

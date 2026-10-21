@@ -42,11 +42,18 @@ public:
 	DuckLakeTransaction *transaction;
 };
 
-//! An HTTP server that exposes a DuckLake catalog through the DuckLake REST API
+//! An HTTP server that exposes DuckLake catalogs through the DuckLake REST API. The URLs of a catalog have its prefix
+//! after the version (`/v1/<prefix>/...`). The URLs without a prefix refer to the catalog that the server serves, if it
+//! serves exactly one.
 class DuckLakeRESTServer {
 public:
-	DuckLakeRESTServer(shared_ptr<DatabaseInstance> db, string catalog_name);
+	DuckLakeRESTServer();
 	~DuckLakeRESTServer();
+
+	//! Serves a catalog under the prefix, replacing the catalog that was served under it
+	void AddCatalog(const string &prefix, shared_ptr<DatabaseInstance> db, string catalog_name);
+	//! Stops serving the catalog under the prefix, returns whether there was one
+	bool RemoveCatalog(const string &prefix);
 
 	//! Binds the socket and starts serving in the background, returns the bound port
 	idx_t Start(const string &host, idx_t port, idx_t thread_count = 0);
@@ -61,17 +68,23 @@ public:
 	const string &ListenURI() const {
 		return listen_uri;
 	}
-	const string &CatalogName() const {
-		return catalog_name;
-	}
 
-	//! Handles a request for an endpoint, returns the HTTP status code
-	int32_t HandleRequest(const RESTRoute &route, const vector<string> &path_values,
+	//! Handles a request for an endpoint of a catalog, returns the HTTP status code. The prefix is only set for URLs
+	//! with a prefix
+	int32_t HandleRequest(const RESTRoute &route, optional_ptr<const string> prefix, const vector<string> &path_values,
 	                      const vector<pair<string, string>> &query, const string &body, string &response);
 
 private:
-	shared_ptr<DatabaseInstance> db;
-	string catalog_name;
+	struct ServedCatalog {
+		shared_ptr<DatabaseInstance> db;
+		string catalog_name;
+	};
+	//! The catalog of a request, throws if there is none
+	ServedCatalog GetCatalog(optional_ptr<const string> prefix);
+
+private:
+	mutex catalog_lock;
+	map<string, ServedCatalog> catalogs;
 	string token;
 	unique_ptr<duckdb_httplib::Server> server;
 	std::thread server_thread;
@@ -83,8 +96,11 @@ class DuckLakeRESTServerRegistry {
 public:
 	static DuckLakeRESTServerRegistry &Get();
 
-	string Start(unique_ptr<DuckLakeRESTServer> server, const string &host, idx_t port);
+	//! Starts a server, which serves no catalogs yet
+	DuckLakeRESTServer &Start(unique_ptr<DuckLakeRESTServer> server, const string &host, idx_t port);
+	//! Stops the server, or stops serving a catalog if the URI has a prefix
 	bool Stop(const string &listen_uri);
+	//! The server that listens on the address of a URI, which can have a prefix
 	optional_ptr<DuckLakeRESTServer> GetServer(const string &listen_uri);
 
 private:

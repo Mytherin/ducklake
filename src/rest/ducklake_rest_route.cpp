@@ -32,13 +32,14 @@ static string ScalarText(const RESTJsonIn &value) {
 	return value.val.IsString() ? value.val.GetString() : value.val.ToString();
 }
 
-string RESTRoute::ClientTarget(const string &request_json, string &body) const {
+string RESTRoute::ClientTarget(const string &request_json, const string &prefix, string &body) const {
 	RESTJsonReader document(request_json);
 	auto root = document.Root();
 	if (!root.IsObject()) {
 		throw InternalException("DuckLake REST: the request of \"%s\" is not an object", endpoint);
 	}
-	string target = path;
+	// the paths start with the version
+	string target = prefix.empty() ? path : "/v1/" + UrlEncode(prefix) + path.substr(3);
 	string query;
 	RESTJsonWriter writer;
 	auto remaining = writer.writer.CreateObject();
@@ -89,7 +90,7 @@ string RESTRoute::ClientTarget(const string &request_json, string &body) const {
 	return target + query;
 }
 
-string RESTRoute::PathPattern() const {
+string RESTRoute::PathPattern(bool with_prefix) const {
 	string result;
 	idx_t pos = 0;
 	while (pos < path.size()) {
@@ -101,6 +102,10 @@ string RESTRoute::PathPattern() const {
 		result += path.substr(pos, start - pos);
 		result += "([^/]+)";
 		pos = path.find('}', start) + 1;
+	}
+	if (with_prefix) {
+		// the prefix of the catalog follows the version
+		result = "/v1/([^/]+)" + result.substr(3);
 	}
 	return result;
 }

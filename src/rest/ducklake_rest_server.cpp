@@ -58,8 +58,46 @@ DuckLakeSnapshot DuckLakeRESTRequest::GetSnapshot(const RESTSnapshotReference &r
 //===--------------------------------------------------------------------===//
 // Server
 //===--------------------------------------------------------------------===//
-DuckLakeRESTServer::DuckLakeRESTServer(shared_ptr<DatabaseInstance> db_p, string catalog_name_p)
-    : db(std::move(db_p)), catalog_name(std::move(catalog_name_p)) {
+DuckLakeRESTServer::DuckLakeRESTServer() {
+}
+
+void DuckLakeRESTServer::AddCatalog(const string &prefix, shared_ptr<DatabaseInstance> db, string catalog_name) {
+	if (prefix.empty() || prefix.find('/') != string::npos) {
+		throw InvalidInputException("The prefix of a catalog has to be a name without slashes, not \"%s\"", prefix);
+	}
+	lock_guard<mutex> guard(catalog_lock);
+	catalogs[prefix] = ServedCatalog {std::move(db), std::move(catalog_name)};
+}
+
+bool DuckLakeRESTServer::RemoveCatalog(const string &prefix) {
+	ServedCatalog removed;
+	{
+		lock_guard<mutex> guard(catalog_lock);
+		auto entry = catalogs.find(prefix);
+		if (entry == catalogs.end()) {
+			return false;
+		}
+		removed = std::move(entry->second);
+		catalogs.erase(entry);
+	}
+	return true;
+}
+
+DuckLakeRESTServer::ServedCatalog DuckLakeRESTServer::GetCatalog(optional_ptr<const string> prefix) {
+	lock_guard<mutex> guard(catalog_lock);
+	if (prefix) {
+		auto entry = catalogs.find(*prefix);
+		if (entry == catalogs.end()) {
+			throw CatalogException("The server serves no catalog under the prefix \"%s\"", *prefix);
+		}
+		return entry->second;
+	}
+	if (catalogs.size() != 1) {
+		throw CatalogException(
+		    "The server serves %llu catalogs: the URLs need the prefix of one of them (/v1/<prefix>/...)",
+		    catalogs.size());
+	}
+	return catalogs.begin()->second;
 }
 
 DuckLakeRESTServer::~DuckLakeRESTServer() {
@@ -94,17 +132,18 @@ static string ErrorBody(ExceptionType type, const string &message, int32_t statu
 	return DuckLakeRESTSerializer::ToJSON(response);
 }
 
-int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, const vector<string> &path_values,
-                                          const vector<pair<string, string>> &query, const string &body,
-                                          string &response) {
+int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, optional_ptr<const string> prefix,
+                                          const vector<string> &path_values, const vector<pair<string, string>> &query,
+                                          const string &body, string &response) {
 	try {
+		auto served = GetCatalog(prefix);
 		auto &endpoints = DuckLakeRESTAPI::GetEndpoints();
 		auto entry = endpoints.find(route.endpoint);
 		if (entry == endpoints.end()) {
 			throw InternalException("DuckLake REST: the endpoint \"%s\" has no handler", route.endpoint);
 		}
 		auto request_json = route.ServerRequest(path_values, query, body);
-		DuckLakeRESTRequest request(*db, catalog_name);
+		DuckLakeRESTRequest request(*served.db, served.catalog_name);
 		try {
 			response = entry->second(request, request_json);
 			if (request.connection.HasActiveTransaction()) {
@@ -133,30 +172,41 @@ idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_cou
 		};
 	}
 	for (auto &route : DuckLakeRESTAPI::GetRoutes()) {
-		auto handler = [this, &route](const duckdb_httplib::Request &req, duckdb_httplib::Response &res) {
-			string response;
-			if (!token.empty() && req.get_header_value("Authorization") != "Bearer " + token) {
-				res.status = 401;
-				res.set_content(
-				    ErrorBody(ExceptionType::PERMISSION, "Missing or invalid token for the DuckLake REST server", 401),
-				    "application/json");
-				return;
+		for (bool with_prefix : {false, true}) {
+			auto handler = [this, &route, with_prefix](const duckdb_httplib::Request &req,
+			                                           duckdb_httplib::Response &res) {
+				string response;
+				if (!token.empty() && req.get_header_value("Authorization") != "Bearer " + token) {
+					res.status = 401;
+					res.set_content(ErrorBody(ExceptionType::PERMISSION,
+					                          "Missing or invalid token for the DuckLake REST server", 401),
+					                "application/json");
+					return;
+				}
+				// the first group is the prefix of the catalog, if the URL has one
+				idx_t first_value = with_prefix ? 2 : 1;
+				string prefix;
+				if (with_prefix) {
+					prefix = req.matches.groups[1].str();
+				}
+				vector<string> path_values;
+				for (idx_t i = first_value; i < req.matches.groups.size(); i++) {
+					path_values.push_back(req.matches.groups[i].str());
+				}
+				vector<pair<string, string>> query;
+				for (auto &param : req.params) {
+					query.emplace_back(param.first, param.second);
+				}
+				res.status = HandleRequest(route, with_prefix ? optional_ptr<const string>(&prefix) : nullptr,
+				                           path_values, query, req.body, response);
+				res.set_content(response, "application/json");
+			};
+			auto pattern = route.PathPattern(with_prefix);
+			if (route.method == "GET") {
+				server->Get(pattern, handler);
+			} else {
+				server->Post(pattern, handler);
 			}
-			vector<string> path_values;
-			for (idx_t i = 1; i < req.matches.groups.size(); i++) {
-				path_values.push_back(req.matches.groups[i].str());
-			}
-			vector<pair<string, string>> query;
-			for (auto &param : req.params) {
-				query.emplace_back(param.first, param.second);
-			}
-			res.status = HandleRequest(route, path_values, query, req.body, response);
-			res.set_content(response, "application/json");
-		};
-		if (route.method == "GET") {
-			server->Get(route.PathPattern(), handler);
-		} else {
-			server->Post(route.PathPattern(), handler);
 		}
 	}
 	server->set_error_handler([](const duckdb_httplib::Request &, duckdb_httplib::Response &res) {
@@ -222,23 +272,45 @@ DuckLakeRESTServerRegistry &DuckLakeRESTServerRegistry::Get() {
 	return *registry;
 }
 
-string DuckLakeRESTServerRegistry::Start(unique_ptr<DuckLakeRESTServer> server, const string &host, idx_t port) {
-	if (port != 0) {
-		// a server that is already listening on this address is replaced
-		Stop(StringUtil::Format("http://%s:%llu", host, port));
+//! The address of a URI of a server or of one of its catalogs: the scheme, host and port
+static string ServerAddress(const string &uri) {
+	auto scheme_end = uri.find("://");
+	auto path_start = uri.find('/', scheme_end == string::npos ? 0 : scheme_end + 3);
+	return path_start == string::npos ? uri : uri.substr(0, path_start);
+}
+
+//! The prefix of the catalog in a URI, empty if it has none
+static string UriPrefix(const string &uri) {
+	auto address = ServerAddress(uri);
+	auto prefix = uri.substr(address.size());
+	while (StringUtil::StartsWith(prefix, "/")) {
+		prefix.erase(0, 1);
 	}
+	StringUtil::RTrim(prefix, "/");
+	return prefix;
+}
+
+DuckLakeRESTServer &DuckLakeRESTServerRegistry::Start(unique_ptr<DuckLakeRESTServer> server, const string &host,
+                                                      idx_t port) {
 	server->Start(host, port);
 	auto listen_uri = server->ListenURI();
 	lock_guard<mutex> guard(lock);
+	auto &result = *server;
 	servers[listen_uri] = std::move(server);
-	return listen_uri;
+	return result;
 }
 
-bool DuckLakeRESTServerRegistry::Stop(const string &listen_uri) {
+bool DuckLakeRESTServerRegistry::Stop(const string &uri) {
+	auto prefix = UriPrefix(uri);
+	if (!prefix.empty()) {
+		// a catalog of the server
+		auto server = GetServer(uri);
+		return server && server->RemoveCatalog(prefix);
+	}
 	unique_ptr<DuckLakeRESTServer> server;
 	{
 		lock_guard<mutex> guard(lock);
-		auto entry = servers.find(listen_uri);
+		auto entry = servers.find(ServerAddress(uri));
 		if (entry == servers.end()) {
 			return false;
 		}
@@ -249,9 +321,9 @@ bool DuckLakeRESTServerRegistry::Stop(const string &listen_uri) {
 	return true;
 }
 
-optional_ptr<DuckLakeRESTServer> DuckLakeRESTServerRegistry::GetServer(const string &listen_uri) {
+optional_ptr<DuckLakeRESTServer> DuckLakeRESTServerRegistry::GetServer(const string &uri) {
 	lock_guard<mutex> guard(lock);
-	auto entry = servers.find(listen_uri);
+	auto entry = servers.find(ServerAddress(uri));
 	if (entry == servers.end()) {
 		return nullptr;
 	}
@@ -286,32 +358,41 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	string attach_options = options_val.IsNull() ? string() : StringValue::Get(options_val);
 	bool wait = !wait_val.IsNull() && BooleanValue::Get(wait_val);
 
+	auto prefix_val = GetNamedParameter(input, "prefix");
+
 	auto &registry = DuckLakeRESTServerRegistry::Get();
+	// a server that already listens on this address serves the catalog as well
+	optional_ptr<DuckLakeRESTServer> server;
 	if (port != 0) {
-		// a server that is already listening on this address is replaced - it has to release its DuckLake first
-		registry.Stop(StringUtil::Format("http://%s:%llu", host, port));
+		server = registry.GetServer(StringUtil::Format("http://%s:%llu", host, port));
 	}
-	unique_ptr<DuckLakeRESTServer> server;
-	if (StringUtil::StartsWith(target_str, "ducklake:")) {
-		const string catalog_name = "ducklake_rest";
-		auto db = OpenIsolatedDuckLake(context, target_str, attach_options, catalog_name);
-		server = make_uniq<DuckLakeRESTServer>(std::move(db), catalog_name);
+	bool isolated = StringUtil::StartsWith(target_str, "ducklake:");
+	const string catalog_name = isolated ? "ducklake_rest" : target_str;
+	string prefix = prefix_val.IsNull() ? catalog_name : StringValue::Get(prefix_val);
+	if (server) {
+		// a catalog that is served under the prefix has to release its DuckLake first
+		server->RemoveCatalog(prefix);
+	}
+	shared_ptr<DatabaseInstance> db;
+	if (isolated) {
+		db = OpenIsolatedDuckLake(context, target_str, attach_options, catalog_name);
 	} else {
 		auto &catalog = Catalog::GetCatalog(context, Identifier(target_str));
 		if (catalog.GetCatalogType() != "ducklake") {
 			throw BinderException("ducklake_rest_serve: catalog \"%s\" is not a DuckLake catalog", target_str);
 		}
-		server = make_uniq<DuckLakeRESTServer>(context.db, target_str);
+		db = context.db;
+	}
+	if (!server) {
+		server = registry.Start(make_uniq<DuckLakeRESTServer>(), host, port);
 	}
 	if (!token_val.IsNull()) {
 		server->SetToken(StringValue::Get(token_val));
 	}
-	auto listen_uri = registry.Start(std::move(server), host, port);
+	server->AddCatalog(prefix, std::move(db), catalog_name);
+	auto listen_uri = server->ListenURI() + "/" + prefix;
 	if (wait) {
-		auto running = registry.GetServer(listen_uri);
-		if (running) {
-			running->Wait();
-		}
+		server->Wait();
 	}
 
 	names.emplace_back("listen_uri");
@@ -370,7 +451,8 @@ DuckLakeRESTServeFunction::DuckLakeRESTServeFunction()
 		    .Add("port", LogicalType::UBIGINT)
 		    .Add("attach_options", LogicalType::VARCHAR)
 		    .Add("wait", LogicalType::BOOLEAN)
-		    .Add("token", LogicalType::VARCHAR);
+		    .Add("token", LogicalType::VARCHAR)
+		    .Add("prefix", LogicalType::VARCHAR);
 	});
 }
 
