@@ -86,8 +86,8 @@ client directly, so the data path has to be accessible from both the client and 
   requests with a JSON object as body (reads that take a snapshot, filters or projections, and `POST
   /v1/transactions/commit`). Responses are JSON objects. The parameters of the URL are not part of the body.
 * Each request runs in a transaction of its own on the server.
-* Lists that grow with the data are returned in pages: `snapshots`, `table-sizes` and
-  `metadata-tables/{table_name}` take a `page_size` and a `page_token`, and return a `next_page_token` if there are more
+* Lists that grow with the data are returned in pages: `snapshots` and
+  `table-sizes` take a `page_size` and a `page_token`, and return a `next_page_token` if there are more
   entries. The first page has no token, a page token is only valid for the request that returned it, and the server
   picks the number of entries (and can return fewer than the `page_size`, and at most 10000). A response without
   `next_page_token` is the last page.
@@ -202,49 +202,6 @@ Response:
 | `defaults` | object of `string` (default `{}`) | Properties that the client uses if it has no value for them. |
 | `overrides` | object of `string` (default `{}`) | Properties that the client uses instead of its own values, e.g. `prefix`. |
 | `endpoints` | list of `string` (default `[]`) | The requests that the server supports. |
-
-### `ducklake_table`
-
-Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
-
-This makes it possible to inspect a DuckLake or to export all of its metadata.
-
-`GET /v1/metadata-tables/{table_name}`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `table_name` | path | `string` | The table, e.g. `ducklake_snapshot`. |
-| `page_size` | query | `uint64` | The maximum number of entries to return. The server picks a number if absent, and can return fewer entries. |
-| `page_token` | query | `string` | The `next_page_token` of the previous page. The first page if absent. |
-
-Request: no body.
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `columns` | list of [`ResultColumn`](#resultcolumn) | The columns of the rows. |
-| `rows` | `rows` | The rows, as arrays of values of the types of the columns. |
-| `next_page_token` | `string` (optional) | The token of the next page, absent on the last page. The pages hold consecutive rows. |
-
-### `ducklake_tables`
-
-Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
-
-In SQL, `ducklake_metadata_table('lake', 'ducklake_snapshot')` reads a table of the metadata catalog of any
-DuckLake.
-
-`GET /v1/metadata-tables`
-
-Request: no body.
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_names` | list of `string` (default `[]`) | The tables. |
 
 ### `get_metadata`
 
@@ -617,84 +574,32 @@ Request:
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
-### `alter_table`
+### `alter`
 
-Alters a table.
+Alters a table or a view.
 
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_path` | list of `string` (default `[]`) | The schema of the table. |
-| `name` | `string` | The name of the table. |
+| `schema_path` | list of `string` (default `[]`) | The schema of the table or view. |
+| `name` | `string` | The name of the table or view. |
 | `alter` | [`Alteration`](#alteration) | The change. |
 | `partition_id` | `uint64` (optional) | For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`). |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
-### `alter_view`
+### `drop`
 
-Alters a view.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `schema_path` | list of `string` (default `[]`) | The schema of the view. |
-| `name` | `string` | The name of the view. |
-| `alter` | [`Alteration`](#alteration) | The change. |
-
-Response: as for [`commit_transaction`](#commit_transaction).
-
-### `drop_schema`
-
-Drops a schema, which has to be empty.
+Drops a schema, a table, a view or a macro. A schema has to be empty.
 
 Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_path` | list of `string` | The path of the schema. |
-
-Response: as for [`commit_transaction`](#commit_transaction).
-
-### `drop_table`
-
-Drops a table.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `schema_path` | list of `string` (default `[]`) | The schema of the table. |
-| `name` | `string` | The name of the table. |
-
-Response: as for [`commit_transaction`](#commit_transaction).
-
-### `drop_view`
-
-Drops a view.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `schema_path` | list of `string` (default `[]`) | The schema of the view. |
-| `name` | `string` | The name of the view. |
-
-Response: as for [`commit_transaction`](#commit_transaction).
-
-### `drop_macro`
-
-Drops a macro.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `schema_path` | list of `string` (default `[]`) | The schema of the macro. |
-| `name` | `string` | The name of the macro. |
-| `macro_type` | [`MacroType`](#macrotype) (default `"scalar"`) | The type of the macro. |
+| `entry_type` | [`DropEntryType`](#dropentrytype) | The type of the entry. |
+| `schema_path` | list of `string` (default `[]`) | The schema of the entry. For a schema: the path of the schema. |
+| `name` | `string` (optional) | The name of the entry. Not for a schema. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
@@ -708,21 +613,6 @@ Request:
 |-------|------|-------------|
 | `option` | [`OptionSetting`](#optionsetting) | The option. |
 | `reset` | `bool` (default `false`) | Reset the option instead of setting it. |
-
-Response: as for [`commit_transaction`](#commit_transaction).
-
-### `create_name_map`
-
-Registers a name map for files that are inserted later in the transaction.
-
-`mapping.mapping_id` is an id of the client, which files of the transaction refer to with their `mapping_id`.
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `table_id` | `int64` | The table. |
-| `mapping` | [`NameMap`](#namemap) | The name map. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
@@ -752,6 +642,7 @@ Request:
 |-------|------|-------------|
 | `table_id` | `int64` | The table. |
 | `files` | list of [`DataFile`](#datafile) | The files. |
+| `name_maps` | list of [`NameMap`](#namemap) (default `[]`) | The name maps of the files, which map the columns of the files by name. A file refers to its name map with its `mapping_id`, an id of the client. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 
@@ -794,7 +685,7 @@ client leave them out when they have no value.
 
 ### `Alteration`
 
-The change of an `alter_table` or `alter_view` request: an object with exactly one member, the name of the change.
+The change of an `alter` request: an object with exactly one member, the name of the change.
 Columns are referred to by name; nested fields by their path from the top-level column, e.g. `["s", "a"]`.
 Expressions are SQL expressions.
 
@@ -1060,6 +951,18 @@ A data file whose rows were deleted between two snapshots.
 | `end_snapshot` | `uint64` (optional) | The last snapshot of the range. |
 | `file_id` | `uint64` (optional) | The id of the data file. |
 | `inlined_file_deletions` | list of `uint64` (default `[]`) | Entries of `row_id` and `snapshot_id`. The deleted rows of the file that are inlined in the catalog, with the snapshot that deleted them. |
+
+### `DropEntryType`
+
+The type of an entry that `drop` drops.
+
+| Value | Description |
+|-------|-------------|
+| `schema` | A schema. |
+| `table` | A table. |
+| `view` | A view. |
+| `scalar_macro` | A scalar macro. |
+| `table_macro` | A table macro. |
 
 ### `DropNotNull`
 

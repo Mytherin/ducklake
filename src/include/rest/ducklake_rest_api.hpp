@@ -63,6 +63,14 @@ struct RESTDeleteFileSourceCodec : public RESTCodec<RESTDeleteFileSourceCodec> {
 	static void Read(RESTJsonIn in, DeleteFileSource &result);
 };
 
+//! The type of an entry that `drop` drops.
+struct RESTDropEntryTypeCodec : public RESTCodec<RESTDropEntryTypeCodec> {
+	static const char *ToString(const string &value);
+	static string FromString(const string &value);
+	static JSONMutableValue Write(JSONWriter &writer, const string &value);
+	static void Read(RESTJsonIn in, string &result);
+};
+
 //! The format of a file.
 struct RESTFileFormatCodec : public RESTCodec<RESTFileFormatCodec> {
 	static const char *ToString(DeleteFileFormat value);
@@ -159,10 +167,6 @@ struct RESTSetSortedBy;
 struct RESTSnapshotReference;
 struct RESTConfigRequest;
 struct RESTConfigResponse;
-struct RESTDuckLakeTableRequest;
-struct RESTDuckLakeTableResponse;
-struct RESTDuckLakeTablesRequest;
-struct RESTDuckLakeTablesResponse;
 struct RESTGetMetadataRequest;
 struct RESTListSnapshotsRequest;
 struct RESTListSnapshotsResponse;
@@ -184,14 +188,9 @@ struct RESTCreateSchemaRequest;
 struct RESTCreateTableRequest;
 struct RESTCreateViewRequest;
 struct RESTCreateMacroRequest;
-struct RESTAlterTableRequest;
-struct RESTAlterViewRequest;
-struct RESTDropSchemaRequest;
-struct RESTDropTableRequest;
-struct RESTDropViewRequest;
-struct RESTDropMacroRequest;
+struct RESTAlterRequest;
+struct RESTDropRequest;
 struct RESTSetOptionRequest;
-struct RESTCreateNameMapRequest;
 struct RESTInsertRowsRequest;
 struct RESTInsertFilesRequest;
 struct RESTDeleteDataRequest;
@@ -280,10 +279,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeViewInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTConfigRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTConfigResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTableRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTableResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTGetMetadataRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsResponse &value);
@@ -305,14 +300,9 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateTableRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateViewRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateMacroRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTAlterTableRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTAlterViewRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDropSchemaRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDropTableRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDropViewRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDropMacroRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTAlterRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTDropRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSetOptionRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTCreateNameMapRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInsertRowsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInsertFilesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDeleteDataRequest &value);
@@ -463,14 +453,6 @@ RESTConfigRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTConfigResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTDuckLakeTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTDuckLakeTableResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTDuckLakeTablesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTDuckLakeTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
 RESTGetMetadataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTListSnapshotsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
@@ -513,21 +495,11 @@ RESTCreateViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTCreateMacroRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTAlterTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+RESTAlterRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-RESTAlterViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTDropSchemaRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTDropTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTDropViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTDropMacroRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+RESTDropRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTSetOptionRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTCreateNameMapRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTInsertRowsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -580,14 +552,9 @@ enum class RESTCommitRequestType : uint8_t {
 	CREATE_TABLE,
 	CREATE_VIEW,
 	CREATE_MACRO,
-	ALTER_TABLE,
-	ALTER_VIEW,
-	DROP_SCHEMA,
-	DROP_TABLE,
-	DROP_VIEW,
-	DROP_MACRO,
+	ALTER,
+	DROP,
 	SET_OPTION,
-	CREATE_NAME_MAP,
 	INSERT_ROWS,
 	INSERT_FILES,
 	DELETE_DATA,
@@ -642,7 +609,7 @@ enum class RESTAlterationType : uint8_t {
 	SET_COLUMN_COMMENT,
 };
 
-//! The change of an `alter_table` or `alter_view` request: an object with exactly one member, the name of the change.
+//! The change of an `alter` request: an object with exactly one member, the name of the change.
 struct RESTAlteration {
 	explicit RESTAlteration(RESTAlterationType type) : type(type) {
 	}
@@ -1057,27 +1024,6 @@ struct RESTConfigResponse {
 	vector<string> endpoints;
 };
 
-struct RESTDuckLakeTableRequest {
-	//! The table, e.g. `ducklake_snapshot`.
-	string table_name;
-	//! The maximum number of entries to return. The server picks a number if absent, and can return fewer entries.
-	optional_idx page_size;
-	//! The `next_page_token` of the previous page. The first page if absent.
-	string page_token;
-};
-
-struct RESTDuckLakeTableResponse : public RESTRowSet {
-	//! The token of the next page, absent on the last page. The pages hold consecutive rows.
-	string next_page_token;
-};
-
-struct RESTDuckLakeTablesRequest {};
-
-struct RESTDuckLakeTablesResponse {
-	//! The tables.
-	vector<string> table_names;
-};
-
 struct RESTGetMetadataRequest {};
 
 struct RESTListSnapshotsRequest {
@@ -1360,16 +1306,16 @@ struct RESTCreateMacroRequest : public RESTCommitRequest {
 	DuckLakeMacroInfo macro;
 };
 
-//! The `alter_table` request of a commit.
-struct RESTAlterTableRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::ALTER_TABLE;
+//! The `alter` request of a commit.
+struct RESTAlterRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::ALTER;
 
-	RESTAlterTableRequest() : RESTCommitRequest(TYPE) {
+	RESTAlterRequest() : RESTCommitRequest(TYPE) {
 	}
 
-	//! The schema of the table.
+	//! The schema of the table or view.
 	vector<string> schema_path;
-	//! The name of the table.
+	//! The name of the table or view.
 	string name;
 	//! The change.
 	unique_ptr<RESTAlteration> alter;
@@ -1377,71 +1323,19 @@ struct RESTAlterTableRequest : public RESTCommitRequest {
 	optional_idx partition_id;
 };
 
-//! The `alter_view` request of a commit.
-struct RESTAlterViewRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::ALTER_VIEW;
+//! The `drop` request of a commit.
+struct RESTDropRequest : public RESTCommitRequest {
+	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP;
 
-	RESTAlterViewRequest() : RESTCommitRequest(TYPE) {
+	RESTDropRequest() : RESTCommitRequest(TYPE) {
 	}
 
-	//! The schema of the view.
+	//! The type of the entry.
+	string entry_type;
+	//! The schema of the entry. For a schema: the path of the schema.
 	vector<string> schema_path;
-	//! The name of the view.
+	//! The name of the entry. Not for a schema.
 	string name;
-	//! The change.
-	unique_ptr<RESTAlteration> alter;
-};
-
-//! The `drop_schema` request of a commit.
-struct RESTDropSchemaRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_SCHEMA;
-
-	RESTDropSchemaRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The path of the schema.
-	vector<string> schema_path;
-};
-
-//! The `drop_table` request of a commit.
-struct RESTDropTableRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_TABLE;
-
-	RESTDropTableRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The schema of the table.
-	vector<string> schema_path;
-	//! The name of the table.
-	string name;
-};
-
-//! The `drop_view` request of a commit.
-struct RESTDropViewRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_VIEW;
-
-	RESTDropViewRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The schema of the view.
-	vector<string> schema_path;
-	//! The name of the view.
-	string name;
-};
-
-//! The `drop_macro` request of a commit.
-struct RESTDropMacroRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::DROP_MACRO;
-
-	RESTDropMacroRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The schema of the macro.
-	vector<string> schema_path;
-	//! The name of the macro.
-	string name;
-	//! The type of the macro.
-	string macro_type = string("scalar");
 };
 
 //! The `set_option` request of a commit.
@@ -1455,19 +1349,6 @@ struct RESTSetOptionRequest : public RESTCommitRequest {
 	RESTOptionSetting option;
 	//! Reset the option instead of setting it.
 	bool reset = false;
-};
-
-//! The `create_name_map` request of a commit.
-struct RESTCreateNameMapRequest : public RESTCommitRequest {
-	static constexpr const RESTCommitRequestType TYPE = RESTCommitRequestType::CREATE_NAME_MAP;
-
-	RESTCreateNameMapRequest() : RESTCommitRequest(TYPE) {
-	}
-
-	//! The table.
-	int64_t table_id = 0;
-	//! The name map.
-	DuckLakeColumnMappingInfo mapping;
 };
 
 //! The `insert_rows` request of a commit.
@@ -1500,6 +1381,8 @@ struct RESTInsertFilesRequest : public RESTCommitRequest {
 	int64_t table_id = 0;
 	//! The files.
 	vector<DuckLakeDataFile> files;
+	//! The name maps of the files, which map the columns of the files by name. A file refers to its name map with its
+	vector<DuckLakeColumnMappingInfo> name_maps;
 };
 
 //! The `delete_data` request of a commit.
@@ -1530,12 +1413,6 @@ struct RESTDeleteDataRequest : public RESTCommitRequest {
 struct DuckLakeRESTEndpoints {
 	//! Returns how a client connects to a catalog of the server. This is the first request of a client.
 	static RESTConfigResponse Config(DuckLakeRESTRequest &request, const RESTConfigRequest &parameters);
-	//! Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
-	static RESTDuckLakeTableResponse DuckLakeTable(DuckLakeRESTRequest &request,
-	                                               const RESTDuckLakeTableRequest &parameters);
-	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
-	static RESTDuckLakeTablesResponse DuckLakeTables(DuckLakeRESTRequest &request,
-	                                                 const RESTDuckLakeTablesRequest &parameters);
 	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 	static DuckLakeMetadata GetMetadata(DuckLakeRESTRequest &request, const RESTGetMetadataRequest &parameters);
 	//! Returns the snapshots, optionally filtered.
@@ -1574,14 +1451,9 @@ protected:
 	virtual void CreateTable(RESTCreateTableRequest &request) = 0;
 	virtual void CreateView(RESTCreateViewRequest &request) = 0;
 	virtual void CreateMacro(RESTCreateMacroRequest &request) = 0;
-	virtual void AlterTable(RESTAlterTableRequest &request) = 0;
-	virtual void AlterView(RESTAlterViewRequest &request) = 0;
-	virtual void DropSchema(RESTDropSchemaRequest &request) = 0;
-	virtual void DropTable(RESTDropTableRequest &request) = 0;
-	virtual void DropView(RESTDropViewRequest &request) = 0;
-	virtual void DropMacro(RESTDropMacroRequest &request) = 0;
+	virtual void Alter(RESTAlterRequest &request) = 0;
+	virtual void Drop(RESTDropRequest &request) = 0;
 	virtual void SetOption(RESTSetOptionRequest &request) = 0;
-	virtual void CreateNameMap(RESTCreateNameMapRequest &request) = 0;
 	virtual void InsertRows(RESTInsertRowsRequest &request) = 0;
 	virtual void InsertFiles(RESTInsertFilesRequest &request) = 0;
 	virtual void DeleteData(RESTDeleteDataRequest &request) = 0;
@@ -1646,10 +1518,6 @@ public:
 
 	//! Returns how a client connects to a catalog of the server. This is the first request of a client.
 	RESTConfigResponse Config(const RESTConfigRequest &request);
-	//! Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
-	RESTDuckLakeTableResponse DuckLakeTable(const RESTDuckLakeTableRequest &request);
-	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
-	RESTDuckLakeTablesResponse DuckLakeTables(const RESTDuckLakeTablesRequest &request);
 	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 	DuckLakeMetadata GetMetadata(const RESTGetMetadataRequest &request);
 	//! Returns the snapshots, optionally filtered.

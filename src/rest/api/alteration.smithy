@@ -6,7 +6,7 @@ namespace ducklake.rest
 
 use ducklake.rest.codegen#cppClass
 
-/// The change of an `alter_table` or `alter_view` request: an object with exactly one member, the name of the change.
+/// The change of an `alter` request: an object with exactly one member, the name of the change.
 /// Columns are referred to by name; nested fields by their path from the top-level column, e.g. `["s", "a"]`.
 /// Expressions are SQL expressions.
 ///

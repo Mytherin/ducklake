@@ -307,46 +307,6 @@ operation TableChanges {
     }
 }
 
-/// Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
-///
-/// In SQL, `ducklake_metadata_table('lake', 'ducklake_snapshot')` reads a table of the metadata catalog of any
-/// DuckLake.
-@http(method: "GET", uri: "/v1/metadata-tables")
-@readonly
-operation DuckLakeTables {
-    output := {
-        /// The tables.
-        table_names: StringList = []
-    }
-}
-
-/// Returns the contents of a table of the DuckLake specification, as it is stored in the catalog.
-///
-/// This makes it possible to inspect a DuckLake or to export all of its metadata.
-@http(method: "GET", uri: "/v1/metadata-tables/{table_name}")
-@readonly
-operation DuckLakeTable {
-    input := {
-        /// The table, e.g. `ducklake_snapshot`.
-        @required
-        @httpLabel
-        table_name: String
-
-        /// The maximum number of entries to return. The server picks a number if absent, and can return fewer entries.
-        @httpQuery("page_size")
-        page_size: UInt64
-
-        /// The `next_page_token` of the previous page. The first page if absent.
-        @httpQuery("page_token")
-        page_token: String
-    }
-
-    output := with [RowSet] {
-        /// The token of the next page, absent on the last page. The pages hold consecutive rows.
-        next_page_token: String
-    }
-}
-
 /// The unit of an `AT` clause.
 enum AtUnit {
     /// A snapshot id.

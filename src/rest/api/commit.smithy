@@ -157,12 +157,12 @@ structure CreateMacroRequest {
     macro: MacroInfo
 }
 
-/// Alters a table.
-structure AlterTableRequest {
-    /// The schema of the table.
+/// Alters a table or a view.
+structure AlterRequest {
+    /// The schema of the table or view.
     schema_path: StringList = []
 
-    /// The name of the table.
+    /// The name of the table or view.
     @required
     name: String
 
@@ -174,58 +174,35 @@ structure AlterTableRequest {
     partition_id: UInt64
 }
 
-/// Alters a view.
-structure AlterViewRequest {
-    /// The schema of the view.
+/// Drops a schema, a table, a view or a macro. A schema has to be empty.
+structure DropRequest {
+    /// The type of the entry.
+    @required
+    entry_type: DropEntryType
+
+    /// The schema of the entry. For a schema: the path of the schema.
     schema_path: StringList = []
 
-    /// The name of the view.
-    @required
-    name: String
-
-    /// The change.
-    @required
-    alter: Alteration
-}
-
-/// Drops a schema, which has to be empty.
-structure DropSchemaRequest {
-    /// The path of the schema.
-    @required
-    schema_path: StringList
-}
-
-/// Drops a table.
-structure DropTableRequest {
-    /// The schema of the table.
-    schema_path: StringList = []
-
-    /// The name of the table.
-    @required
+    /// The name of the entry. Not for a schema.
     name: String
 }
 
-/// Drops a view.
-structure DropViewRequest {
-    /// The schema of the view.
-    schema_path: StringList = []
+/// The type of an entry that `drop` drops.
+enum DropEntryType {
+    /// A schema.
+    SCHEMA = "schema"
 
-    /// The name of the view.
-    @required
-    name: String
-}
+    /// A table.
+    TABLE = "table"
 
-/// Drops a macro.
-structure DropMacroRequest {
-    /// The schema of the macro.
-    schema_path: StringList = []
+    /// A view.
+    VIEW = "view"
 
-    /// The name of the macro.
-    @required
-    name: String
+    /// A scalar macro.
+    SCALAR_MACRO = "scalar_macro"
 
-    /// The type of the macro.
-    macro_type: MacroType = "scalar"
+    /// A table macro.
+    TABLE_MACRO = "table_macro"
 }
 
 /// Sets or resets a DuckLake option (`ducklake_metadata`).
@@ -236,19 +213,6 @@ structure SetOptionRequest {
 
     /// Reset the option instead of setting it.
     reset: Boolean = false
-}
-
-/// Registers a name map for files that are inserted later in the transaction.
-///
-/// `mapping.mapping_id` is an id of the client, which files of the transaction refer to with their `mapping_id`.
-structure CreateNameMapRequest {
-    /// The table.
-    @required
-    table_id: Long
-
-    /// The name map.
-    @required
-    mapping: NameMap
 }
 
 /// Inserts rows that are inlined in the catalog.
@@ -284,6 +248,10 @@ structure InsertFilesRequest {
     /// The files.
     @required
     files: DataFileList
+
+    /// The name maps of the files, which map the columns of the files by name. A file refers to its name map with its
+    /// `mapping_id`, an id of the client.
+    name_maps: NameMapList = []
 }
 
 /// Deletes rows from a table.

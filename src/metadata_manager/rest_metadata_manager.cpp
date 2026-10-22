@@ -624,28 +624,11 @@ vector<DuckLakeFileForCleanup> RESTMetadataManager::GetOldFilesForCleanup(const 
 }
 
 vector<string> RESTMetadataManager::GetMetadataTableNames() {
-	return std::move(GetClient().DuckLakeTables(RESTDuckLakeTablesRequest()).table_names);
+	throw NotImplementedException("DuckLake REST catalogs do not have metadata tables to read");
 }
 
 unique_ptr<QueryResult> RESTMetadataManager::ReadMetadataTable(const string &table_name) {
-	RESTDuckLakeTableRequest request;
-	request.table_name = table_name;
-	RESTRowSet result;
-	while (true) {
-		auto page = GetClient().DuckLakeTable(request);
-		if (!result.rows.owned_rows) {
-			result.columns = std::move(page.columns);
-			result.rows = std::move(page.rows);
-		} else {
-			for (auto &chunk : page.rows.rows->Chunks()) {
-				result.rows.owned_rows->Append(chunk);
-			}
-		}
-		if (page.next_page_token.empty()) {
-			return ToQueryResult(std::move(result));
-		}
-		request.page_token = std::move(page.next_page_token);
-	}
+	throw NotImplementedException("DuckLake REST catalogs do not have metadata tables to read");
 }
 
 vector<string> RESTMetadataManager::GetKnownFilePaths() {
@@ -838,19 +821,6 @@ void RESTMetadataManager::OnCreateMacro(MacroCatalogEntry &macro) {
 	request.macro = DuckLakeTransactionState::GetMacroInfo(macro);
 }
 
-static bool AltersView(const AlterInfo &info) {
-	switch (info.type) {
-	case AlterType::ALTER_VIEW:
-		return true;
-	case AlterType::SET_COMMENT:
-		return info.Cast<SetCommentInfo>().entry_catalog_type == CatalogType::VIEW_ENTRY;
-	case AlterType::SET_COLUMN_COMMENT:
-		return info.Cast<SetColumnCommentInfo>().catalog_entry_type == CatalogType::VIEW_ENTRY;
-	default:
-		return false;
-	}
-}
-
 //! The type an ALTER TABLE gives a column, if any
 static LogicalType GetAlteredType(const AlterInfo &info) {
 	if (info.type != AlterType::ALTER_TABLE) {
@@ -875,50 +845,36 @@ void RESTMetadataManager::OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterI
 		DuckLakeTypes::ToString(altered_type);
 		DuckLakeTypes::CheckSupportedType(altered_type, transaction.GetCatalog().GetDuckLakeVersion());
 	}
-	auto name = info.GetQualifiedName().Name().GetIdentifierName();
-	if (AltersView(info)) {
-		auto &request = AddCommitRequest<RESTAlterViewRequest>();
-		request.schema_path = GetSchemaPath(schema);
-		request.name = std::move(name);
-		request.alter = DuckLakeRESTCatalogChanges::WriteAlter(info);
-		return;
-	}
-	auto &request = AddCommitRequest<RESTAlterTableRequest>();
+	auto &request = AddCommitRequest<RESTAlterRequest>();
 	request.schema_path = GetSchemaPath(schema);
-	request.name = std::move(name);
+	request.name = info.GetQualifiedName().Name().GetIdentifierName();
 	request.alter = DuckLakeRESTCatalogChanges::WriteAlter(info);
 }
 
 void RESTMetadataManager::OnDropEntry(CatalogEntry &entry) {
+	auto &request = AddCommitRequest<RESTDropRequest>();
 	switch (entry.type) {
-	case CatalogType::SCHEMA_ENTRY: {
-		auto &request = AddCommitRequest<RESTDropSchemaRequest>();
+	case CatalogType::SCHEMA_ENTRY:
+		request.entry_type = "schema";
 		request.schema_path = GetSchemaPath(entry.Cast<DuckLakeSchemaEntry>());
 		return;
-	}
-	case CatalogType::TABLE_ENTRY: {
-		auto &request = AddCommitRequest<RESTDropTableRequest>();
-		request.schema_path = GetSchemaPath(entry.ParentSchema().Cast<DuckLakeSchemaEntry>());
-		request.name = entry.name.GetIdentifierName();
-		return;
-	}
-	case CatalogType::VIEW_ENTRY: {
-		auto &request = AddCommitRequest<RESTDropViewRequest>();
-		request.schema_path = GetSchemaPath(entry.ParentSchema().Cast<DuckLakeSchemaEntry>());
-		request.name = entry.name.GetIdentifierName();
-		return;
-	}
+	case CatalogType::TABLE_ENTRY:
+		request.entry_type = "table";
+		break;
+	case CatalogType::VIEW_ENTRY:
+		request.entry_type = "view";
+		break;
 	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY: {
-		auto &request = AddCommitRequest<RESTDropMacroRequest>();
-		request.schema_path = GetSchemaPath(entry.ParentSchema().Cast<DuckLakeSchemaEntry>());
-		request.name = entry.name.GetIdentifierName();
-		request.macro_type = entry.type == CatalogType::MACRO_ENTRY ? "scalar" : "table";
-		return;
-	}
+		request.entry_type = "scalar_macro";
+		break;
+	case CatalogType::TABLE_MACRO_ENTRY:
+		request.entry_type = "table_macro";
+		break;
 	default:
 		throw InternalException("Unsupported catalog entry type for DROP");
 	}
+	request.schema_path = GetSchemaPath(entry.ParentSchema().Cast<DuckLakeSchemaEntry>());
+	request.name = entry.name.GetIdentifierName();
 }
 
 void RESTMetadataManager::OnEntryChanged(CatalogEntry &entry) {
@@ -934,8 +890,8 @@ void RESTMetadataManager::OnEntryChanged(CatalogEntry &entry) {
 	auto &last_request = *catalog_requests.back();
 	if (last_request.type == RESTCreateTableRequest::TYPE) {
 		last_request.Cast<RESTCreateTableRequest>().partition_id = partition_data->partition_id;
-	} else if (last_request.type == RESTAlterTableRequest::TYPE) {
-		last_request.Cast<RESTAlterTableRequest>().partition_id = partition_data->partition_id;
+	} else if (last_request.type == RESTAlterRequest::TYPE) {
+		last_request.Cast<RESTAlterRequest>().partition_id = partition_data->partition_id;
 	}
 }
 
@@ -1027,6 +983,18 @@ void RESTMetadataManager::AddInserts(const TransactionChangeInformation &transac
 			auto &request = AddRequest<RESTInsertFilesRequest>(requests);
 			request.table_id = table_id;
 			request.files = changes.new_data_files;
+			for (auto &name_map_entry : transaction.GetNewNameMaps().name_maps) {
+				auto &name_map = *name_map_entry.second;
+				if (name_map.table_id != entry.first) {
+					continue;
+				}
+				DuckLakeColumnMappingInfo mapping;
+				mapping.table_id = name_map.table_id;
+				mapping.mapping_id = name_map.id;
+				mapping.map_type = "map_by_name";
+				mapping.map_columns = name_map.FlattenColumns();
+				request.name_maps.push_back(std::move(mapping));
+			}
 		}
 		if (changes.new_inlined_data && changes.new_inlined_data->data) {
 			auto &inlined_data = *changes.new_inlined_data;
@@ -1039,18 +1007,6 @@ void RESTMetadataManager::AddInserts(const TransactionChangeInformation &transac
 			}
 			request.column_stats = inlined_data.column_stats;
 		}
-	}
-}
-
-void RESTMetadataManager::AddNameMaps(vector<unique_ptr<RESTCommitRequest>> &requests) {
-	for (auto &entry : transaction.GetNewNameMaps().name_maps) {
-		auto &name_map = *entry.second;
-		auto &request = AddRequest<RESTCreateNameMapRequest>(requests);
-		request.table_id = ToRequestId(name_map.table_id.index);
-		request.mapping.table_id = name_map.table_id;
-		request.mapping.mapping_id = name_map.id;
-		request.mapping.map_type = "map_by_name";
-		request.mapping.map_columns = name_map.FlattenColumns();
 	}
 }
 
@@ -1084,7 +1040,6 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 	}
 	catalog_requests.clear();
 	// inserts go last, they are in the format of the tables at the end of the transaction
-	AddNameMaps(requests);
 	AddInserts(transaction_changes, requests);
 	if (transaction_snapshot.snapshot_id != DConstants::INVALID_INDEX) {
 		request.snapshot = transaction_snapshot;

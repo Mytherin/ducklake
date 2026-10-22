@@ -77,8 +77,6 @@ service DuckLake {
         TableSizes
         Compact
         TableChanges
-        DuckLakeTables
-        DuckLakeTable
         CommitTransaction
     ]
 }
@@ -89,14 +87,9 @@ union CommitRequest {
     create_table: CreateTableRequest
     create_view: CreateViewRequest
     create_macro: CreateMacroRequest
-    alter_table: AlterTableRequest
-    alter_view: AlterViewRequest
-    drop_schema: DropSchemaRequest
-    drop_table: DropTableRequest
-    drop_view: DropViewRequest
-    drop_macro: DropMacroRequest
+    alter: AlterRequest
+    drop: DropRequest
     set_option: SetOptionRequest
-    create_name_map: CreateNameMapRequest
     insert_rows: InsertRowsRequest
     insert_files: InsertFilesRequest
     delete_data: DeleteDataRequest

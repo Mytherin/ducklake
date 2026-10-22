@@ -84,9 +84,9 @@ public:
 	vector<DuckLakeSnapshotInfo> GetAllSnapshots(const DuckLakeSnapshotFilter &filter = {}) override;
 	void DeleteSnapshots(const vector<DuckLakeSnapshotInfo> &snapshots) override;
 	vector<DuckLakeFileForCleanup> GetOldFilesForCleanup(const string &older_than) override;
-	vector<string> GetKnownFilePaths() override;
 	vector<string> GetMetadataTableNames() override;
 	unique_ptr<QueryResult> ReadMetadataTable(const string &table_name) override;
+	vector<string> GetKnownFilePaths() override;
 	void SetConfigOption(const DuckLakeConfigOption &option) override;
 	bool ResetConfigOption(const DuckLakeConfigOption &option) override;
 	vector<DuckLakeTableSizeInfo> GetTableSizes(DuckLakeSnapshot snapshot) override;
@@ -145,7 +145,6 @@ private:
 	                                         bool include_stats);
 	void AddDeletes(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
 	void AddInserts(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
-	void AddNameMaps(vector<unique_ptr<RESTCommitRequest>> &requests);
 	RESTTableChangesResponse GetTableChanges(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
 	                                         DuckLakeSnapshot snapshot, const string &changes,
 	                                         optional_ptr<const vector<FieldIndex>> projection);

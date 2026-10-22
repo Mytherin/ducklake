@@ -159,24 +159,6 @@ FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots?page_size=100'
 ----
 9	true
 
-# the tables of the metadata are read in pages
-query I
-SELECT count(*) FROM ducklake_metadata_table('dl', 'ducklake_snapshot')
-----
-9
-
-query III
-SELECT status, json_array_length(response->'$.rows'), response->>'$.next_page_token'
-FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/metadata-tables/ducklake_snapshot', '')
-----
-200	2	2
-
-query II
-SELECT json_array_length(response->'$.rows'), response->>'$.next_page_token' IS NULL
-FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/metadata-tables/ducklake_snapshot?page_token=8', '')
-----
-1	true
-
 # the storage of the tables is read in pages
 loop i 0 4
 

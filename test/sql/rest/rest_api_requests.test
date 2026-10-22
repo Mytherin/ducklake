@@ -60,11 +60,6 @@ SELECT response->>'$.snapshot.snapshot_id' FROM ducklake_rest_request('{rest_ser
 ----
 3
 
-query I
-SELECT json_array_length(response->'$.rows') FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/metadata-tables/ducklake_snapshot', '')
-----
-4
-
 # a created entry is returned with its id under the reference of its request
 query II
 SELECT response->>'$.entry_ids[0].entry_reference', response->>'$.entry_ids[0].type'
@@ -214,11 +209,6 @@ SELECT response->>'$.catalog.tables[0].next_column_id' FROM ducklake_rest_reques
 ----
 3
 
-query I
-SELECT json_array_length(response->'$.table_names') > 0 FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/metadata-tables', '')
-----
-true
-
 # the method has to match the route
 query II
 SELECT status, response->>'$.error.code' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/config', '{}')
@@ -242,10 +232,35 @@ SELECT status, response->>'$.error.message' LIKE '%exactly one member%' FROM duc
 ----
 400	true
 
+# entries are dropped by their type
+query I
+SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
+'{"requests": [{"create_schema": {"schema_path": ["s3"]}}, {"drop": {"entry_type": "schema", "schema_path": ["s3"]}}]}')
+----
+200
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%dropped by its schema_path, without a name%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
+'{"requests": [{"drop": {"entry_type": "schema", "schema_path": ["main"], "name": "t"}}]}')
+----
+400	true
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%Dropping a table needs a name%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
+'{"requests": [{"drop": {"entry_type": "table", "schema_path": ["main"]}}]}')
+----
+400	true
+
+query II
+SELECT status, response->>'$.error.message' LIKE '%"function" is not a valid DropEntryType%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
+'{"requests": [{"drop": {"entry_type": "function", "name": "f"}}]}')
+----
+400	true
+
 # alterations are unions: an object with exactly one member, the name of the change
 query I
 SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"alter_table": {"schema_path": ["main"], "name": "t", "alter": {"rename_column": {"old_name": "s", "new_name": "str"}}}}]}')
+'{"requests": [{"alter": {"schema_path": ["main"], "name": "t", "alter": {"rename_column": {"old_name": "s", "new_name": "str"}}}}]}')
 ----
 200
 
@@ -256,25 +271,25 @@ i,str
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%"bogus" is not a valid Alteration%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"alter_table": {"name": "t", "alter": {"bogus": {}}}}]}')
+'{"requests": [{"alter": {"name": "t", "alter": {"bogus": {}}}}]}')
 ----
 400	true
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%exactly one%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"alter_table": {"name": "t", "alter": {"type": "rename_column", "old_name": "i", "new_name": "j"}}}]}')
+'{"requests": [{"alter": {"name": "t", "alter": {"type": "rename_column", "old_name": "i", "new_name": "j"}}}]}')
 ----
 400	true
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%missing required field "new_name"%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"alter_table": {"name": "t", "alter": {"rename_table": {}}}}]}')
+'{"requests": [{"alter": {"name": "t", "alter": {"rename_table": {}}}}]}')
 ----
 400	true
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%not a valid CatalogEntryType%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"alter_table": {"name": "t", "alter": {"set_comment": {"entry_type": "SCHEMA_ENTRY", "comment": "c"}}}}]}')
+'{"requests": [{"alter": {"name": "t", "alter": {"set_comment": {"entry_type": "SCHEMA_ENTRY", "comment": "c"}}}}]}')
 ----
 400	true
 

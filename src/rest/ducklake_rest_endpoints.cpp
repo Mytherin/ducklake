@@ -570,62 +570,6 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 	return result;
 }
 
-RESTDuckLakeTablesResponse DuckLakeRESTEndpoints::DuckLakeTables(DuckLakeRESTRequest &request,
-                                                                 const RESTDuckLakeTablesRequest &parameters) {
-	RESTDuckLakeTablesResponse result;
-	result.table_names = request.GetMetadataManager().GetMetadataTableNames();
-	return result;
-}
-
-RESTDuckLakeTableResponse DuckLakeRESTEndpoints::DuckLakeTable(DuckLakeRESTRequest &request,
-                                                               const RESTDuckLakeTableRequest &parameters) {
-	auto query_result = request.GetMetadataManager().ReadMetadataTable(parameters.table_name);
-	// the page token is the number of rows before the page
-	auto start = GetPageStart(parameters.page_token);
-	auto size = GetPageSize(request, parameters.page_size);
-	auto &types = query_result->GetTypes();
-	RESTDuckLakeTableResponse result;
-	for (idx_t col_idx = 0; col_idx < query_result->ColumnCount(); col_idx++) {
-		RESTResultColumn column;
-		column.name = query_result->GetNames()[col_idx].GetIdentifierName();
-		column.type = types[col_idx];
-		result.columns.push_back(std::move(column));
-	}
-	auto collection = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), types);
-	idx_t position = 0;
-	bool more_rows = false;
-	while (true) {
-		auto chunk = query_result->Fetch();
-		if (!chunk || chunk->size() == 0) {
-			break;
-		}
-		for (idx_t row = 0; row < chunk->size(); row++, position++) {
-			if (position < start) {
-				continue;
-			}
-			if (position >= start + size) {
-				more_rows = true;
-				break;
-			}
-			DataChunk single;
-			single.Initialize(Allocator::DefaultAllocator(), types);
-			for (idx_t col_idx = 0; col_idx < chunk->ColumnCount(); col_idx++) {
-				single.SetValue(col_idx, 0, chunk->GetValue(col_idx, row));
-			}
-			single.SetCardinality(1);
-			collection->Append(single);
-		}
-		if (more_rows) {
-			break;
-		}
-	}
-	result.rows = RESTRows(std::move(collection));
-	if (more_rows) {
-		result.next_page_token = to_string(start + size);
-	}
-	return result;
-}
-
 RESTCompactResponse DuckLakeRESTEndpoints::Compact(DuckLakeRESTRequest &request, const RESTCompactRequest &parameters) {
 	// the compaction runs in transactions of its own
 	auto catalog_name = request.catalog->GetName().GetIdentifierName();
@@ -712,14 +656,9 @@ protected:
 	void CreateTable(RESTCreateTableRequest &parameters) override;
 	void CreateView(RESTCreateViewRequest &parameters) override;
 	void CreateMacro(RESTCreateMacroRequest &parameters) override;
-	void AlterTable(RESTAlterTableRequest &parameters) override;
-	void AlterView(RESTAlterViewRequest &parameters) override;
-	void DropSchema(RESTDropSchemaRequest &parameters) override;
-	void DropTable(RESTDropTableRequest &parameters) override;
-	void DropView(RESTDropViewRequest &parameters) override;
-	void DropMacro(RESTDropMacroRequest &parameters) override;
+	void Alter(RESTAlterRequest &parameters) override;
+	void Drop(RESTDropRequest &parameters) override;
 	void SetOption(RESTSetOptionRequest &parameters) override;
-	void CreateNameMap(RESTCreateNameMapRequest &parameters) override;
 	void InsertRows(RESTInsertRowsRequest &parameters) override;
 	void InsertFiles(RESTInsertFilesRequest &parameters) override;
 	void DeleteData(RESTDeleteDataRequest &parameters) override;
@@ -921,54 +860,44 @@ void DuckLakeRESTCommit::CreateMacro(RESTCreateMacroRequest &parameters) {
 	AddEntryReference(schema.CreateFunction(catalog.GetCatalogTransaction(context), *info), parameters.entry_reference);
 }
 
-void DuckLakeRESTCommit::Alter(const vector<string> &schema_path, const string &name, const RESTAlteration &alter,
-                               optional_idx partition_id) {
-	AlterEntryData entry(GetEntryName(schema_path, name), OnEntryNotFound::THROW_EXCEPTION);
-	auto info = DuckLakeRESTCatalogChanges::ReadAlter(context, alter, entry);
+void DuckLakeRESTCommit::Alter(RESTAlterRequest &parameters) {
+	AlterEntryData entry(GetEntryName(parameters.schema_path, parameters.name), OnEntryNotFound::THROW_EXCEPTION);
+	auto info = DuckLakeRESTCatalogChanges::ReadAlter(context, *parameters.alter, entry);
 	catalog.Alter(context, *info);
-	if (partition_id.IsValid()) {
-		auto &schema = GetSchema(schema_path);
+	if (parameters.partition_id.IsValid()) {
+		auto &schema = GetSchema(parameters.schema_path);
 		auto table = schema.GetEntry(catalog.GetCatalogTransaction(context), CatalogType::TABLE_ENTRY,
 		                             info->GetQualifiedName().Name());
 		if (table) {
-			RegisterPartition(table->Cast<DuckLakeTableEntry>(), partition_id);
+			RegisterPartition(table->Cast<DuckLakeTableEntry>(), parameters.partition_id);
 		}
 	}
 }
 
-void DuckLakeRESTCommit::AlterTable(RESTAlterTableRequest &parameters) {
-	Alter(parameters.schema_path, parameters.name, *parameters.alter, parameters.partition_id);
-}
-
-void DuckLakeRESTCommit::AlterView(RESTAlterViewRequest &parameters) {
-	Alter(parameters.schema_path, parameters.name, *parameters.alter, optional_idx());
-}
-
-void DuckLakeRESTCommit::Drop(CatalogType type, const vector<string> &schema_path, const string &name) {
+void DuckLakeRESTCommit::Drop(RESTDropRequest &parameters) {
 	DropInfo info;
-	info.type = type;
-	info.SetQualifiedName(GetEntryName(schema_path, name));
+	if (parameters.entry_type == "schema") {
+		if (!parameters.name.empty()) {
+			throw InvalidInputException("A schema is dropped by its schema_path, without a name");
+		}
+		info.type = CatalogType::SCHEMA_ENTRY;
+		info.SetQualifiedName(GetSchemaName(parameters.schema_path));
+	} else {
+		if (parameters.name.empty()) {
+			throw InvalidInputException("Dropping a %s needs a name", parameters.entry_type);
+		}
+		if (parameters.entry_type == "table") {
+			info.type = CatalogType::TABLE_ENTRY;
+		} else if (parameters.entry_type == "view") {
+			info.type = CatalogType::VIEW_ENTRY;
+		} else if (parameters.entry_type == "table_macro") {
+			info.type = CatalogType::TABLE_MACRO_ENTRY;
+		} else {
+			info.type = CatalogType::MACRO_ENTRY;
+		}
+		info.SetQualifiedName(GetEntryName(parameters.schema_path, parameters.name));
+	}
 	catalog.DropEntry(context, info);
-}
-
-void DuckLakeRESTCommit::DropSchema(RESTDropSchemaRequest &parameters) {
-	DropInfo info;
-	info.type = CatalogType::SCHEMA_ENTRY;
-	info.SetQualifiedName(GetSchemaName(parameters.schema_path));
-	catalog.DropEntry(context, info);
-}
-
-void DuckLakeRESTCommit::DropTable(RESTDropTableRequest &parameters) {
-	Drop(CatalogType::TABLE_ENTRY, parameters.schema_path, parameters.name);
-}
-
-void DuckLakeRESTCommit::DropView(RESTDropViewRequest &parameters) {
-	Drop(CatalogType::VIEW_ENTRY, parameters.schema_path, parameters.name);
-}
-
-void DuckLakeRESTCommit::DropMacro(RESTDropMacroRequest &parameters) {
-	auto type = parameters.macro_type == "table" ? CatalogType::TABLE_MACRO_ENTRY : CatalogType::MACRO_ENTRY;
-	Drop(type, parameters.schema_path, parameters.name);
 }
 
 void DuckLakeRESTCommit::AddInlinedDeletes(DuckLakeTableEntry &table, const set<idx_t> &row_ids) {
@@ -1021,13 +950,6 @@ void DuckLakeRESTCommit::DeleteData(RESTDeleteDataRequest &parameters) {
 	if (parameters.delete_attempted) {
 		transaction.MarkDeleteAttempted(table_id);
 	}
-}
-
-void DuckLakeRESTCommit::CreateNameMap(RESTCreateNameMapRequest &parameters) {
-	auto &mapping = parameters.mapping;
-	auto client_id = mapping.mapping_id.index;
-	mapping.table_id = GetTable(GetTableId(parameters.table_id)).GetTableId();
-	name_map_ids[client_id] = transaction.AddNameMap(DuckLakeNameMap::FromColumnMapping(std::move(mapping)));
 }
 
 void DuckLakeRESTCommit::RegisterPartition(DuckLakeTableEntry &table, optional_idx client_partition_id) {
@@ -1096,6 +1018,11 @@ void DuckLakeRESTCommit::InsertRows(RESTInsertRowsRequest &parameters) {
 
 void DuckLakeRESTCommit::InsertFiles(RESTInsertFilesRequest &parameters) {
 	auto &table = GetTable(GetTableId(parameters.table_id));
+	for (auto &mapping : parameters.name_maps) {
+		auto client_id = mapping.mapping_id.index;
+		mapping.table_id = table.GetTableId();
+		name_map_ids[client_id] = transaction.AddNameMap(DuckLakeNameMap::FromColumnMapping(std::move(mapping)));
+	}
 	for (auto &file : parameters.files) {
 		RemapNameMap(file);
 		RemapPartition(table, file);

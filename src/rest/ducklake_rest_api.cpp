@@ -172,6 +172,54 @@ void RESTDeleteFileSourceCodec::Read(RESTJsonIn in, DeleteFileSource &result) {
 	result = FromString(in.Str());
 }
 
+const char *RESTDropEntryTypeCodec::ToString(const string &value) {
+	if (value == "schema") {
+		return "schema";
+	}
+	if (value == "table") {
+		return "table";
+	}
+	if (value == "view") {
+		return "view";
+	}
+	if (value == "scalar_macro") {
+		return "scalar_macro";
+	}
+	if (value == "table_macro") {
+		return "table_macro";
+	}
+	throw InternalException("\"%s\" is not a value of the REST API type DropEntryType", value);
+}
+
+string RESTDropEntryTypeCodec::FromString(const string &value) {
+	if (value == "schema") {
+		return value;
+	}
+	if (value == "table") {
+		return value;
+	}
+	if (value == "view") {
+		return value;
+	}
+	if (value == "scalar_macro") {
+		return value;
+	}
+	if (value == "table_macro") {
+		return value;
+	}
+	throw InvalidInputException("DuckLake REST: \"%s\" is not a valid DropEntryType (expected one of schema, table, "
+	                            "view, scalar_macro, table_macro)",
+	                            value);
+}
+
+JSONMutableValue RESTDropEntryTypeCodec::Write(JSONWriter &writer, const string &value) {
+	return writer.CreateString(ToString(value));
+}
+
+void RESTDropEntryTypeCodec::Read(RESTJsonIn in, string &result) {
+	result = FromString(in.Str());
+}
+
 const char *RESTFileFormatCodec::ToString(DeleteFileFormat value) {
 	switch (value) {
 	case DeleteFileFormat::PARQUET:
@@ -3333,102 +3381,6 @@ RESTConfigResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDuckLakeTableRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
-	if (!RESTIsNull(value.page_size)) {
-		result.Add("page_size", RESTWriteValue<RESTUInt64Codec>(writer, value.page_size));
-	}
-	if (!RESTIsNull(value.page_token)) {
-		result.Add("page_token", RESTWriteValue<RESTStringCodec>(writer, value.page_token));
-	}
-	return result;
-}
-
-template <>
-RESTDuckLakeTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DuckLakeTableRequest");
-	}
-	RESTDuckLakeTableRequest result;
-	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
-	{
-		auto entry = in.TryGet("page_size");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.page_size);
-		}
-	}
-	{
-		auto entry = in.TryGet("page_token");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.page_token);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDuckLakeTableResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("columns", RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTResultColumn>>>(writer, value.columns));
-	result.Add("rows", RESTRowsCodec::Write(writer, value.rows));
-	if (!RESTIsNull(value.next_page_token)) {
-		result.Add("next_page_token", RESTWriteValue<RESTStringCodec>(writer, value.next_page_token));
-	}
-	return result;
-}
-
-template <>
-RESTDuckLakeTableResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DuckLakeTableResponse");
-	}
-	RESTDuckLakeTableResponse result;
-	RESTReadValue<RESTListCodec<RESTObjectCodec<RESTResultColumn>>>(in.Get("columns"), result.columns);
-	RESTRowsCodec::Read(in.Get("rows"), result.rows, RESTRowTypes(result.columns, &RESTResultColumn::type));
-	{
-		auto entry = in.TryGet("next_page_token");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.next_page_token);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDuckLakeTablesRequest &value) {
-	auto result = writer.CreateObject();
-	return result;
-}
-
-template <>
-RESTDuckLakeTablesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DuckLakeTablesRequest");
-	}
-	RESTDuckLakeTablesRequest result;
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDuckLakeTablesResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("table_names", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.table_names));
-	return result;
-}
-
-template <>
-RESTDuckLakeTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DuckLakeTablesResponse");
-	}
-	RESTDuckLakeTablesResponse result;
-	{
-		auto entry = in.TryGet("table_names");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.table_names);
-		}
-	}
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTGetMetadataRequest &value) {
 	auto result = writer.CreateObject();
 	return result;
@@ -4591,7 +4543,7 @@ RESTCreateMacroRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTAlterTableRequest &value) {
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTAlterRequest &value) {
 	auto result = writer.CreateObject();
 	result.Add("schema_path", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.schema_path));
 	result.Add("name", RESTWriteValue<RESTStringCodec>(writer, value.name));
@@ -4603,11 +4555,11 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTAlt
 }
 
 template <>
-RESTAlterTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+RESTAlterRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for AlterTableRequest");
+		throw InvalidInputException("DuckLake REST: expected a JSON object for AlterRequest");
 	}
-	RESTAlterTableRequest result;
+	RESTAlterRequest result;
 	{
 		auto entry = in.TryGet("schema_path");
 		if (!entry.IsNull()) {
@@ -4625,120 +4577,33 @@ RESTAlterTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTAlterViewRequest &value) {
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDropRequest &value) {
 	auto result = writer.CreateObject();
+	result.Add("entry_type", RESTWriteValue<RESTDropEntryTypeCodec>(writer, value.entry_type));
 	result.Add("schema_path", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.schema_path));
-	result.Add("name", RESTWriteValue<RESTStringCodec>(writer, value.name));
-	result.Add("alter", RESTWriteValue<RESTAlterationCodec>(writer, value.alter));
+	if (!RESTIsNull(value.name)) {
+		result.Add("name", RESTWriteValue<RESTStringCodec>(writer, value.name));
+	}
 	return result;
 }
 
 template <>
-RESTAlterViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+RESTDropRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for AlterViewRequest");
+		throw InvalidInputException("DuckLake REST: expected a JSON object for DropRequest");
 	}
-	RESTAlterViewRequest result;
+	RESTDropRequest result;
+	RESTReadValue<RESTDropEntryTypeCodec>(in.Get("entry_type"), result.entry_type);
 	{
 		auto entry = in.TryGet("schema_path");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.schema_path);
 		}
 	}
-	RESTReadValue<RESTStringCodec>(in.Get("name"), result.name);
-	RESTReadValue<RESTAlterationCodec>(in.Get("alter"), result.alter);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDropSchemaRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("schema_path", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.schema_path));
-	return result;
-}
-
-template <>
-RESTDropSchemaRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DropSchemaRequest");
-	}
-	RESTDropSchemaRequest result;
-	RESTReadValue<RESTListCodec<RESTStringCodec>>(in.Get("schema_path"), result.schema_path);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDropTableRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("schema_path", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.schema_path));
-	result.Add("name", RESTWriteValue<RESTStringCodec>(writer, value.name));
-	return result;
-}
-
-template <>
-RESTDropTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DropTableRequest");
-	}
-	RESTDropTableRequest result;
 	{
-		auto entry = in.TryGet("schema_path");
+		auto entry = in.TryGet("name");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.schema_path);
-		}
-	}
-	RESTReadValue<RESTStringCodec>(in.Get("name"), result.name);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDropViewRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("schema_path", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.schema_path));
-	result.Add("name", RESTWriteValue<RESTStringCodec>(writer, value.name));
-	return result;
-}
-
-template <>
-RESTDropViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DropViewRequest");
-	}
-	RESTDropViewRequest result;
-	{
-		auto entry = in.TryGet("schema_path");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.schema_path);
-		}
-	}
-	RESTReadValue<RESTStringCodec>(in.Get("name"), result.name);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDropMacroRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("schema_path", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.schema_path));
-	result.Add("name", RESTWriteValue<RESTStringCodec>(writer, value.name));
-	result.Add("macro_type", RESTWriteValue<RESTMacroTypeCodec>(writer, value.macro_type));
-	return result;
-}
-
-template <>
-RESTDropMacroRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DropMacroRequest");
-	}
-	RESTDropMacroRequest result;
-	{
-		auto entry = in.TryGet("schema_path");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.schema_path);
-		}
-	}
-	RESTReadValue<RESTStringCodec>(in.Get("name"), result.name);
-	{
-		auto entry = in.TryGet("macro_type");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTMacroTypeCodec>(entry, result.macro_type);
-		} else {
-			result.macro_type = string("scalar");
+			RESTReadValue<RESTStringCodec>(entry, result.name);
 		}
 	}
 	return result;
@@ -4766,24 +4631,6 @@ RESTSetOptionRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 			result.reset = false;
 		}
 	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCreateNameMapRequest &value) {
-	auto result = writer.CreateObject();
-	result.Add("table_id", RESTWriteValue<RESTInt64Codec>(writer, value.table_id));
-	result.Add("mapping", RESTWriteValue<RESTObjectCodec<DuckLakeColumnMappingInfo>>(writer, value.mapping));
-	return result;
-}
-
-template <>
-RESTCreateNameMapRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for CreateNameMapRequest");
-	}
-	RESTCreateNameMapRequest result;
-	RESTReadValue<RESTInt64Codec>(in.Get("table_id"), result.table_id);
-	RESTReadValue<RESTObjectCodec<DuckLakeColumnMappingInfo>>(in.Get("mapping"), result.mapping);
 	return result;
 }
 
@@ -4833,6 +4680,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTIns
 	auto result = writer.CreateObject();
 	result.Add("table_id", RESTWriteValue<RESTInt64Codec>(writer, value.table_id));
 	result.Add("files", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeDataFile>>>(writer, value.files));
+	result.Add("name_maps",
+	           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(writer, value.name_maps));
 	return result;
 }
 
@@ -4844,6 +4693,12 @@ RESTInsertFilesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	RESTInsertFilesRequest result;
 	RESTReadValue<RESTInt64Codec>(in.Get("table_id"), result.table_id);
 	RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeDataFile>>>(in.Get("files"), result.files);
+	{
+		auto entry = in.TryGet("name_maps");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(entry, result.name_maps);
+		}
+	}
 	return result;
 }
 
@@ -4916,22 +4771,12 @@ const char *RESTCommitRequest::Path() const {
 		return "create_view";
 	case RESTCommitRequestType::CREATE_MACRO:
 		return "create_macro";
-	case RESTCommitRequestType::ALTER_TABLE:
-		return "alter_table";
-	case RESTCommitRequestType::ALTER_VIEW:
-		return "alter_view";
-	case RESTCommitRequestType::DROP_SCHEMA:
-		return "drop_schema";
-	case RESTCommitRequestType::DROP_TABLE:
-		return "drop_table";
-	case RESTCommitRequestType::DROP_VIEW:
-		return "drop_view";
-	case RESTCommitRequestType::DROP_MACRO:
-		return "drop_macro";
+	case RESTCommitRequestType::ALTER:
+		return "alter";
+	case RESTCommitRequestType::DROP:
+		return "drop";
 	case RESTCommitRequestType::SET_OPTION:
 		return "set_option";
-	case RESTCommitRequestType::CREATE_NAME_MAP:
-		return "create_name_map";
 	case RESTCommitRequestType::INSERT_ROWS:
 		return "insert_rows";
 	case RESTCommitRequestType::INSERT_FILES:
@@ -4956,29 +4801,14 @@ optional_idx RESTCommitRequest::TypeFromPath(const string &path) {
 	if (path == "create_macro") {
 		return static_cast<idx_t>(RESTCommitRequestType::CREATE_MACRO);
 	}
-	if (path == "alter_table") {
-		return static_cast<idx_t>(RESTCommitRequestType::ALTER_TABLE);
+	if (path == "alter") {
+		return static_cast<idx_t>(RESTCommitRequestType::ALTER);
 	}
-	if (path == "alter_view") {
-		return static_cast<idx_t>(RESTCommitRequestType::ALTER_VIEW);
-	}
-	if (path == "drop_schema") {
-		return static_cast<idx_t>(RESTCommitRequestType::DROP_SCHEMA);
-	}
-	if (path == "drop_table") {
-		return static_cast<idx_t>(RESTCommitRequestType::DROP_TABLE);
-	}
-	if (path == "drop_view") {
-		return static_cast<idx_t>(RESTCommitRequestType::DROP_VIEW);
-	}
-	if (path == "drop_macro") {
-		return static_cast<idx_t>(RESTCommitRequestType::DROP_MACRO);
+	if (path == "drop") {
+		return static_cast<idx_t>(RESTCommitRequestType::DROP);
 	}
 	if (path == "set_option") {
 		return static_cast<idx_t>(RESTCommitRequestType::SET_OPTION);
-	}
-	if (path == "create_name_map") {
-		return static_cast<idx_t>(RESTCommitRequestType::CREATE_NAME_MAP);
 	}
 	if (path == "insert_rows") {
 		return static_cast<idx_t>(RESTCommitRequestType::INSERT_ROWS);
@@ -5003,22 +4833,12 @@ static unique_ptr<RESTCommitRequest> ReadCommitRequest(RESTCommitRequestType typ
 		return make_uniq<RESTCreateViewRequest>(DuckLakeRESTSerializer::Read<RESTCreateViewRequest>(parameters));
 	case RESTCommitRequestType::CREATE_MACRO:
 		return make_uniq<RESTCreateMacroRequest>(DuckLakeRESTSerializer::Read<RESTCreateMacroRequest>(parameters));
-	case RESTCommitRequestType::ALTER_TABLE:
-		return make_uniq<RESTAlterTableRequest>(DuckLakeRESTSerializer::Read<RESTAlterTableRequest>(parameters));
-	case RESTCommitRequestType::ALTER_VIEW:
-		return make_uniq<RESTAlterViewRequest>(DuckLakeRESTSerializer::Read<RESTAlterViewRequest>(parameters));
-	case RESTCommitRequestType::DROP_SCHEMA:
-		return make_uniq<RESTDropSchemaRequest>(DuckLakeRESTSerializer::Read<RESTDropSchemaRequest>(parameters));
-	case RESTCommitRequestType::DROP_TABLE:
-		return make_uniq<RESTDropTableRequest>(DuckLakeRESTSerializer::Read<RESTDropTableRequest>(parameters));
-	case RESTCommitRequestType::DROP_VIEW:
-		return make_uniq<RESTDropViewRequest>(DuckLakeRESTSerializer::Read<RESTDropViewRequest>(parameters));
-	case RESTCommitRequestType::DROP_MACRO:
-		return make_uniq<RESTDropMacroRequest>(DuckLakeRESTSerializer::Read<RESTDropMacroRequest>(parameters));
+	case RESTCommitRequestType::ALTER:
+		return make_uniq<RESTAlterRequest>(DuckLakeRESTSerializer::Read<RESTAlterRequest>(parameters));
+	case RESTCommitRequestType::DROP:
+		return make_uniq<RESTDropRequest>(DuckLakeRESTSerializer::Read<RESTDropRequest>(parameters));
 	case RESTCommitRequestType::SET_OPTION:
 		return make_uniq<RESTSetOptionRequest>(DuckLakeRESTSerializer::Read<RESTSetOptionRequest>(parameters));
-	case RESTCommitRequestType::CREATE_NAME_MAP:
-		return make_uniq<RESTCreateNameMapRequest>(DuckLakeRESTSerializer::Read<RESTCreateNameMapRequest>(parameters));
 	case RESTCommitRequestType::INSERT_ROWS:
 		return make_uniq<RESTInsertRowsRequest>(DuckLakeRESTSerializer::Read<RESTInsertRowsRequest>(parameters));
 	case RESTCommitRequestType::INSERT_FILES:
@@ -5046,29 +4866,14 @@ JSONMutableValue RESTCommitRequestCodec::Write(JSONWriter &writer, const RESTCom
 	case RESTCommitRequestType::CREATE_MACRO:
 		result.Add("create_macro", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTCreateMacroRequest>()));
 		break;
-	case RESTCommitRequestType::ALTER_TABLE:
-		result.Add("alter_table", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTAlterTableRequest>()));
+	case RESTCommitRequestType::ALTER:
+		result.Add("alter", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTAlterRequest>()));
 		break;
-	case RESTCommitRequestType::ALTER_VIEW:
-		result.Add("alter_view", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTAlterViewRequest>()));
-		break;
-	case RESTCommitRequestType::DROP_SCHEMA:
-		result.Add("drop_schema", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTDropSchemaRequest>()));
-		break;
-	case RESTCommitRequestType::DROP_TABLE:
-		result.Add("drop_table", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTDropTableRequest>()));
-		break;
-	case RESTCommitRequestType::DROP_VIEW:
-		result.Add("drop_view", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTDropViewRequest>()));
-		break;
-	case RESTCommitRequestType::DROP_MACRO:
-		result.Add("drop_macro", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTDropMacroRequest>()));
+	case RESTCommitRequestType::DROP:
+		result.Add("drop", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTDropRequest>()));
 		break;
 	case RESTCommitRequestType::SET_OPTION:
 		result.Add("set_option", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTSetOptionRequest>()));
-		break;
-	case RESTCommitRequestType::CREATE_NAME_MAP:
-		result.Add("create_name_map", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTCreateNameMapRequest>()));
 		break;
 	case RESTCommitRequestType::INSERT_ROWS:
 		result.Add("insert_rows", DuckLakeRESTSerializer::Write(writer, value.Cast<RESTInsertRowsRequest>()));
@@ -5113,29 +4918,14 @@ void DuckLakeRESTCommitHandler::Apply(RESTCommitRequest &request) {
 	case RESTCommitRequestType::CREATE_MACRO:
 		CreateMacro(request.Cast<RESTCreateMacroRequest>());
 		break;
-	case RESTCommitRequestType::ALTER_TABLE:
-		AlterTable(request.Cast<RESTAlterTableRequest>());
+	case RESTCommitRequestType::ALTER:
+		Alter(request.Cast<RESTAlterRequest>());
 		break;
-	case RESTCommitRequestType::ALTER_VIEW:
-		AlterView(request.Cast<RESTAlterViewRequest>());
-		break;
-	case RESTCommitRequestType::DROP_SCHEMA:
-		DropSchema(request.Cast<RESTDropSchemaRequest>());
-		break;
-	case RESTCommitRequestType::DROP_TABLE:
-		DropTable(request.Cast<RESTDropTableRequest>());
-		break;
-	case RESTCommitRequestType::DROP_VIEW:
-		DropView(request.Cast<RESTDropViewRequest>());
-		break;
-	case RESTCommitRequestType::DROP_MACRO:
-		DropMacro(request.Cast<RESTDropMacroRequest>());
+	case RESTCommitRequestType::DROP:
+		Drop(request.Cast<RESTDropRequest>());
 		break;
 	case RESTCommitRequestType::SET_OPTION:
 		SetOption(request.Cast<RESTSetOptionRequest>());
-		break;
-	case RESTCommitRequestType::CREATE_NAME_MAP:
-		CreateNameMap(request.Cast<RESTCreateNameMapRequest>());
 		break;
 	case RESTCommitRequestType::INSERT_ROWS:
 		InsertRows(request.Cast<RESTInsertRowsRequest>());
@@ -5309,20 +5099,6 @@ static string ConfigEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
-static string DuckLakeTableEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTDuckLakeTableRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::DuckLakeTable(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
-static string DuckLakeTablesEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTDuckLakeTablesRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::DuckLakeTables(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
 static string GetMetadataEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTGetMetadataRequest>(document.Root());
@@ -5389,8 +5165,6 @@ static string CommitTransactionEndpoint(DuckLakeRESTRequest &request, const stri
 const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	static const unordered_map<string, rest_endpoint_t> endpoints = {
 	    {"config", ConfigEndpoint},
-	    {"ducklake_table", DuckLakeTableEndpoint},
-	    {"ducklake_tables", DuckLakeTablesEndpoint},
 	    {"get_metadata", GetMetadataEndpoint},
 	    {"list_snapshots", ListSnapshotsEndpoint},
 	    {"row_count", RowCountEndpoint},
@@ -5407,13 +5181,6 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	static const vector<RESTRoute> routes = {
 	    {"config", "GET", "/v1/config", {{"catalog_name", RESTParameterType::STRING, "catalog"}}, true},
-	    {"ducklake_table",
-	     "GET",
-	     "/v1/metadata-tables/{table_name}",
-	     {{"table_name", RESTParameterType::STRING, ""},
-	      {"page_size", RESTParameterType::UINT, "page_size"},
-	      {"page_token", RESTParameterType::STRING, "page_token"}}},
-	    {"ducklake_tables", "GET", "/v1/metadata-tables", {}},
 	    {"get_metadata", "GET", "/v1/metadata", {}},
 	    {"list_snapshots",
 	     "GET",
@@ -5454,18 +5221,6 @@ RESTConfigResponse DuckLakeRESTClientAPI::Config(const RESTConfigRequest &reques
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("config", DuckLakeRESTSerializer::ToJSON(request), true));
 	return DuckLakeRESTSerializer::Read<RESTConfigResponse>(document.Root());
-}
-
-RESTDuckLakeTableResponse DuckLakeRESTClientAPI::DuckLakeTable(const RESTDuckLakeTableRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("ducklake_table", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTDuckLakeTableResponse>(document.Root());
-}
-
-RESTDuckLakeTablesResponse DuckLakeRESTClientAPI::DuckLakeTables(const RESTDuckLakeTablesRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("ducklake_tables", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTDuckLakeTablesResponse>(document.Root());
 }
 
 DuckLakeMetadata DuckLakeRESTClientAPI::GetMetadata(const RESTGetMetadataRequest &request) {
