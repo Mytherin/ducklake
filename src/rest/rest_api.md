@@ -286,32 +286,6 @@ Response:
 | `snapshots` | list of [`SnapshotInfo`](#snapshotinfo) (default `[]`) | The snapshots, ordered by their ids. |
 | `next_page_token` | `string` (optional) | The token of the next page, absent on the last page. |
 
-### `row_count`
-
-Counts the rows of a table that are visible in a snapshot.
-
-`POST /v1/tables/{table_id}/row-count`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `table_id` | path | `uint64` | The table. |
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshots/latest` and `snapshots/at`. |
-| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `count` | [`RowCountType`](#rowcounttype) | What to count. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `row_count` | `uint64` (optional) | The number of rows. |
-
 ### `select`
 
 Plans a scan of a table.
@@ -321,6 +295,11 @@ inlined deletions, and optionally the rows of the table that are inlined in the 
 `include_inlined_data`, `inlined_data` holds the visible inlined rows, with the row id, the begin and end snapshot
 and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. It is
 absent if the table has no inlined rows.
+
+The `aggregates` of a request without `filters` are answered from the statistics of the table where the server can,
+instead of listing the files: `aggregate_results` has an entry for each aggregate, and tells whether the server
+answered it. If it answered all of them, the response has no files and no inlined rows: the results are the answer.
+Otherwise the response is the one of a scan, with the results of the aggregates that were answered.
 
 A scan of many files is returned in pages. The response has the first page of files, and `page_tokens` has the token
 of every other page. A request with a `page_token` and no other member (except for the table) returns the page of
@@ -343,6 +322,7 @@ Request:
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshots/latest` and `snapshots/at`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `page_token` | `string` (optional) | A page token of an earlier response: returns that page of files. The request has no other members then. |
+| `aggregates` | list of [`Aggregate`](#aggregate) (default `[]`) | Aggregates over the whole table that the server answers from statistics if it can. Not with `filters`. |
 | `extended` | `bool` (default `false`) | Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`. |
 | `filters` | [`ScanFilters`](#scanfilters) (optional) | Filters to prune files with. |
 | `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows of the table that are visible in the snapshot. |
@@ -358,6 +338,7 @@ Response:
 | `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of the scan, for `extended` scans. |
 | `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows of the table, for `include_inlined_data`. |
 | `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files of the response and the files of all its pages. |
+| `aggregate_results` | list of [`AggregateResult`](#aggregateresult) (default `[]`) | The results of the `aggregates` of the request, in their order. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
 
 ### `table_changes`
@@ -697,6 +678,35 @@ client leave them out when they have no value.
 | `column_path` | list of `string` | The path of the parent column. |
 | `field` | [`ColumnDefinition`](#columndefinition) | The field. |
 | `if_not_exists` | `bool` (default `false`) | Do nothing if the field exists. |
+
+### `Aggregate`
+
+An aggregate over the rows of a table.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `function` | [`AggregateFunction`](#aggregatefunction) | The function. |
+| `column_id` | `uint64` (optional) | The column, as its field id. For aggregates other than `count_star`: a top-level column. |
+
+### `AggregateFunction`
+
+The function of an aggregate.
+
+| Value | Description |
+|-------|-------------|
+| `count_star` | `count(*)`. |
+| `count` | `count(column)`: the number of rows where the column is not NULL. |
+| `min` | `min(column)`. |
+| `max` | `max(column)`. |
+
+### `AggregateResult`
+
+The result of an aggregate of a scan.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `answered` | `bool` | Whether the server answered the aggregate. If not, the files of the scan have to be read to answer it. |
+| `value` | `value` (optional) | The result, `null` if the aggregate is NULL (e.g. the `min` of a column without values) or not answered. |
 
 ### `Alteration`
 
@@ -1351,16 +1361,6 @@ How a commit is retried on conflicts.
 | `max_retry_count` | `uint64` | The number of retries. |
 | `retry_wait_ms` | `uint64` | The wait before the first retry. |
 | `retry_backoff` | `double` | The factor the wait grows with on every retry. |
-
-### `RowCountType`
-
-What `row_count` counts.
-
-| Value | Description |
-|-------|-------------|
-| `data_files` | The rows in data files minus the deleted rows. |
-| `data_files_exact` | The same, absent if it cannot be computed exactly. |
-| `inlined` | The inlined rows of a table. |
 
 ### `RowSet`
 

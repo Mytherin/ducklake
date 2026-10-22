@@ -23,6 +23,14 @@ struct RESTAlteration;
 //===--------------------------------------------------------------------===//
 // Enums
 //===--------------------------------------------------------------------===//
+//! The function of an aggregate.
+struct RESTAggregateFunctionCodec : public RESTCodec<RESTAggregateFunctionCodec> {
+	static const char *ToString(const string &value);
+	static string FromString(const string &value);
+	static JSONMutableValue Write(JSONWriter &writer, const string &value);
+	static void Read(RESTJsonIn in, string &result);
+};
+
 //! The unit of an `AT` clause.
 struct RESTAtUnitCodec : public RESTCodec<RESTAtUnitCodec> {
 	static const char *ToString(const string &value);
@@ -95,14 +103,6 @@ struct RESTNullOrderCodec : public RESTCodec<RESTNullOrderCodec> {
 	static void Read(RESTJsonIn in, OrderByNullType &result);
 };
 
-//! What `row_count` counts.
-struct RESTRowCountTypeCodec : public RESTCodec<RESTRowCountTypeCodec> {
-	static const char *ToString(const string &value);
-	static string FromString(const string &value);
-	static JSONMutableValue Write(JSONWriter &writer, const string &value);
-	static void Read(RESTJsonIn in, string &result);
-};
-
 //! How a timestamp finds a snapshot.
 struct RESTSnapshotBoundCodec : public RESTCodec<RESTSnapshotBoundCodec> {
 	static const char *ToString(const string &value);
@@ -132,6 +132,8 @@ struct RESTTableChangeTypeCodec : public RESTCodec<RESTTableChangeTypeCodec> {
 //===--------------------------------------------------------------------===//
 struct RESTAddColumn;
 struct RESTAddField;
+struct RESTAggregate;
+struct RESTAggregateResult;
 struct RESTChangeColumnType;
 struct RESTColumnDefinition;
 struct RESTCompactionResult;
@@ -173,8 +175,6 @@ struct RESTGetMetadataRequest;
 struct RESTGetSnapshotAtRequest;
 struct RESTListSnapshotsRequest;
 struct RESTListSnapshotsResponse;
-struct RESTRowCountRequest;
-struct RESTRowCountResponse;
 struct RESTSelectRequest;
 struct RESTSelectResponse;
 struct RESTTableChangesRequest;
@@ -210,6 +210,8 @@ struct DuckLakeRESTSerializer {
 
 	static JSONMutableValue Write(JSONWriter &writer, const RESTAddColumn &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTAddField &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTAggregate &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTAggregateResult &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeCatalogInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTChangeColumnType &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnDefinition &value);
@@ -286,8 +288,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTGetSnapshotAtRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTRowCountRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTRowCountResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSelectRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSelectResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableChangesRequest &value);
@@ -314,6 +314,10 @@ template <>
 RESTAddColumn DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTAddField DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTAggregate DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTAggregateResult DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeCatalogInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -466,10 +470,6 @@ template <>
 RESTListSnapshotsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTListSnapshotsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTRowCountRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTRowCountResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTSelectRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -683,6 +683,22 @@ struct RESTAddField : public RESTAlteration {
 	RESTColumnDefinition field;
 	//! Do nothing if the field exists.
 	bool if_not_exists = false;
+};
+
+//! An aggregate over the rows of a table.
+struct RESTAggregate {
+	//! The function.
+	string function;
+	//! The column, as its field id. For aggregates other than `count_star`: a top-level column.
+	optional_idx column_id;
+};
+
+//! The result of an aggregate of a scan.
+struct RESTAggregateResult {
+	//! Whether the server answered the aggregate. If not, the files of the scan have to be read to answer it.
+	bool answered = false;
+	//! The result, `null` if the aggregate is NULL (e.g. the `min` of a column without values) or not answered.
+	Value value;
 };
 
 struct RESTChangeColumnType : public RESTAlteration {
@@ -1077,23 +1093,13 @@ struct RESTListSnapshotsResponse {
 	string next_page_token;
 };
 
-struct RESTRowCountRequest : public RESTSnapshotReference {
-	//! What to count.
-	string count;
-	//! The table.
-	idx_t table_id = 0;
-};
-
-struct RESTRowCountResponse {
-	//! The number of rows.
-	optional_idx row_count;
-};
-
 struct RESTSelectRequest : public RESTSnapshotReference {
 	//! The table to scan.
 	idx_t table_id = 0;
 	//! A page token of an earlier response: returns that page of files. The request has no other members then.
 	string page_token;
+	//! Aggregates over the whole table that the server answers from statistics if it can. Not with `filters`.
+	vector<RESTAggregate> aggregates;
 	//! Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`.
 	bool extended = false;
 	//! Filters to prune files with.
@@ -1117,6 +1123,8 @@ struct RESTSelectResponse {
 	unique_ptr<RESTInlinedRows> inlined_data;
 	//! The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files
 	vector<string> page_tokens;
+	//! The results of the `aggregates` of the request, in their order.
+	vector<RESTAggregateResult> aggregate_results;
 	//! The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
 	vector<DuckLakeColumnMappingInfo> column_mappings;
 };
@@ -1428,8 +1436,6 @@ struct DuckLakeRESTEndpoints {
 	//! Returns the snapshots, optionally filtered.
 	static RESTListSnapshotsResponse ListSnapshots(DuckLakeRESTRequest &request,
 	                                               const RESTListSnapshotsRequest &parameters);
-	//! Counts the rows of a table that are visible in a snapshot.
-	static RESTRowCountResponse RowCount(DuckLakeRESTRequest &request, const RESTRowCountRequest &parameters);
 	//! Plans a scan of a table.
 	static RESTSelectResponse Select(DuckLakeRESTRequest &request, const RESTSelectRequest &parameters);
 	//! Returns the files that hold the changes of a table between two snapshots, for change data feeds.
@@ -1533,8 +1539,6 @@ public:
 	RESTSnapshotData GetSnapshotAt(const RESTGetSnapshotAtRequest &request);
 	//! Returns the snapshots, optionally filtered.
 	RESTListSnapshotsResponse ListSnapshots(const RESTListSnapshotsRequest &request);
-	//! Counts the rows of a table that are visible in a snapshot.
-	RESTRowCountResponse RowCount(const RESTRowCountRequest &request);
 	//! Plans a scan of a table.
 	RESTSelectResponse Select(const RESTSelectRequest &request);
 	//! Returns the files that hold the changes of a table between two snapshots, for change data feeds.

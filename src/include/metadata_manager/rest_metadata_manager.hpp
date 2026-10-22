@@ -99,9 +99,7 @@ public:
 	                  bool include_local_changes = true,
 	                  optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
 	void RemoveFilesScheduledForCleanup(const vector<DuckLakeFileForCleanup> &cleaned_up_files) override;
-	idx_t GetNetDataFileRowCount(TableIndex table_id, DuckLakeSnapshot snapshot) override;
-	optional_idx GetNetDataFileRowCountForStats(TableIndex table_id, DuckLakeSnapshot snapshot) override;
-	idx_t GetNetInlinedRowCount(const string &inlined_table_name, DuckLakeSnapshot snapshot) override;
+	optional_idx GetNetRowCount(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeInlinedTableInfo> GetInlinedDataTables(const DuckLakeTableEntry &table,
 	                                                      DuckLakeSnapshot snapshot) override;
 
@@ -148,8 +146,6 @@ private:
 	                                         DuckLakeSnapshot snapshot, const string &changes,
 	                                         optional_ptr<const vector<FieldIndex>> projection);
 	vector<RESTDroppedFile> GetDroppedFiles(TableIndex table_id);
-	optional_idx GetRowCount(DuckLakeSnapshot snapshot, const string &count, TableIndex table_id,
-	                         optional_idx schema_version = optional_idx());
 
 private:
 	//! The catalog changes of the transaction, in the order in which they were made

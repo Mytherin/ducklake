@@ -537,29 +537,26 @@ unique_ptr<QueryResult> RESTMetadataManager::ReadInlinedDataDeletions(DuckLakeSn
 	                             columns_to_read);
 }
 
-optional_idx RESTMetadataManager::GetRowCount(DuckLakeSnapshot snapshot, const string &count, TableIndex table_id,
-                                              optional_idx schema_version) {
-	if (IsTransactionLocal(table_id)) {
+optional_idx RESTMetadataManager::GetNetRowCount(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot) {
+	if (IsTransactionLocal(table.GetTableId())) {
 		return 0;
 	}
-	RESTRowCountRequest request;
+	// the server counts the rows from its statistics
+	RESTSelectRequest request;
+	request.table_id = table.GetTableId().index;
 	request.snapshot = snapshot;
-	request.count = count;
-	request.table_id = table_id.index;
-	return GetClient().RowCount(request).row_count;
-}
-
-idx_t RESTMetadataManager::GetNetDataFileRowCount(TableIndex table_id, DuckLakeSnapshot snapshot) {
-	return GetRowCount(snapshot, "data_files", table_id).GetIndex();
-}
-
-optional_idx RESTMetadataManager::GetNetDataFileRowCountForStats(TableIndex table_id, DuckLakeSnapshot snapshot) {
-	return GetRowCount(snapshot, "data_files_exact", table_id);
-}
-
-idx_t RESTMetadataManager::GetNetInlinedRowCount(const string &inlined_table_name, DuckLakeSnapshot snapshot) {
-	auto handle = ParseInlinedTableName(inlined_table_name);
-	return GetRowCount(snapshot, "inlined", handle.table_id, handle.schema_version).GetIndex();
+	RESTAggregate aggregate;
+	aggregate.function = "count_star";
+	request.aggregates.push_back(std::move(aggregate));
+	auto response = GetClient().Select(request);
+	if (response.aggregate_results.size() != 1) {
+		throw InvalidInputException("DuckLake REST: the server did not return the result of the aggregate");
+	}
+	auto &result = response.aggregate_results[0];
+	if (!result.answered) {
+		return optional_idx();
+	}
+	return NumericCast<idx_t>(result.value.GetValue<int64_t>());
 }
 
 vector<DuckLakeInlinedTableInfo> RESTMetadataManager::GetInlinedDataTables(const DuckLakeTableEntry &table,

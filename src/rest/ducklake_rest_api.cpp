@@ -8,6 +8,47 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 // Enums
 //===--------------------------------------------------------------------===//
+const char *RESTAggregateFunctionCodec::ToString(const string &value) {
+	if (value == "count_star") {
+		return "count_star";
+	}
+	if (value == "count") {
+		return "count";
+	}
+	if (value == "min") {
+		return "min";
+	}
+	if (value == "max") {
+		return "max";
+	}
+	throw InternalException("\"%s\" is not a value of the REST API type AggregateFunction", value);
+}
+
+string RESTAggregateFunctionCodec::FromString(const string &value) {
+	if (value == "count_star") {
+		return value;
+	}
+	if (value == "count") {
+		return value;
+	}
+	if (value == "min") {
+		return value;
+	}
+	if (value == "max") {
+		return value;
+	}
+	throw InvalidInputException(
+	    "DuckLake REST: \"%s\" is not a valid AggregateFunction (expected one of count_star, count, min, max)", value);
+}
+
+JSONMutableValue RESTAggregateFunctionCodec::Write(JSONWriter &writer, const string &value) {
+	return writer.CreateString(ToString(value));
+}
+
+void RESTAggregateFunctionCodec::Read(RESTJsonIn in, string &result) {
+	result = FromString(in.Str());
+}
+
 const char *RESTAtUnitCodec::ToString(const string &value) {
 	if (value == "version") {
 		return "version";
@@ -317,42 +358,6 @@ void RESTNullOrderCodec::Read(RESTJsonIn in, OrderByNullType &result) {
 	result = FromString(in.Str());
 }
 
-const char *RESTRowCountTypeCodec::ToString(const string &value) {
-	if (value == "data_files") {
-		return "data_files";
-	}
-	if (value == "data_files_exact") {
-		return "data_files_exact";
-	}
-	if (value == "inlined") {
-		return "inlined";
-	}
-	throw InternalException("\"%s\" is not a value of the REST API type RowCountType", value);
-}
-
-string RESTRowCountTypeCodec::FromString(const string &value) {
-	if (value == "data_files") {
-		return value;
-	}
-	if (value == "data_files_exact") {
-		return value;
-	}
-	if (value == "inlined") {
-		return value;
-	}
-	throw InvalidInputException(
-	    "DuckLake REST: \"%s\" is not a valid RowCountType (expected one of data_files, data_files_exact, inlined)",
-	    value);
-}
-
-JSONMutableValue RESTRowCountTypeCodec::Write(JSONWriter &writer, const string &value) {
-	return writer.CreateString(ToString(value));
-}
-
-void RESTRowCountTypeCodec::Read(RESTJsonIn in, string &result) {
-	result = FromString(in.Str());
-}
-
 const char *RESTSnapshotBoundCodec::ToString(const string &value) {
 	if (value == "upper") {
 		return "upper";
@@ -498,6 +503,56 @@ RESTAddField DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 			RESTReadValue<RESTBoolCodec>(entry, result.if_not_exists);
 		} else {
 			result.if_not_exists = false;
+		}
+	}
+	return result;
+}
+
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTAggregate &value) {
+	auto result = writer.CreateObject();
+	result.Add("function", RESTWriteValue<RESTAggregateFunctionCodec>(writer, value.function));
+	if (!RESTIsNull(value.column_id)) {
+		result.Add("column_id", RESTWriteValue<RESTUInt64Codec>(writer, value.column_id));
+	}
+	return result;
+}
+
+template <>
+RESTAggregate DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for Aggregate");
+	}
+	RESTAggregate result;
+	RESTReadValue<RESTAggregateFunctionCodec>(in.Get("function"), result.function);
+	{
+		auto entry = in.TryGet("column_id");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.column_id);
+		}
+	}
+	return result;
+}
+
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTAggregateResult &value) {
+	auto result = writer.CreateObject();
+	result.Add("answered", RESTWriteValue<RESTBoolCodec>(writer, value.answered));
+	if (!RESTIsNull(value.value)) {
+		result.Add("value", RESTWriteValue<RESTValueCodec>(writer, value.value));
+	}
+	return result;
+}
+
+template <>
+RESTAggregateResult DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for AggregateResult");
+	}
+	RESTAggregateResult result;
+	RESTReadValue<RESTBoolCodec>(in.Get("answered"), result.answered);
+	{
+		auto entry = in.TryGet("value");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTValueCodec>(entry, result.value);
 		}
 	}
 	return result;
@@ -3674,65 +3729,6 @@ RESTListSnapshotsResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTRowCountRequest &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.snapshot)) {
-		result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
-	}
-	if (!RESTIsNull(value.snapshot_id)) {
-		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
-	}
-	result.Add("count", RESTWriteValue<RESTRowCountTypeCodec>(writer, value.count));
-	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
-	return result;
-}
-
-template <>
-RESTRowCountRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for RowCountRequest");
-	}
-	RESTRowCountRequest result;
-	{
-		auto entry = in.TryGet("snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(entry, result.snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("snapshot_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.snapshot_id);
-		}
-	}
-	RESTReadValue<RESTRowCountTypeCodec>(in.Get("count"), result.count);
-	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTRowCountResponse &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.row_count)) {
-		result.Add("row_count", RESTWriteValue<RESTUInt64Codec>(writer, value.row_count));
-	}
-	return result;
-}
-
-template <>
-RESTRowCountResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for RowCountResponse");
-	}
-	RESTRowCountResponse result;
-	{
-		auto entry = in.TryGet("row_count");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.row_count);
-		}
-	}
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSelectRequest &value) {
 	auto result = writer.CreateObject();
 	if (!RESTIsNull(value.snapshot)) {
@@ -3745,6 +3741,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSel
 	if (!RESTIsNull(value.page_token)) {
 		result.Add("page_token", RESTWriteValue<RESTStringCodec>(writer, value.page_token));
 	}
+	result.Add("aggregates", RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTAggregate>>>(writer, value.aggregates));
 	result.Add("extended", RESTWriteValue<RESTBoolCodec>(writer, value.extended));
 	if (!RESTIsNull(value.filters)) {
 		result.Add("filters", RESTWriteValue<RESTObjectCodec<RESTScanFilters>>(writer, value.filters));
@@ -3784,6 +3781,12 @@ RESTSelectRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("page_token");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTStringCodec>(entry, result.page_token);
+		}
+	}
+	{
+		auto entry = in.TryGet("aggregates");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTAggregate>>>(entry, result.aggregates);
 		}
 	}
 	{
@@ -3840,6 +3843,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSel
 		result.Add("inlined_data", RESTWriteValue<RESTObjectCodec<RESTInlinedRows>>(writer, value.inlined_data));
 	}
 	result.Add("page_tokens", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.page_tokens));
+	result.Add("aggregate_results",
+	           RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTAggregateResult>>>(writer, value.aggregate_results));
 	result.Add("column_mappings", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(
 	                                  writer, value.column_mappings));
 	return result;
@@ -3873,6 +3878,12 @@ RESTSelectResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("page_tokens");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.page_tokens);
+		}
+	}
+	{
+		auto entry = in.TryGet("aggregate_results");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTAggregateResult>>>(entry, result.aggregate_results);
 		}
 	}
 	{
@@ -5186,13 +5197,6 @@ static string ListSnapshotsEndpoint(DuckLakeRESTRequest &request, const string &
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
-static string RowCountEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTRowCountRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::RowCount(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
 static string SelectEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTSelectRequest>(document.Root());
@@ -5235,7 +5239,6 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	    {"get_metadata", GetMetadataEndpoint},
 	    {"get_snapshot_at", GetSnapshotAtEndpoint},
 	    {"list_snapshots", ListSnapshotsEndpoint},
-	    {"row_count", RowCountEndpoint},
 	    {"select", SelectEndpoint},
 	    {"table_changes", TableChangesEndpoint},
 	    {"table_sizes", TableSizesEndpoint},
@@ -5275,7 +5278,6 @@ const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	      {"snapshot_ids", RESTParameterType::UINT_LIST, "snapshot_id"},
 	      {"page_size", RESTParameterType::UINT, "page_size"},
 	      {"page_token", RESTParameterType::STRING, "page_token"}}},
-	    {"row_count", "POST", "/v1/tables/{table_id}/row-count", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"select", "POST", "/v1/tables/{table_id}/scan", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"table_changes", "POST", "/v1/tables/{table_id}/changes", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"table_sizes",
@@ -5329,12 +5331,6 @@ RESTListSnapshotsResponse DuckLakeRESTClientAPI::ListSnapshots(const RESTListSna
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("list_snapshots", DuckLakeRESTSerializer::ToJSON(request), true));
 	return DuckLakeRESTSerializer::Read<RESTListSnapshotsResponse>(document.Root());
-}
-
-RESTRowCountResponse DuckLakeRESTClientAPI::RowCount(const RESTRowCountRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("row_count", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTRowCountResponse>(document.Root());
 }
 
 RESTSelectResponse DuckLakeRESTClientAPI::Select(const RESTSelectRequest &request) {

@@ -73,7 +73,6 @@ service DuckLake {
         GetLatestSnapshot
         GetSnapshotAt
         Select
-        RowCount
         ListSnapshots
         TableSizes
         Compact

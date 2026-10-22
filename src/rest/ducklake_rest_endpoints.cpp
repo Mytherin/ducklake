@@ -15,6 +15,9 @@
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/parser.hpp"
+#include "duckdb/storage/statistics/base_statistics.hpp"
+#include "duckdb/storage/statistics/numeric_stats.hpp"
+#include "duckdb/storage/statistics/string_stats.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 #include "common/ducklake_util.hpp"
@@ -436,12 +439,112 @@ static void RequireOnlyPageToken(bool no_other_members) {
 	}
 }
 
+//! The top-level column of a table with the field id, if there is one
+static optional_ptr<const DuckLakeFieldId> GetRootField(DuckLakeTableEntry &table, idx_t column_id) {
+	for (auto &column : table.GetColumns().Physical()) {
+		auto &field = table.GetFieldId(column.Physical());
+		if (field.GetFieldIndex().index == column_id) {
+			return &field;
+		}
+	}
+	return nullptr;
+}
+
+//! Reads the min or max of a column from its statistics, if they are exact: the same values as the optimizer of DuckDB
+//! uses for aggregates over the statistics of a table
+static bool TryGetMinMax(const DuckLakeColumnStats &column_stats, bool is_min, Value &result) {
+	auto &type = column_stats.type;
+	if (type != LogicalType::VARCHAR && !type.IsNumeric() && !type.IsTemporal()) {
+		return false;
+	}
+	auto stats = column_stats.ToStats();
+	if (!stats) {
+		return false;
+	}
+	if (stats->GetStatsType() == StatisticsType::NUMERIC_STATS) {
+		if (!NumericStats::HasMinMax(*stats)) {
+			return false;
+		}
+		result = is_min ? NumericStats::Min(*stats) : NumericStats::Max(*stats);
+		return true;
+	}
+	if (stats->GetStatsType() != StatisticsType::STRING_STATS || !StringStats::HasMinMax(*stats)) {
+		return false;
+	}
+	if (StringStats::GetMinType(*stats) != StringStatsType::EXACT_STATS ||
+	    StringStats::GetMaxType(*stats) != StringStatsType::EXACT_STATS) {
+		return false;
+	}
+	result = is_min ? StringStats::Min(*stats) : StringStats::Max(*stats);
+	return true;
+}
+
+//! Answers aggregates over a table from its statistics where that is exact, and returns whether all were answered
+static bool AnswerAggregates(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
+                             const vector<RESTAggregate> &aggregates, vector<RESTAggregateResult> &results) {
+	auto net_count = request.GetMetadataManager().GetNetRowCount(table, snapshot);
+	// the statistics of the table are the ones of the latest snapshot
+	bool is_latest = snapshot.snapshot_id == request.transaction->GetSnapshot().snapshot_id;
+	shared_ptr<DuckLakeTableStats> table_stats;
+	if (is_latest) {
+		table_stats = table.GetTableStats(*request.transaction);
+	}
+	// the bounds of the statistics only widen, they are exact if no row was ever deleted
+	bool exact = net_count.IsValid() && table_stats && !table_stats->record_count_unknown &&
+	             table_stats->record_count == net_count.GetIndex();
+	bool all_answered = true;
+	for (auto &aggregate : aggregates) {
+		RESTAggregateResult result;
+		if (aggregate.function == "count_star") {
+			if (net_count.IsValid()) {
+				result.answered = true;
+				result.value = Value::BIGINT(NumericCast<int64_t>(net_count.GetIndex()));
+			}
+		} else {
+			if (!aggregate.column_id.IsValid()) {
+				throw InvalidInputException("The aggregate \"%s\" needs a column_id", aggregate.function);
+			}
+			auto field = GetRootField(table, aggregate.column_id.GetIndex());
+			if (!field) {
+				throw InvalidInputException("Column %llu is not a top-level column of the table",
+				                            aggregate.column_id.GetIndex());
+			}
+			optional_ptr<const DuckLakeColumnStats> stats;
+			if (exact) {
+				auto entry = table_stats->column_stats.find(field->GetFieldIndex());
+				if (entry != table_stats->column_stats.end() && entry->second.type == field->Type()) {
+					stats = &entry->second;
+				}
+			}
+			if (stats) {
+				auto &column_stats = *stats;
+				if (aggregate.function == "count") {
+					// the table statistics only know whether a column has NULLs, not how many
+					if (column_stats.has_null_count && column_stats.null_count == 0) {
+						result.answered = true;
+						result.value = Value::BIGINT(NumericCast<int64_t>(net_count.GetIndex()));
+					}
+				} else {
+					Value value;
+					if (TryGetMinMax(column_stats, aggregate.function == "min", value)) {
+						result.answered = true;
+						result.value = std::move(value);
+					}
+				}
+			}
+		}
+		all_answered = all_answered && result.answered;
+		results.push_back(std::move(result));
+	}
+	return all_answered;
+}
+
 RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, const RESTSelectRequest &parameters) {
 	if (!parameters.page_token.empty()) {
 		RequireOnlyPageToken(RESTIsNull(parameters.snapshot) && !parameters.snapshot_id.IsValid() &&
-		                     !parameters.extended && !parameters.filters && !parameters.include_inlined_data &&
-		                     parameters.time_zone.empty() && parameters.known_column_mappings.empty() &&
-		                     !parameters.columns.has_value);
+		                     !parameters.extended && !parameters.filters && parameters.aggregates.empty() &&
+		                     !parameters.include_inlined_data && parameters.time_zone.empty() &&
+		                     parameters.known_column_mappings.empty() && !parameters.columns.has_value);
 		idx_t page_index = 0;
 		auto plan = GetPlanOfPage(request, parameters.table_id, parameters.page_token, page_index);
 		RESTSelectResponse page;
@@ -461,6 +564,14 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 		filters = DuckLakeRESTFilters::Read(*request.connection.context, *parameters.filters, table);
 	}
 	RESTSelectResponse result;
+	if (!parameters.aggregates.empty()) {
+		if (parameters.filters) {
+			throw InvalidInputException("Aggregates cannot be answered for a scan with filters");
+		}
+		if (AnswerAggregates(request, table, snapshot, parameters.aggregates, result.aggregate_results)) {
+			return result;
+		}
+	}
 	if (parameters.extended) {
 		result.extended_files = metadata_manager.GetExtendedFilesForTable(table, snapshot, filters.get());
 	} else {
@@ -483,30 +594,6 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 		    return metadata_manager.ReadInlinedData(snapshot, inlined_table_name, columns);
 	    },
 	    parameters.columns, parameters.time_zone);
-	return result;
-}
-
-RESTRowCountResponse DuckLakeRESTEndpoints::RowCount(DuckLakeRESTRequest &request,
-                                                     const RESTRowCountRequest &parameters) {
-	auto &metadata_manager = request.GetMetadataManager();
-	auto snapshot = request.GetSnapshot(parameters);
-	RESTRowCountResponse result;
-	auto table_id = TableIndex(parameters.table_id);
-	if (parameters.count == "inlined") {
-		auto &table = GetTableEntry(request, snapshot, table_id);
-		idx_t row_count = 0;
-		for (auto &inlined_table : table.GetInlinedDataTables(*request.transaction, snapshot, false)) {
-			row_count += metadata_manager.GetNetInlinedRowCount(inlined_table.table_name, snapshot);
-		}
-		result.row_count = row_count;
-		return result;
-	}
-	if (parameters.count == "data_files") {
-		result.row_count = metadata_manager.GetNetDataFileRowCount(table_id, snapshot);
-	} else {
-		D_ASSERT(parameters.count == "data_files_exact");
-		result.row_count = metadata_manager.GetNetDataFileRowCountForStats(table_id, snapshot);
-	}
 	return result;
 }
 

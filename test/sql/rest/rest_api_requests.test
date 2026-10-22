@@ -178,11 +178,11 @@ SELECT (response->'$.inlined_data') IS NULL FROM ducklake_rest_request('{rest_se
 ----
 true
 
-query I
-SELECT response->>'$.row_count' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/row-count',
-'{"count": "inlined"}')
+query II
+SELECT status, response->>'$.aggregate_results[0].value.value' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan',
+'{"aggregates": [{"function": "count_star"}]}')
 ----
-2
+200	2
 
 # requests are validated against the specification of the API
 query II

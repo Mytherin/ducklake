@@ -128,6 +128,11 @@ structure SnapshotData {
 /// and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. It is
 /// absent if the table has no inlined rows.
 ///
+/// The `aggregates` of a request without `filters` are answered from the statistics of the table where the server can,
+/// instead of listing the files: `aggregate_results` has an entry for each aggregate, and tells whether the server
+/// answered it. If it answered all of them, the response has no files and no inlined rows: the results are the answer.
+/// Otherwise the response is the one of a scan, with the results of the aggregates that were answered.
+///
 /// A scan of many files is returned in pages. The response has the first page of files, and `page_tokens` has the token
 /// of every other page. A request with a `page_token` and no other member (except for the table) returns the page of
 /// the token: the other members are those of the request that returned the token, and are not repeated. The pages of a
@@ -144,6 +149,9 @@ operation Select {
 
         /// A page token of an earlier response: returns that page of files. The request has no other members then.
         page_token: String
+
+        /// Aggregates over the whole table that the server answers from statistics if it can. Not with `filters`.
+        aggregates: AggregateList = []
 
         /// Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`.
         extended: Boolean = false
@@ -183,30 +191,12 @@ operation Select {
         /// of the response and the files of all its pages.
         page_tokens: StringList = []
 
+        /// The results of the `aggregates` of the request, in their order.
+        aggregate_results: AggregateResultList = []
+
         /// The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
         /// not have. They map the columns of files that were added with `ducklake_add_data_files` by name.
         column_mappings: NameMapList = []
-    }
-}
-
-/// Counts the rows of a table that are visible in a snapshot.
-@http(method: "POST", uri: "/v1/tables/{table_id}/row-count")
-@readonly
-operation RowCount {
-    input := with [SnapshotReference] {
-        /// What to count.
-        @required
-        count: RowCountType
-
-        /// The table.
-        @required
-        @httpLabel
-        table_id: UInt64
-    }
-
-    output := {
-        /// The number of rows.
-        row_count: UInt64
     }
 }
 
@@ -398,16 +388,47 @@ structure ScanFilters {
     runtime_filter_columns: UInt64List = []
 }
 
-/// What `row_count` counts.
-enum RowCountType {
-    /// The rows in data files minus the deleted rows.
-    DATA_FILES = "data_files"
+/// The function of an aggregate.
+enum AggregateFunction {
+    /// `count(*)`.
+    COUNT_STAR = "count_star"
 
-    /// The same, absent if it cannot be computed exactly.
-    DATA_FILES_EXACT = "data_files_exact"
+    /// `count(column)`: the number of rows where the column is not NULL.
+    COUNT = "count"
 
-    /// The inlined rows of a table.
-    INLINED = "inlined"
+    /// `min(column)`.
+    MIN = "min"
+
+    /// `max(column)`.
+    MAX = "max"
+}
+
+/// An aggregate over the rows of a table.
+structure Aggregate {
+    /// The function.
+    @required
+    function: AggregateFunction
+
+    /// The column, as its field id. For aggregates other than `count_star`: a top-level column.
+    column_id: UInt64
+}
+
+/// The result of an aggregate of a scan.
+structure AggregateResult {
+    /// Whether the server answered the aggregate. If not, the files of the scan have to be read to answer it.
+    @required
+    answered: Boolean
+
+    /// The result, `null` if the aggregate is NULL (e.g. the `min` of a column without values) or not answered.
+    value: Value
+}
+
+list AggregateList {
+    member: Aggregate
+}
+
+list AggregateResultList {
+    member: AggregateResult
 }
 
 /// The changes that `table_changes` returns.
