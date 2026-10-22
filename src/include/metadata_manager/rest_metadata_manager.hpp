@@ -141,8 +141,7 @@ private:
 	unique_ptr<QueryResult> ReadCachedInlinedRows(RESTInlinedRowsKind kind, DuckLakeSnapshot start_snapshot,
 	                                              DuckLakeSnapshot snapshot, const string &inlined_table_name,
 	                                              const vector<string> &columns_to_read);
-	RESTSnapshotDataResponse GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot, bool include_catalog,
-	                                         bool include_stats);
+	RESTSnapshotData GetSnapshotData(DuckLakeSnapshot snapshot, bool include_catalog, bool include_stats);
 	void AddDeletes(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
 	void AddInserts(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
 	RESTTableChangesResponse GetTableChanges(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,

@@ -70,7 +70,8 @@ service DuckLake {
     operations: [
         Config
         GetMetadata
-        SnapshotData
+        GetLatestSnapshot
+        GetSnapshotAt
         Select
         RowCount
         ListSnapshots

@@ -132,7 +132,6 @@ struct RESTTableChangeTypeCodec : public RESTCodec<RESTTableChangeTypeCodec> {
 //===--------------------------------------------------------------------===//
 struct RESTAddColumn;
 struct RESTAddField;
-struct RESTAtClause;
 struct RESTChangeColumnType;
 struct RESTColumnDefinition;
 struct RESTCompactionResult;
@@ -164,18 +163,20 @@ struct RESTSetNotNull;
 struct RESTSetOptions;
 struct RESTSetPartitionedBy;
 struct RESTSetSortedBy;
+struct RESTSnapshotData;
+struct RESTSnapshotIncludes;
 struct RESTSnapshotReference;
 struct RESTConfigRequest;
 struct RESTConfigResponse;
+struct RESTGetLatestSnapshotRequest;
 struct RESTGetMetadataRequest;
+struct RESTGetSnapshotAtRequest;
 struct RESTListSnapshotsRequest;
 struct RESTListSnapshotsResponse;
 struct RESTRowCountRequest;
 struct RESTRowCountResponse;
 struct RESTSelectRequest;
 struct RESTSelectResponse;
-struct RESTSnapshotDataRequest;
-struct RESTSnapshotDataResponse;
 struct RESTTableChangesRequest;
 struct RESTTableChangesResponse;
 struct RESTTableSizesRequest;
@@ -209,7 +210,6 @@ struct DuckLakeRESTSerializer {
 
 	static JSONMutableValue Write(JSONWriter &writer, const RESTAddColumn &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTAddField &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTAtClause &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeCatalogInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTChangeColumnType &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnDefinition &value);
@@ -267,6 +267,8 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSetPartitionedBy &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSetSortedBy &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSnapshot &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTSnapshotData &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTSnapshotIncludes &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSnapshotInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSnapshotReference &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSortFieldInfo &value);
@@ -279,15 +281,15 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeViewInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTConfigRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTConfigResponse &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTGetLatestSnapshotRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTGetMetadataRequest &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTGetSnapshotAtRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTRowCountRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTRowCountResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSelectRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSelectResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTSnapshotDataRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTSnapshotDataResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableChangesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableChangesResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesRequest &value);
@@ -312,8 +314,6 @@ template <>
 RESTAddColumn DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTAddField DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTAtClause DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeCatalogInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -429,6 +429,10 @@ RESTSetSortedBy DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeSnapshot DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
+RESTSnapshotData DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTSnapshotIncludes DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
 DuckLakeSnapshotInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTSnapshotReference DuckLakeRESTSerializer::Read(RESTJsonIn in);
@@ -453,7 +457,11 @@ RESTConfigRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTConfigResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
+RESTGetLatestSnapshotRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
 RESTGetMetadataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTGetSnapshotAtRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTListSnapshotsRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -466,10 +474,6 @@ template <>
 RESTSelectRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTSelectResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTSnapshotDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTSnapshotDataResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTTableChangesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -679,14 +683,6 @@ struct RESTAddField : public RESTAlteration {
 	RESTColumnDefinition field;
 	//! Do nothing if the field exists.
 	bool if_not_exists = false;
-};
-
-//! The `AT` clause of a time travel query.
-struct RESTAtClause {
-	//! The unit of the value.
-	string unit;
-	//! The snapshot id or timestamp.
-	Value value;
 };
 
 struct RESTChangeColumnType : public RESTAlteration {
@@ -1002,9 +998,31 @@ struct RESTSetSortedBy : public RESTAlteration {
 	vector<string> sorted_by;
 };
 
+//! A snapshot with its catalog and statistics.
+struct RESTSnapshotData {
+	//! The snapshot.
+	DuckLakeSnapshot snapshot;
+	//! The catalog of the snapshot.
+	unique_ptr<DuckLakeCatalogInfo> catalog;
+	//! The statistics of the tables of the snapshot.
+	RESTOptional<vector<DuckLakeGlobalStatsInfo>> stats;
+};
+
+//! What a request for a snapshot returns besides the snapshot.
+struct RESTSnapshotIncludes {
+	//! Return the catalog of the snapshot.
+	bool include_catalog = false;
+	//! Return the table statistics of the snapshot.
+	bool include_stats = false;
+	//! The schema version of the latest catalog the client has loaded. If the snapshot has a different schema
+	optional_idx cached_metadata_version;
+	//! The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a
+	optional_idx cached_data_version;
+};
+
 //! The snapshot that a request reads. A `snapshot` is used as-is, which also allows reading at snapshots that
 struct RESTSnapshotReference {
-	//! The snapshot, as returned by `snapshot_data`.
+	//! The snapshot, as returned by `snapshots/latest` and `snapshots/at`.
 	DuckLakeSnapshot snapshot;
 	//! The id of the snapshot.
 	optional_idx snapshot_id;
@@ -1024,7 +1042,20 @@ struct RESTConfigResponse {
 	vector<string> endpoints;
 };
 
+struct RESTGetLatestSnapshotRequest : public RESTSnapshotIncludes {};
+
 struct RESTGetMetadataRequest {};
+
+struct RESTGetSnapshotAtRequest : public RESTSnapshotIncludes {
+	//! The unit of the value of the `AT` clause.
+	string unit;
+	//! The snapshot id (for `version`) or the timestamp (for `timestamp`).
+	string value;
+	//! Whether a timestamp finds the last snapshot before or the first snapshot after it.
+	string bound = string("upper");
+	//! The newest snapshot that the clause can find, snapshots committed after a client's transaction started are
+	optional_idx newest_snapshot_id;
+};
 
 struct RESTListSnapshotsRequest {
 	//! Exclude the latest snapshot.
@@ -1088,32 +1119,6 @@ struct RESTSelectResponse {
 	vector<string> page_tokens;
 	//! The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
 	vector<DuckLakeColumnMappingInfo> column_mappings;
-};
-
-struct RESTSnapshotDataRequest : public RESTSnapshotReference {
-	//! Find the snapshot of an `AT` clause instead.
-	unique_ptr<RESTAtClause> at;
-	//! Whether a timestamp of `at` finds the last snapshot before or the first snapshot after it.
-	string bound = string("upper");
-	//! The newest snapshot that `at` can find, snapshots committed after a client's transaction started are not
-	optional_idx newest_snapshot_id;
-	//! Return the catalog of the snapshot.
-	bool include_catalog = false;
-	//! Return the table statistics of the snapshot.
-	bool include_stats = false;
-	//! The schema version of the latest catalog the client has loaded. If the snapshot has a different schema
-	optional_idx cached_metadata_version;
-	//! The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a
-	optional_idx cached_data_version;
-};
-
-struct RESTSnapshotDataResponse {
-	//! The snapshot.
-	DuckLakeSnapshot snapshot;
-	//! The catalog of the snapshot.
-	unique_ptr<DuckLakeCatalogInfo> catalog;
-	//! The statistics of the tables of the snapshot.
-	RESTOptional<vector<DuckLakeGlobalStatsInfo>> stats;
 };
 
 struct RESTTableChangesRequest : public RESTSnapshotReference {
@@ -1413,8 +1418,13 @@ struct RESTDeleteDataRequest : public RESTCommitRequest {
 struct DuckLakeRESTEndpoints {
 	//! Returns how a client connects to a catalog of the server. This is the first request of a client.
 	static RESTConfigResponse Config(DuckLakeRESTRequest &request, const RESTConfigRequest &parameters);
+	//! Returns the latest snapshot together with (optionally) the catalog and the table statistics of that snapshot.
+	static RESTSnapshotData GetLatestSnapshot(DuckLakeRESTRequest &request,
+	                                          const RESTGetLatestSnapshotRequest &parameters);
 	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 	static DuckLakeMetadata GetMetadata(DuckLakeRESTRequest &request, const RESTGetMetadataRequest &parameters);
+	//! Returns the snapshot of an `AT` clause together with (optionally) the catalog and the table statistics of that
+	static RESTSnapshotData GetSnapshotAt(DuckLakeRESTRequest &request, const RESTGetSnapshotAtRequest &parameters);
 	//! Returns the snapshots, optionally filtered.
 	static RESTListSnapshotsResponse ListSnapshots(DuckLakeRESTRequest &request,
 	                                               const RESTListSnapshotsRequest &parameters);
@@ -1422,9 +1432,6 @@ struct DuckLakeRESTEndpoints {
 	static RESTRowCountResponse RowCount(DuckLakeRESTRequest &request, const RESTRowCountRequest &parameters);
 	//! Plans a scan of a table.
 	static RESTSelectResponse Select(DuckLakeRESTRequest &request, const RESTSelectRequest &parameters);
-	//! Returns a snapshot together with (optionally) the catalog and the table statistics of that snapshot.
-	static RESTSnapshotDataResponse SnapshotData(DuckLakeRESTRequest &request,
-	                                             const RESTSnapshotDataRequest &parameters);
 	//! Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 	static RESTTableChangesResponse TableChanges(DuckLakeRESTRequest &request,
 	                                             const RESTTableChangesRequest &parameters);
@@ -1518,16 +1525,18 @@ public:
 
 	//! Returns how a client connects to a catalog of the server. This is the first request of a client.
 	RESTConfigResponse Config(const RESTConfigRequest &request);
+	//! Returns the latest snapshot together with (optionally) the catalog and the table statistics of that snapshot.
+	RESTSnapshotData GetLatestSnapshot(const RESTGetLatestSnapshotRequest &request);
 	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 	DuckLakeMetadata GetMetadata(const RESTGetMetadataRequest &request);
+	//! Returns the snapshot of an `AT` clause together with (optionally) the catalog and the table statistics of that
+	RESTSnapshotData GetSnapshotAt(const RESTGetSnapshotAtRequest &request);
 	//! Returns the snapshots, optionally filtered.
 	RESTListSnapshotsResponse ListSnapshots(const RESTListSnapshotsRequest &request);
 	//! Counts the rows of a table that are visible in a snapshot.
 	RESTRowCountResponse RowCount(const RESTRowCountRequest &request);
 	//! Plans a scan of a table.
 	RESTSelectResponse Select(const RESTSelectRequest &request);
-	//! Returns a snapshot together with (optionally) the catalog and the table statistics of that snapshot.
-	RESTSnapshotDataResponse SnapshotData(const RESTSnapshotDataRequest &request);
 	//! Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 	RESTTableChangesResponse TableChanges(const RESTTableChangesRequest &request);
 	//! Returns the storage used by each table at a snapshot.

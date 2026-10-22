@@ -503,24 +503,6 @@ RESTAddField DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTAtClause &value) {
-	auto result = writer.CreateObject();
-	result.Add("unit", RESTWriteValue<RESTAtUnitCodec>(writer, value.unit));
-	result.Add("value", RESTWriteValue<RESTValueCodec>(writer, value.value));
-	return result;
-}
-
-template <>
-RESTAtClause DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for AtClause");
-	}
-	RESTAtClause result;
-	RESTReadValue<RESTAtUnitCodec>(in.Get("unit"), result.unit);
-	RESTReadValue<RESTValueCodec>(in.Get("value"), result.value);
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeCatalogInfo &value) {
 	auto result = writer.CreateObject();
 	result.Add("schemas", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeSchemaInfo>>>(writer, value.schemas));
@@ -2847,6 +2829,91 @@ DuckLakeSnapshot DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSnapshotData &value) {
+	auto result = writer.CreateObject();
+	result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
+	if (!RESTIsNull(value.catalog)) {
+		result.Add("catalog", RESTWriteValue<RESTObjectCodec<DuckLakeCatalogInfo>>(writer, value.catalog));
+	}
+	if (!RESTIsNull(value.stats)) {
+		result.Add("stats",
+		           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeGlobalStatsInfo>>>(writer, value.stats));
+	}
+	return result;
+}
+
+template <>
+RESTSnapshotData DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for SnapshotData");
+	}
+	RESTSnapshotData result;
+	RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(in.Get("snapshot"), result.snapshot);
+	{
+		auto entry = in.TryGet("catalog");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTObjectCodec<DuckLakeCatalogInfo>>(entry, result.catalog);
+		}
+	}
+	{
+		auto entry = in.TryGet("stats");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeGlobalStatsInfo>>>(entry, result.stats);
+		}
+	}
+	return result;
+}
+
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSnapshotIncludes &value) {
+	auto result = writer.CreateObject();
+	result.Add("include_catalog", RESTWriteValue<RESTBoolCodec>(writer, value.include_catalog));
+	result.Add("include_stats", RESTWriteValue<RESTBoolCodec>(writer, value.include_stats));
+	if (!RESTIsNull(value.cached_metadata_version)) {
+		result.Add("cached_metadata_version", RESTWriteValue<RESTUInt64Codec>(writer, value.cached_metadata_version));
+	}
+	if (!RESTIsNull(value.cached_data_version)) {
+		result.Add("cached_data_version", RESTWriteValue<RESTUInt64Codec>(writer, value.cached_data_version));
+	}
+	return result;
+}
+
+template <>
+RESTSnapshotIncludes DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for SnapshotIncludes");
+	}
+	RESTSnapshotIncludes result;
+	{
+		auto entry = in.TryGet("include_catalog");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTBoolCodec>(entry, result.include_catalog);
+		} else {
+			result.include_catalog = false;
+		}
+	}
+	{
+		auto entry = in.TryGet("include_stats");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTBoolCodec>(entry, result.include_stats);
+		} else {
+			result.include_stats = false;
+		}
+	}
+	{
+		auto entry = in.TryGet("cached_metadata_version");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.cached_metadata_version);
+		}
+	}
+	{
+		auto entry = in.TryGet("cached_data_version");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.cached_data_version);
+		}
+	}
+	return result;
+}
+
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeSnapshotInfo &value) {
 	auto result = writer.CreateObject();
 	result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.id));
@@ -3381,6 +3448,56 @@ RESTConfigResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTGetLatestSnapshotRequest &value) {
+	auto result = writer.CreateObject();
+	result.Add("include_catalog", RESTWriteValue<RESTBoolCodec>(writer, value.include_catalog));
+	result.Add("include_stats", RESTWriteValue<RESTBoolCodec>(writer, value.include_stats));
+	if (!RESTIsNull(value.cached_metadata_version)) {
+		result.Add("cached_metadata_version", RESTWriteValue<RESTUInt64Codec>(writer, value.cached_metadata_version));
+	}
+	if (!RESTIsNull(value.cached_data_version)) {
+		result.Add("cached_data_version", RESTWriteValue<RESTUInt64Codec>(writer, value.cached_data_version));
+	}
+	return result;
+}
+
+template <>
+RESTGetLatestSnapshotRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for GetLatestSnapshotRequest");
+	}
+	RESTGetLatestSnapshotRequest result;
+	{
+		auto entry = in.TryGet("include_catalog");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTBoolCodec>(entry, result.include_catalog);
+		} else {
+			result.include_catalog = false;
+		}
+	}
+	{
+		auto entry = in.TryGet("include_stats");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTBoolCodec>(entry, result.include_stats);
+		} else {
+			result.include_stats = false;
+		}
+	}
+	{
+		auto entry = in.TryGet("cached_metadata_version");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.cached_metadata_version);
+		}
+	}
+	{
+		auto entry = in.TryGet("cached_data_version");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.cached_data_version);
+		}
+	}
+	return result;
+}
+
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTGetMetadataRequest &value) {
 	auto result = writer.CreateObject();
 	return result;
@@ -3392,6 +3509,78 @@ RESTGetMetadataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for GetMetadataRequest");
 	}
 	RESTGetMetadataRequest result;
+	return result;
+}
+
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTGetSnapshotAtRequest &value) {
+	auto result = writer.CreateObject();
+	result.Add("include_catalog", RESTWriteValue<RESTBoolCodec>(writer, value.include_catalog));
+	result.Add("include_stats", RESTWriteValue<RESTBoolCodec>(writer, value.include_stats));
+	if (!RESTIsNull(value.cached_metadata_version)) {
+		result.Add("cached_metadata_version", RESTWriteValue<RESTUInt64Codec>(writer, value.cached_metadata_version));
+	}
+	if (!RESTIsNull(value.cached_data_version)) {
+		result.Add("cached_data_version", RESTWriteValue<RESTUInt64Codec>(writer, value.cached_data_version));
+	}
+	result.Add("unit", RESTWriteValue<RESTAtUnitCodec>(writer, value.unit));
+	result.Add("value", RESTWriteValue<RESTStringCodec>(writer, value.value));
+	result.Add("bound", RESTWriteValue<RESTSnapshotBoundCodec>(writer, value.bound));
+	if (!RESTIsNull(value.newest_snapshot_id)) {
+		result.Add("newest_snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.newest_snapshot_id));
+	}
+	return result;
+}
+
+template <>
+RESTGetSnapshotAtRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for GetSnapshotAtRequest");
+	}
+	RESTGetSnapshotAtRequest result;
+	{
+		auto entry = in.TryGet("include_catalog");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTBoolCodec>(entry, result.include_catalog);
+		} else {
+			result.include_catalog = false;
+		}
+	}
+	{
+		auto entry = in.TryGet("include_stats");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTBoolCodec>(entry, result.include_stats);
+		} else {
+			result.include_stats = false;
+		}
+	}
+	{
+		auto entry = in.TryGet("cached_metadata_version");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.cached_metadata_version);
+		}
+	}
+	{
+		auto entry = in.TryGet("cached_data_version");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.cached_data_version);
+		}
+	}
+	RESTReadValue<RESTAtUnitCodec>(in.Get("unit"), result.unit);
+	RESTReadValue<RESTStringCodec>(in.Get("value"), result.value);
+	{
+		auto entry = in.TryGet("bound");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTSnapshotBoundCodec>(entry, result.bound);
+		} else {
+			result.bound = string("upper");
+		}
+	}
+	{
+		auto entry = in.TryGet("newest_snapshot_id");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.newest_snapshot_id);
+		}
+	}
 	return result;
 }
 
@@ -3690,136 +3879,6 @@ RESTSelectResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("column_mappings");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(entry, result.column_mappings);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSnapshotDataRequest &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.snapshot)) {
-		result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
-	}
-	if (!RESTIsNull(value.snapshot_id)) {
-		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
-	}
-	if (!RESTIsNull(value.at)) {
-		result.Add("at", RESTWriteValue<RESTObjectCodec<RESTAtClause>>(writer, value.at));
-	}
-	result.Add("bound", RESTWriteValue<RESTSnapshotBoundCodec>(writer, value.bound));
-	if (!RESTIsNull(value.newest_snapshot_id)) {
-		result.Add("newest_snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.newest_snapshot_id));
-	}
-	result.Add("include_catalog", RESTWriteValue<RESTBoolCodec>(writer, value.include_catalog));
-	result.Add("include_stats", RESTWriteValue<RESTBoolCodec>(writer, value.include_stats));
-	if (!RESTIsNull(value.cached_metadata_version)) {
-		result.Add("cached_metadata_version", RESTWriteValue<RESTUInt64Codec>(writer, value.cached_metadata_version));
-	}
-	if (!RESTIsNull(value.cached_data_version)) {
-		result.Add("cached_data_version", RESTWriteValue<RESTUInt64Codec>(writer, value.cached_data_version));
-	}
-	return result;
-}
-
-template <>
-RESTSnapshotDataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for SnapshotDataRequest");
-	}
-	RESTSnapshotDataRequest result;
-	{
-		auto entry = in.TryGet("snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(entry, result.snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("snapshot_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.snapshot_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("at");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<RESTAtClause>>(entry, result.at);
-		}
-	}
-	{
-		auto entry = in.TryGet("bound");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTSnapshotBoundCodec>(entry, result.bound);
-		} else {
-			result.bound = string("upper");
-		}
-	}
-	{
-		auto entry = in.TryGet("newest_snapshot_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.newest_snapshot_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("include_catalog");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTBoolCodec>(entry, result.include_catalog);
-		} else {
-			result.include_catalog = false;
-		}
-	}
-	{
-		auto entry = in.TryGet("include_stats");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTBoolCodec>(entry, result.include_stats);
-		} else {
-			result.include_stats = false;
-		}
-	}
-	{
-		auto entry = in.TryGet("cached_metadata_version");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.cached_metadata_version);
-		}
-	}
-	{
-		auto entry = in.TryGet("cached_data_version");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.cached_data_version);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSnapshotDataResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
-	if (!RESTIsNull(value.catalog)) {
-		result.Add("catalog", RESTWriteValue<RESTObjectCodec<DuckLakeCatalogInfo>>(writer, value.catalog));
-	}
-	if (!RESTIsNull(value.stats)) {
-		result.Add("stats",
-		           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeGlobalStatsInfo>>>(writer, value.stats));
-	}
-	return result;
-}
-
-template <>
-RESTSnapshotDataResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for SnapshotDataResponse");
-	}
-	RESTSnapshotDataResponse result;
-	RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(in.Get("snapshot"), result.snapshot);
-	{
-		auto entry = in.TryGet("catalog");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<DuckLakeCatalogInfo>>(entry, result.catalog);
-		}
-	}
-	{
-		auto entry = in.TryGet("stats");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeGlobalStatsInfo>>>(entry, result.stats);
 		}
 	}
 	return result;
@@ -5099,10 +5158,24 @@ static string ConfigEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
+static string GetLatestSnapshotEndpoint(DuckLakeRESTRequest &request, const string &body) {
+	RESTJsonReader document(body);
+	auto parameters = DuckLakeRESTSerializer::Read<RESTGetLatestSnapshotRequest>(document.Root());
+	auto result = DuckLakeRESTEndpoints::GetLatestSnapshot(request, parameters);
+	return DuckLakeRESTSerializer::ToJSON(result);
+}
+
 static string GetMetadataEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTGetMetadataRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::GetMetadata(request, parameters);
+	return DuckLakeRESTSerializer::ToJSON(result);
+}
+
+static string GetSnapshotAtEndpoint(DuckLakeRESTRequest &request, const string &body) {
+	RESTJsonReader document(body);
+	auto parameters = DuckLakeRESTSerializer::Read<RESTGetSnapshotAtRequest>(document.Root());
+	auto result = DuckLakeRESTEndpoints::GetSnapshotAt(request, parameters);
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
@@ -5124,13 +5197,6 @@ static string SelectEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTSelectRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::Select(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
-}
-
-static string SnapshotDataEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	RESTJsonReader document(body);
-	auto parameters = DuckLakeRESTSerializer::Read<RESTSnapshotDataRequest>(document.Root());
-	auto result = DuckLakeRESTEndpoints::SnapshotData(request, parameters);
 	return DuckLakeRESTSerializer::ToJSON(result);
 }
 
@@ -5165,11 +5231,12 @@ static string CommitTransactionEndpoint(DuckLakeRESTRequest &request, const stri
 const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	static const unordered_map<string, rest_endpoint_t> endpoints = {
 	    {"config", ConfigEndpoint},
+	    {"get_latest_snapshot", GetLatestSnapshotEndpoint},
 	    {"get_metadata", GetMetadataEndpoint},
+	    {"get_snapshot_at", GetSnapshotAtEndpoint},
 	    {"list_snapshots", ListSnapshotsEndpoint},
 	    {"row_count", RowCountEndpoint},
 	    {"select", SelectEndpoint},
-	    {"snapshot_data", SnapshotDataEndpoint},
 	    {"table_changes", TableChangesEndpoint},
 	    {"table_sizes", TableSizesEndpoint},
 	    {"compact", CompactEndpoint},
@@ -5181,7 +5248,25 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	static const vector<RESTRoute> routes = {
 	    {"config", "GET", "/v1/config", {{"catalog_name", RESTParameterType::STRING, "catalog"}}, true},
+	    {"get_latest_snapshot",
+	     "GET",
+	     "/v1/snapshots/latest",
+	     {{"include_catalog", RESTParameterType::BOOL, "include_catalog"},
+	      {"include_stats", RESTParameterType::BOOL, "include_stats"},
+	      {"cached_metadata_version", RESTParameterType::UINT, "cached_metadata_version"},
+	      {"cached_data_version", RESTParameterType::UINT, "cached_data_version"}}},
 	    {"get_metadata", "GET", "/v1/metadata", {}},
+	    {"get_snapshot_at",
+	     "GET",
+	     "/v1/snapshots/at",
+	     {{"include_catalog", RESTParameterType::BOOL, "include_catalog"},
+	      {"include_stats", RESTParameterType::BOOL, "include_stats"},
+	      {"cached_metadata_version", RESTParameterType::UINT, "cached_metadata_version"},
+	      {"cached_data_version", RESTParameterType::UINT, "cached_data_version"},
+	      {"unit", RESTParameterType::STRING, "unit"},
+	      {"value", RESTParameterType::STRING, "value"},
+	      {"bound", RESTParameterType::STRING, "bound"},
+	      {"newest_snapshot_id", RESTParameterType::UINT, "newest_snapshot_id"}}},
 	    {"list_snapshots",
 	     "GET",
 	     "/v1/snapshots",
@@ -5192,7 +5277,6 @@ const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	      {"page_token", RESTParameterType::STRING, "page_token"}}},
 	    {"row_count", "POST", "/v1/tables/{table_id}/row-count", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"select", "POST", "/v1/tables/{table_id}/scan", {{"table_id", RESTParameterType::UINT, ""}}},
-	    {"snapshot_data", "POST", "/v1/snapshots/load", {}},
 	    {"table_changes", "POST", "/v1/tables/{table_id}/changes", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"table_sizes",
 	     "POST",
@@ -5223,10 +5307,22 @@ RESTConfigResponse DuckLakeRESTClientAPI::Config(const RESTConfigRequest &reques
 	return DuckLakeRESTSerializer::Read<RESTConfigResponse>(document.Root());
 }
 
+RESTSnapshotData DuckLakeRESTClientAPI::GetLatestSnapshot(const RESTGetLatestSnapshotRequest &request) {
+	RESTPathScope paths(GetPathMapper());
+	RESTJsonReader document(Call("get_latest_snapshot", DuckLakeRESTSerializer::ToJSON(request), true));
+	return DuckLakeRESTSerializer::Read<RESTSnapshotData>(document.Root());
+}
+
 DuckLakeMetadata DuckLakeRESTClientAPI::GetMetadata(const RESTGetMetadataRequest &request) {
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("get_metadata", DuckLakeRESTSerializer::ToJSON(request), true));
 	return DuckLakeRESTSerializer::Read<DuckLakeMetadata>(document.Root());
+}
+
+RESTSnapshotData DuckLakeRESTClientAPI::GetSnapshotAt(const RESTGetSnapshotAtRequest &request) {
+	RESTPathScope paths(GetPathMapper());
+	RESTJsonReader document(Call("get_snapshot_at", DuckLakeRESTSerializer::ToJSON(request), true));
+	return DuckLakeRESTSerializer::Read<RESTSnapshotData>(document.Root());
 }
 
 RESTListSnapshotsResponse DuckLakeRESTClientAPI::ListSnapshots(const RESTListSnapshotsRequest &request) {
@@ -5245,12 +5341,6 @@ RESTSelectResponse DuckLakeRESTClientAPI::Select(const RESTSelectRequest &reques
 	RESTPathScope paths(GetPathMapper());
 	RESTJsonReader document(Call("select", DuckLakeRESTSerializer::ToJSON(request), true));
 	return DuckLakeRESTSerializer::Read<RESTSelectResponse>(document.Root());
-}
-
-RESTSnapshotDataResponse DuckLakeRESTClientAPI::SnapshotData(const RESTSnapshotDataRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("snapshot_data", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTSnapshotDataResponse>(document.Root());
 }
 
 RESTTableChangesResponse DuckLakeRESTClientAPI::TableChanges(const RESTTableChangesRequest &request) {

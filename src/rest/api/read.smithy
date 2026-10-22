@@ -44,51 +44,80 @@ operation GetMetadata {
     output: Metadata
 }
 
-/// Returns a snapshot together with (optionally) the catalog and the table statistics of that snapshot.
+/// Returns the latest snapshot together with (optionally) the catalog and the table statistics of that snapshot.
 ///
 /// Clients pass `cached_metadata_version` and `cached_data_version` when they start a transaction, so they get the
 /// latest snapshot and, if it changed since, its catalog and statistics in a single round-trip.
-@http(method: "POST", uri: "/v1/snapshots/load")
+@http(method: "GET", uri: "/v1/snapshots/latest")
 @readonly
-operation SnapshotData {
-    input := with [SnapshotReference] {
-        /// Find the snapshot of an `AT` clause instead.
-        at: AtClause
+operation GetLatestSnapshot {
+    input := with [SnapshotIncludes] {}
+    output: SnapshotData
+}
 
-        /// Whether a timestamp of `at` finds the last snapshot before or the first snapshot after it.
+/// Returns the snapshot of an `AT` clause together with (optionally) the catalog and the table statistics of that
+/// snapshot. The request fails if there is no such snapshot, e.g. because it expired.
+@http(method: "GET", uri: "/v1/snapshots/at")
+@readonly
+operation GetSnapshotAt {
+    input := with [SnapshotIncludes] {
+        /// The unit of the value of the `AT` clause.
+        @required
+        @httpQuery("unit")
+        unit: AtUnit
+
+        /// The snapshot id (for `version`) or the timestamp (for `timestamp`).
+        @required
+        @httpQuery("value")
+        value: String
+
+        /// Whether a timestamp finds the last snapshot before or the first snapshot after it.
+        @httpQuery("bound")
         bound: SnapshotBound = "upper"
 
-        /// The newest snapshot that `at` can find, snapshots committed after a client's transaction started are not
-        /// visible to it.
+        /// The newest snapshot that the clause can find, snapshots committed after a client's transaction started are
+        /// not visible to it.
+        @httpQuery("newest_snapshot_id")
         newest_snapshot_id: UInt64
-
-        /// Return the catalog of the snapshot.
-        include_catalog: Boolean = false
-
-        /// Return the table statistics of the snapshot.
-        include_stats: Boolean = false
-
-        /// The schema version of the latest catalog the client has loaded. If the snapshot has a different schema
-        /// version, its catalog is returned.
-        cached_metadata_version: UInt64
-
-        /// The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a
-        /// different next file id, its statistics are returned.
-        cached_data_version: UInt64
     }
 
-    output := {
-        /// The snapshot.
-        @required
-        snapshot: Snapshot
+    output: SnapshotData
+}
 
-        /// The catalog of the snapshot.
-        catalog: CatalogInfo
+/// What a request for a snapshot returns besides the snapshot.
+@mixin
+structure SnapshotIncludes {
+    /// Return the catalog of the snapshot.
+    @httpQuery("include_catalog")
+    include_catalog: Boolean = false
 
-        /// The statistics of the tables of the snapshot.
-        @cppType("RESTOptional<vector<DuckLakeGlobalStatsInfo>>")
-        stats: GlobalTableStatsList
-    }
+    /// Return the table statistics of the snapshot.
+    @httpQuery("include_stats")
+    include_stats: Boolean = false
+
+    /// The schema version of the latest catalog the client has loaded. If the snapshot has a different schema
+    /// version, its catalog is returned.
+    @httpQuery("cached_metadata_version")
+    cached_metadata_version: UInt64
+
+    /// The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a
+    /// different next file id, its statistics are returned.
+    @httpQuery("cached_data_version")
+    cached_data_version: UInt64
+}
+
+/// A snapshot with its catalog and statistics.
+structure SnapshotData {
+    /// The snapshot.
+    @required
+    snapshot: Snapshot
+
+    /// The catalog of the snapshot.
+    catalog: CatalogInfo
+
+    /// The statistics of the tables of the snapshot.
+    @cppType("RESTOptional<vector<DuckLakeGlobalStatsInfo>>")
+    stats: GlobalTableStatsList
 }
 
 /// Plans a scan of a table.
@@ -314,17 +343,6 @@ enum AtUnit {
 
     /// A timestamp.
     TIMESTAMP = "timestamp"
-}
-
-/// The `AT` clause of a time travel query.
-structure AtClause {
-    /// The unit of the value.
-    @required
-    unit: AtUnit
-
-    /// The snapshot id or timestamp.
-    @required
-    value: Value
 }
 
 /// How a timestamp finds a snapshot.

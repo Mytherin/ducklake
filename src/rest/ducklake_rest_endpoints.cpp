@@ -204,27 +204,17 @@ DuckLakeMetadata DuckLakeRESTEndpoints::GetMetadata(DuckLakeRESTRequest &request
 	return metadata;
 }
 
-RESTSnapshotDataResponse DuckLakeRESTEndpoints::SnapshotData(DuckLakeRESTRequest &request,
-                                                             const RESTSnapshotDataRequest &parameters) {
+//! Adds the catalog and statistics of the snapshot that the request asks for
+static void AddSnapshotData(DuckLakeRESTRequest &request, const RESTSnapshotIncludes &includes,
+                            RESTSnapshotData &result) {
 	auto &metadata_manager = request.GetMetadataManager();
-	RESTSnapshotDataResponse result;
-	if (parameters.at) {
-		BoundAtClause at_clause(Identifier(parameters.at->unit), parameters.at->value);
-		auto bound = parameters.bound == "lower" ? SnapshotBound::LOWER_BOUND : SnapshotBound::UPPER_BOUND;
-		auto newest_snapshot_id = parameters.newest_snapshot_id.IsValid() ? parameters.newest_snapshot_id.GetIndex()
-		                                                                  : DConstants::INVALID_INDEX;
-		result.snapshot = *metadata_manager.GetSnapshot(at_clause, bound, newest_snapshot_id);
-	} else {
-		result.snapshot = request.GetSnapshot(parameters);
-	}
 	auto &snapshot = result.snapshot;
 	// clients that pass the versions they have loaded get the catalog and statistics if they changed
 	bool include_catalog =
-	    parameters.include_catalog || (parameters.cached_metadata_version.IsValid() &&
-	                                   parameters.cached_metadata_version.GetIndex() != snapshot.schema_version);
-	bool include_stats =
-	    parameters.include_stats || (parameters.cached_data_version.IsValid() &&
-	                                 parameters.cached_data_version.GetIndex() != snapshot.next_file_id);
+	    includes.include_catalog || (includes.cached_metadata_version.IsValid() &&
+	                                 includes.cached_metadata_version.GetIndex() != snapshot.schema_version);
+	bool include_stats = includes.include_stats || (includes.cached_data_version.IsValid() &&
+	                                                includes.cached_data_version.GetIndex() != snapshot.next_file_id);
 	if (include_catalog) {
 		result.catalog = make_uniq<DuckLakeCatalogInfo>(metadata_manager.GetCatalogForSnapshot(snapshot));
 		auto next_column_ids = metadata_manager.GetNextColumnIds();
@@ -238,6 +228,38 @@ RESTSnapshotDataResponse DuckLakeRESTEndpoints::SnapshotData(DuckLakeRESTRequest
 	if (include_stats) {
 		result.stats = metadata_manager.GetGlobalTableStats(snapshot);
 	}
+}
+
+RESTSnapshotData DuckLakeRESTEndpoints::GetLatestSnapshot(DuckLakeRESTRequest &request,
+                                                          const RESTGetLatestSnapshotRequest &parameters) {
+	RESTSnapshotData result;
+	result.snapshot = request.transaction->GetSnapshot();
+	AddSnapshotData(request, parameters, result);
+	return result;
+}
+
+RESTSnapshotData DuckLakeRESTEndpoints::GetSnapshotAt(DuckLakeRESTRequest &request,
+                                                      const RESTGetSnapshotAtRequest &parameters) {
+	Value value;
+	if (parameters.unit != "version" && parameters.unit != "timestamp") {
+		throw InvalidInputException("\"%s\" is not a valid AtUnit", parameters.unit);
+	}
+	if (parameters.unit == "version") {
+		idx_t snapshot_id;
+		if (!TryCast::Operation<string_t, idx_t>(string_t(parameters.value), snapshot_id)) {
+			throw InvalidInputException("\"%s\" is not a snapshot id", parameters.value);
+		}
+		value = Value::UBIGINT(snapshot_id);
+	} else {
+		value = Value(parameters.value).DefaultCastAs(LogicalType::TIMESTAMP_TZ);
+	}
+	BoundAtClause at_clause(Identifier(parameters.unit), value);
+	auto bound = parameters.bound == "lower" ? SnapshotBound::LOWER_BOUND : SnapshotBound::UPPER_BOUND;
+	auto newest_snapshot_id =
+	    parameters.newest_snapshot_id.IsValid() ? parameters.newest_snapshot_id.GetIndex() : DConstants::INVALID_INDEX;
+	RESTSnapshotData result;
+	result.snapshot = *request.GetMetadataManager().GetSnapshot(at_clause, bound, newest_snapshot_id);
+	AddSnapshotData(request, parameters, result);
 	return result;
 }
 

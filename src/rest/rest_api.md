@@ -45,7 +45,7 @@ and the JSON response, which is useful to explore the API:
 
 ```sql
 SELECT response FROM ducklake_rest_request('http://localhost:8181', 'GET', '/v1/snapshots?exclude_latest=true', '');
-SELECT response FROM ducklake_rest_request('http://localhost:8181', 'POST', '/v1/snapshots/load', '{}');
+SELECT response FROM ducklake_rest_request('http://localhost:8181', 'GET', '/v1/snapshots/latest', '');
 ```
 
 ### Connecting to a server
@@ -203,6 +203,28 @@ Response:
 | `overrides` | object of `string` (default `{}`) | Properties that the client uses instead of its own values, e.g. `prefix`. |
 | `endpoints` | list of `string` (default `[]`) | The requests that the server supports. |
 
+### `get_latest_snapshot`
+
+Returns the latest snapshot together with (optionally) the catalog and the table statistics of that snapshot.
+
+Clients pass `cached_metadata_version` and `cached_data_version` when they start a transaction, so they get the
+latest snapshot and, if it changed since, its catalog and statistics in a single round-trip.
+
+`GET /v1/snapshots/latest`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `include_catalog` | query | `bool` | Return the catalog of the snapshot. |
+| `include_stats` | query | `bool` | Return the table statistics of the snapshot. |
+| `cached_metadata_version` | query | `uint64` | The schema version of the latest catalog the client has loaded. If the snapshot has a different schema version, its catalog is returned. |
+| `cached_data_version` | query | `uint64` | The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a different next file id, its statistics are returned. |
+
+Request: no body.
+
+Response: [`SnapshotData`](#snapshotdata).
+
 ### `get_metadata`
 
 Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
@@ -214,6 +236,30 @@ The `data_path` is the resolved data path of the served DuckLake.
 Request: no body.
 
 Response: [`Metadata`](#metadata).
+
+### `get_snapshot_at`
+
+Returns the snapshot of an `AT` clause together with (optionally) the catalog and the table statistics of that
+snapshot. The request fails if there is no such snapshot, e.g. because it expired.
+
+`GET /v1/snapshots/at`
+
+Parameters in the URL (the other fields of the request are the JSON body):
+
+| Parameter | In | Type | Description |
+|-----------|----|------|-------------|
+| `include_catalog` | query | `bool` | Return the catalog of the snapshot. |
+| `include_stats` | query | `bool` | Return the table statistics of the snapshot. |
+| `cached_metadata_version` | query | `uint64` | The schema version of the latest catalog the client has loaded. If the snapshot has a different schema version, its catalog is returned. |
+| `cached_data_version` | query | `uint64` | The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a different next file id, its statistics are returned. |
+| `unit` | query | [`AtUnit`](#atunit) | The unit of the value of the `AT` clause. |
+| `value` | query | `string` | The snapshot id (for `version`) or the timestamp (for `timestamp`). |
+| `bound` | query | [`SnapshotBound`](#snapshotbound) | Whether a timestamp finds the last snapshot before or the first snapshot after it. |
+| `newest_snapshot_id` | query | `uint64` | The newest snapshot that the clause can find, snapshots committed after a client's transaction started are not visible to it. |
+
+Request: no body.
+
+Response: [`SnapshotData`](#snapshotdata).
 
 ### `list_snapshots`
 
@@ -256,7 +302,7 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshots/latest` and `snapshots/at`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `count` | [`RowCountType`](#rowcounttype) | What to count. |
 
@@ -294,7 +340,7 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshots/latest` and `snapshots/at`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `page_token` | `string` (optional) | A page token of an earlier response: returns that page of files. The request has no other members then. |
 | `extended` | `bool` (default `false`) | Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`. |
@@ -313,37 +359,6 @@ Response:
 | `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows of the table, for `include_inlined_data`. |
 | `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files of the response and the files of all its pages. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
-
-### `snapshot_data`
-
-Returns a snapshot together with (optionally) the catalog and the table statistics of that snapshot.
-
-Clients pass `cached_metadata_version` and `cached_data_version` when they start a transaction, so they get the
-latest snapshot and, if it changed since, its catalog and statistics in a single round-trip.
-
-`POST /v1/snapshots/load`
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
-| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-| `at` | [`AtClause`](#atclause) (optional) | Find the snapshot of an `AT` clause instead. |
-| `bound` | [`SnapshotBound`](#snapshotbound) (default `"upper"`) | Whether a timestamp of `at` finds the last snapshot before or the first snapshot after it. |
-| `newest_snapshot_id` | `uint64` (optional) | The newest snapshot that `at` can find, snapshots committed after a client's transaction started are not visible to it. |
-| `include_catalog` | `bool` (default `false`) | Return the catalog of the snapshot. |
-| `include_stats` | `bool` (default `false`) | Return the table statistics of the snapshot. |
-| `cached_metadata_version` | `uint64` (optional) | The schema version of the latest catalog the client has loaded. If the snapshot has a different schema version, its catalog is returned. |
-| `cached_data_version` | `uint64` (optional) | The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a different next file id, its statistics are returned. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) | The snapshot. |
-| `catalog` | [`CatalogInfo`](#cataloginfo) (optional) | The catalog of the snapshot. |
-| `stats` | list of [`GlobalTableStats`](#globaltablestats) (optional) | The statistics of the tables of the snapshot. |
 
 ### `table_changes`
 
@@ -368,7 +383,7 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshots/latest` and `snapshots/at`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `start_snapshot` | [`Snapshot`](#snapshot) (optional) | The first snapshot of the range. |
 | `start_snapshot_id` | `uint64` (optional) | The id of the first snapshot of the range. |
@@ -406,7 +421,7 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshots/latest` and `snapshots/at`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 
 Response:
@@ -482,7 +497,7 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshots/latest` and `snapshots/at`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `commit_info` | [`CommitInfo`](#commitinfo) (optional) | The commit information of the snapshot. |
 | `retry` | [`RetryConfig`](#retryconfig) (optional) | How the server retries the commit on conflicts. |
@@ -715,15 +730,6 @@ An object with exactly one member, the name of the variant:
 | `reset_options` | [`ResetOptions`](#resetoptions) |
 | `set_comment` | [`SetComment`](#setcomment) |
 | `set_column_comment` | [`SetColumnComment`](#setcolumncomment) |
-
-### `AtClause`
-
-The `AT` clause of a time travel query.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `unit` | [`AtUnit`](#atunit) | The unit of the value. |
-| `value` | `value` | The snapshot id or timestamp. |
 
 ### `AtUnit`
 
@@ -1481,6 +1487,27 @@ How a timestamp finds a snapshot.
 | `upper` | The last snapshot before the timestamp. |
 | `lower` | The first snapshot after the timestamp. |
 
+### `SnapshotData`
+
+A snapshot with its catalog and statistics.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `snapshot` | [`Snapshot`](#snapshot) | The snapshot. |
+| `catalog` | [`CatalogInfo`](#cataloginfo) (optional) | The catalog of the snapshot. |
+| `stats` | list of [`GlobalTableStats`](#globaltablestats) (optional) | The statistics of the tables of the snapshot. |
+
+### `SnapshotIncludes`
+
+What a request for a snapshot returns besides the snapshot.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `include_catalog` | `bool` (default `false`) | Return the catalog of the snapshot. |
+| `include_stats` | `bool` (default `false`) | Return the table statistics of the snapshot. |
+| `cached_metadata_version` | `uint64` (optional) | The schema version of the latest catalog the client has loaded. If the snapshot has a different schema version, its catalog is returned. |
+| `cached_data_version` | `uint64` (optional) | The next file id of the snapshot of the latest statistics the client has loaded. If the snapshot has a different next file id, its statistics are returned. |
+
 ### `SnapshotInfo`
 
 A snapshot, with its commit information.
@@ -1503,7 +1530,7 @@ have been expired since the client loaded them. Without `snapshot` and `snapshot
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
+| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshots/latest` and `snapshots/at`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 
 ### `SortDirection`

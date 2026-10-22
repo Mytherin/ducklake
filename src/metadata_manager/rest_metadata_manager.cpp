@@ -122,21 +122,21 @@ unique_ptr<QueryResult> RESTMetadataManager::Query(string &query) {
 //===--------------------------------------------------------------------===//
 // Reads
 //===--------------------------------------------------------------------===//
-RESTSnapshotDataResponse RESTMetadataManager::GetSnapshotData(optional_ptr<DuckLakeSnapshot> snapshot,
-                                                              bool include_catalog, bool include_stats) {
-	RESTSnapshotDataRequest request;
-	if (snapshot) {
-		request.snapshot = *snapshot;
-	}
+RESTSnapshotData RESTMetadataManager::GetSnapshotData(DuckLakeSnapshot snapshot, bool include_catalog,
+                                                      bool include_stats) {
+	// a snapshot is found by its id
+	RESTGetSnapshotAtRequest request;
+	request.unit = "version";
+	request.value = to_string(snapshot.snapshot_id);
 	request.include_catalog = include_catalog;
 	request.include_stats = include_stats;
-	return GetClient().SnapshotData(request);
+	return GetClient().GetSnapshotAt(request);
 }
 
 unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot() {
 	// the catalog and statistics of a new snapshot come along, which saves a round-trip to load them
 	auto &client = GetClient();
-	RESTSnapshotDataRequest request;
+	RESTGetLatestSnapshotRequest request;
 	idx_t loaded_metadata_version = client.loaded_metadata_version;
 	idx_t loaded_data_version = client.loaded_data_version;
 	if (loaded_metadata_version == DConstants::INVALID_INDEX) {
@@ -149,7 +149,7 @@ unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot() {
 	} else {
 		request.cached_data_version = loaded_data_version;
 	}
-	auto response = client.SnapshotData(request);
+	auto response = client.GetLatestSnapshot(request);
 	auto &snapshot = response.snapshot;
 	lock_guard<mutex> guard(cache_lock);
 	if (response.catalog) {
@@ -173,13 +173,12 @@ unique_ptr<DuckLakeSnapshot> RESTMetadataManager::GetSnapshot(BoundAtClause &at_
 		auto context = transaction.context.lock();
 		value = value.CastAs(*context, LogicalType::TIMESTAMP_TZ);
 	}
-	RESTSnapshotDataRequest request;
-	request.at = make_uniq<RESTAtClause>();
-	request.at->unit = RESTAtUnitCodec::FromString(StringUtil::Lower(at_clause.Unit().GetIdentifierName()));
-	request.at->value = value;
+	RESTGetSnapshotAtRequest request;
+	request.unit = StringUtil::Lower(at_clause.Unit().GetIdentifierName());
+	request.value = value.ToString();
 	request.bound = bound == SnapshotBound::LOWER_BOUND ? "lower" : "upper";
 	request.newest_snapshot_id = newest_snapshot_id;
-	auto response = GetClient().SnapshotData(request);
+	auto response = GetClient().GetSnapshotAt(request);
 	return make_uniq<DuckLakeSnapshot>(response.snapshot);
 }
 

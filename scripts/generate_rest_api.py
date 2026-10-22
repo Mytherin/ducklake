@@ -436,6 +436,15 @@ class Spec:
         for endpoint in self.routed:
             self.validate_route(endpoint)
 
+    def parameter_type(self, type_text):
+        """The C++ enumerator of a parameter of the URL: enums that are strings on the wire are strings"""
+        if type_text in PARAMETER_TYPES:
+            return PARAMETER_TYPES[type_text]
+        entry = self.types.get(type_text)
+        if isinstance(entry, EnumType) and not entry.cpp_enum:
+            return "STRING"
+        return None
+
     def validate_route(self, endpoint):
         fields = {field.name: field for field in self.fields_of(endpoint.request)}
         seen = set()
@@ -444,7 +453,7 @@ class Spec:
             if name not in fields or name in seen:
                 raise SpecError(f"{endpoint.name}: unknown parameter {name}")
             seen.add(name)
-            if parameter["type"] not in PARAMETER_TYPES:
+            if self.parameter_type(parameter["type"]) is None:
                 raise SpecError(
                     f"{endpoint.name}.{name}: parameters of the URL cannot be of type {parameter['type']}"
                 )
@@ -1939,7 +1948,7 @@ def generate_source(spec):
         parameters = ", ".join(
             "{{{}, RESTParameterType::{}, {}}}".format(
                 cpp_string(p["name"]),
-                PARAMETER_TYPES[p["type"]],
+                spec.parameter_type(p["type"]),
                 cpp_string(p.get("query_name", "")),
             )
             for p in endpoint.parameters

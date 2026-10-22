@@ -56,9 +56,57 @@ SELECT (response->'$.inlined_data') IS NULL FROM ducklake_rest_request('{rest_se
 true
 
 query I
-SELECT response->>'$.snapshot.snapshot_id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/snapshots/load', '{}')
+SELECT response->>'$.snapshot.snapshot_id' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/latest', '')
 ----
 3
+
+# the snapshot of an AT clause
+query II
+SELECT status, response->>'$.snapshot.snapshot_id' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/at?unit=version&value=1', '')
+----
+200	1
+
+query II
+SELECT status, (response->'$.catalog') IS NOT NULL FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/at?unit=version&value=1&include_catalog=true', '')
+----
+200	true
+
+statement ok
+SET VARIABLE first_time = (SELECT response->>'$.snapshots[0].snapshot_time' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots?page_size=1', ''))
+
+query II
+SELECT status, response->>'$.snapshot.snapshot_id' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/at?unit=timestamp&bound=lower&value=' || replace(getvariable('first_time'), '+', '%2B'), '')
+----
+200	0
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/at?unit=version&value=100000', '')
+----
+400	Invalid Input
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/at?unit=version&value=x', '')
+----
+400	Invalid Input
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/at?unit=other&value=1', '')
+----
+400	Invalid Input
+
+# the catalog and statistics of the latest snapshot are only returned when they changed
+query II
+SELECT status, (response->'$.catalog') IS NOT NULL FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/latest?cached_metadata_version=1000000', '')
+----
+200	true
+
+statement ok
+SET VARIABLE schema_version = (SELECT response->>'$.snapshot.schema_version' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/latest', ''))
+
+query II
+SELECT status, (response->'$.catalog') IS NOT NULL FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/latest?cached_metadata_version=' || getvariable('schema_version'), '')
+----
+200	false
 
 # a created entry is returned with its id under the reference of its request
 query II
@@ -205,7 +253,7 @@ SELECT (SELECT json_array_length(response->'$.snapshots') FROM ducklake_rest_req
 1
 
 query I
-SELECT response->>'$.catalog.tables[0].next_column_id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/snapshots/load', '{"include_catalog": true}')
+SELECT response->>'$.catalog.tables[0].next_column_id' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/latest?include_catalog=true', '')
 ----
 3
 

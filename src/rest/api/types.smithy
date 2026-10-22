@@ -39,7 +39,7 @@ structure Snapshot {
 /// have been expired since the client loaded them. Without `snapshot` and `snapshot_id`, the latest snapshot is read.
 @mixin
 structure SnapshotReference {
-    /// The snapshot, as returned by `snapshot_data`.
+    /// The snapshot, as returned by `snapshots/latest` and `snapshots/at`.
     snapshot: Snapshot
 
     /// The id of the snapshot.
