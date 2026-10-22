@@ -442,7 +442,7 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	auto prefix_val = GetNamedParameter(input, "prefix");
 	auto defaults_val = GetNamedParameter(input, "defaults");
 	auto overrides_val = GetNamedParameter(input, "overrides");
-	auto files_per_task_val = GetNamedParameter(input, "files_per_task");
+	auto files_per_page_val = GetNamedParameter(input, "files_per_page");
 	auto page_size_val = GetNamedParameter(input, "page_size");
 
 	auto &registry = DuckLakeRESTServerRegistry::Get();
@@ -481,12 +481,12 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 		}
 		server->SetDefaultPageSize(page_size);
 	}
-	if (!files_per_task_val.IsNull()) {
-		auto files_per_task = files_per_task_val.GetValue<idx_t>();
-		if (files_per_task == 0) {
-			throw BinderException("ducklake_rest_serve: files_per_task has to be larger than 0");
+	if (!files_per_page_val.IsNull()) {
+		auto files_per_page = files_per_page_val.GetValue<idx_t>();
+		if (files_per_page == 0) {
+			throw BinderException("ducklake_rest_serve: files_per_page has to be larger than 0");
 		}
-		server->SetFilesPerTask(files_per_task);
+		server->SetFilesPerPage(files_per_page);
 	}
 	if (!defaults_val.IsNull() || !overrides_val.IsNull()) {
 		server->SetClientProperties(ToStringMap(defaults_val), ToStringMap(overrides_val));
@@ -555,7 +555,7 @@ DuckLakeRESTServeFunction::DuckLakeRESTServeFunction()
 		    .Add("wait", LogicalType::BOOLEAN)
 		    .Add("token", LogicalType::VARCHAR)
 		    .Add("prefix", LogicalType::VARCHAR)
-		    .Add("files_per_task", LogicalType::UBIGINT)
+		    .Add("files_per_page", LogicalType::UBIGINT)
 		    .Add("page_size", LogicalType::UBIGINT)
 		    .Add("defaults", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))
 		    .Add("overrides", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));

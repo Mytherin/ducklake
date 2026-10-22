@@ -47,13 +47,15 @@ public:
 	string prefix;
 };
 
-//! The chunks of the scans that were split into plan tasks, which the server keeps for a while
+//! The pages of the scans that were split into pages, which the server keeps for a while
 struct DuckLakeRESTPlan {
 	//! The catalog and the table of the scan
 	string prefix;
 	idx_t table_id = 0;
-	//! The number of entries of a plan task
-	idx_t task_size = 1;
+	//! The number of entries of a page
+	idx_t page_size = 1;
+	//! The column mappings that the client of the scan has
+	set<idx_t> known_mappings;
 	//! The entries that are not in the response of the scan, whichever the scan returns
 	vector<DuckLakeFileListEntry> files;
 	vector<DuckLakeFileListExtendedEntry> extended_files;
@@ -86,12 +88,12 @@ public:
 	void AddCatalog(const string &prefix, shared_ptr<DatabaseInstance> db, string catalog_name);
 	//! Stops serving the catalog under the prefix, returns whether there was one
 	bool RemoveCatalog(const string &prefix);
-	//! The number of files of the first response of a scan, and of every plan task of the scan
-	idx_t FilesPerTask() const {
-		return files_per_task;
+	//! The number of files of the first response of a scan, and of every other page of the scan
+	idx_t FilesPerPage() const {
+		return files_per_page;
 	}
-	void SetFilesPerTask(idx_t files_per_task_p) {
-		files_per_task = files_per_task_p;
+	void SetFilesPerPage(idx_t files_per_page_p) {
+		files_per_page = files_per_page_p;
 	}
 	//! The number of entries of a page if the request does not ask for a number
 	idx_t DefaultPageSize() const {
@@ -143,7 +145,7 @@ private:
 private:
 	mutex catalog_lock;
 	map<string, ServedCatalog> catalogs;
-	idx_t files_per_task = 10000;
+	idx_t files_per_page = 10000;
 	idx_t default_page_size = 1000;
 	DuckLakeRESTPlans plans;
 	map<string, string> client_defaults;

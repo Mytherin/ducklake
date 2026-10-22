@@ -163,8 +163,6 @@ struct RESTDuckLakeTableRequest;
 struct RESTDuckLakeTableResponse;
 struct RESTDuckLakeTablesRequest;
 struct RESTDuckLakeTablesResponse;
-struct RESTFetchPlanTaskRequest;
-struct RESTFetchPlanTaskResponse;
 struct RESTGetMetadataRequest;
 struct RESTListSnapshotsRequest;
 struct RESTListSnapshotsResponse;
@@ -286,8 +284,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTableResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDuckLakeTablesResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTFetchPlanTaskRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTFetchPlanTaskResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTGetMetadataRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTListSnapshotsResponse &value);
@@ -474,10 +470,6 @@ template <>
 RESTDuckLakeTablesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDuckLakeTablesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTFetchPlanTaskRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTFetchPlanTaskResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTGetMetadataRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -1086,28 +1078,6 @@ struct RESTDuckLakeTablesResponse {
 	vector<string> table_names;
 };
 
-struct RESTFetchPlanTaskRequest {
-	//! The table of the plan task.
-	idx_t table_id = 0;
-	//! The plan task.
-	string plan_task;
-	//! The ids of the column mappings that the client has: the response only has the other column mappings that its
-	set<idx_t> known_column_mappings;
-};
-
-struct RESTFetchPlanTaskResponse {
-	//! The files of a plan task of `scan`.
-	vector<DuckLakeFileListEntry> files;
-	//! The files of a plan task of `scan` with `extended`.
-	vector<DuckLakeFileListExtendedEntry> extended_files;
-	//! The files of a plan task of `changes` with `insertions`.
-	vector<DuckLakeFileListEntry> insertions;
-	//! The files of a plan task of `changes` with `deletions`.
-	vector<DuckLakeDeleteScanEntry> deletions;
-	//! The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
-	vector<DuckLakeColumnMappingInfo> column_mappings;
-};
-
 struct RESTGetMetadataRequest {};
 
 struct RESTListSnapshotsRequest {
@@ -1145,6 +1115,8 @@ struct RESTRowCountResponse {
 struct RESTSelectRequest : public RESTSnapshotReference {
 	//! The table to scan.
 	idx_t table_id = 0;
+	//! A page token of an earlier response: returns that page of files. The request has no other members then.
+	string page_token;
 	//! Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`.
 	bool extended = false;
 	//! Filters to prune files with.
@@ -1166,8 +1138,8 @@ struct RESTSelectResponse {
 	vector<DuckLakeFileListExtendedEntry> extended_files;
 	//! The inlined rows of the table, for `include_inlined_data`.
 	unique_ptr<RESTInlinedRows> inlined_data;
-	//! Plan tasks for the files that are not in this response, if there are many files. Each plan task is sent to
-	vector<string> plan_tasks;
+	//! The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files
+	vector<string> page_tokens;
 	//! The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
 	vector<DuckLakeColumnMappingInfo> column_mappings;
 };
@@ -1205,7 +1177,9 @@ struct RESTTableChangesRequest : public RESTSnapshotReference {
 	DuckLakeSnapshot start_snapshot;
 	//! The id of the first snapshot of the range.
 	optional_idx start_snapshot_id;
-	//! The changes to return.
+	//! A page token of an earlier response: returns that page of files. The request has no other members then.
+	string page_token;
+	//! The changes to return. Required, unless the request has a `page_token`.
 	string changes;
 	//! Also return the inlined rows that changed.
 	bool include_inlined_data = false;
@@ -1224,8 +1198,8 @@ struct RESTTableChangesResponse {
 	vector<DuckLakeDeleteScanEntry> deletions;
 	//! The inlined rows that changed, for `include_inlined_data`.
 	unique_ptr<RESTInlinedRows> inlined_data;
-	//! Plan tasks for the files that are not in this response, see `scan`.
-	vector<string> plan_tasks;
+	//! The tokens of the other pages of the files, see `scan`.
+	vector<string> page_tokens;
 	//! The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
 	vector<DuckLakeColumnMappingInfo> column_mappings;
 };
@@ -1562,9 +1536,6 @@ struct DuckLakeRESTEndpoints {
 	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
 	static RESTDuckLakeTablesResponse DuckLakeTables(DuckLakeRESTRequest &request,
 	                                                 const RESTDuckLakeTablesRequest &parameters);
-	//! Returns the files of a plan task of `scan` or `changes`.
-	static RESTFetchPlanTaskResponse FetchPlanTask(DuckLakeRESTRequest &request,
-	                                               const RESTFetchPlanTaskRequest &parameters);
 	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 	static DuckLakeMetadata GetMetadata(DuckLakeRESTRequest &request, const RESTGetMetadataRequest &parameters);
 	//! Returns the snapshots, optionally filtered.
@@ -1679,8 +1650,6 @@ public:
 	RESTDuckLakeTableResponse DuckLakeTable(const RESTDuckLakeTableRequest &request);
 	//! Returns the names of the tables of the DuckLake specification (`ducklake_snapshot`, `ducklake_data_file`, ...).
 	RESTDuckLakeTablesResponse DuckLakeTables(const RESTDuckLakeTablesRequest &request);
-	//! Returns the files of a plan task of `scan` or `changes`.
-	RESTFetchPlanTaskResponse FetchPlanTask(const RESTFetchPlanTaskRequest &request);
 	//! Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
 	DuckLakeMetadata GetMetadata(const RESTGetMetadataRequest &request);
 	//! Returns the snapshots, optionally filtered.

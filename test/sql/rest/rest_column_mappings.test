@@ -48,9 +48,9 @@ FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"know
 ----
 200	true
 
-# the mappings of the plan tasks of a scan come with the plan tasks
+# the mappings of the pages of a scan come with the pages
 statement ok rest_db:rest_server_con
-SELECT * FROM ducklake_rest_serve('rest_lake', port := regexp_extract(getvariable('rest_listen_uri'), ':([0-9]+)/', 1)::UBIGINT, files_per_task := 1)
+SELECT * FROM ducklake_rest_serve('rest_lake', port := regexp_extract(getvariable('rest_listen_uri'), ':([0-9]+)/', 1)::UBIGINT, files_per_page := 1)
 
 query II
 SELECT a, b FROM dl.t ORDER BY a
@@ -59,17 +59,17 @@ SELECT a, b FROM dl.t ORDER BY a
 2	two
 
 query II
-SELECT json_array_length(response->'$.files'), json_array_length(response->'$.plan_tasks')
+SELECT json_array_length(response->'$.files'), json_array_length(response->'$.page_tokens')
 FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}')
 ----
 1	1
 
 statement ok
-SET VARIABLE task = (SELECT response->>'$.plan_tasks[0]' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}'))
+SET VARIABLE task = (SELECT response->>'$.page_tokens[0]' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}'))
 
 query II
 SELECT status, json_array_length(response->'$.column_mappings')
-FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/plan-tasks', '{"plan_task": "' || getvariable('task') || '"}')
+FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"page_token": "' || getvariable('task') || '"}')
 ----
 200	1
 

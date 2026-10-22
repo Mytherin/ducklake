@@ -1,14 +1,14 @@
 # name: test/sql/rest/rest_paging.test
-# description: Lists are returned in pages and large scans in plan tasks through the DuckLake REST API
+# description: Lists and large scans are returned in pages through the DuckLake REST API
 # group: [rest]
 
 require json
 
 include test/template/rest_setup.test_template
 
-# the server splits scans into tasks of 2 files and returns pages of 2 entries
+# the server splits scans into pages of 2 files and returns pages of 2 entries
 statement ok rest_db:rest_server_con
-SELECT * FROM ducklake_rest_serve('rest_lake', port := regexp_extract(getvariable('rest_listen_uri'), ':([0-9]+)/', 1)::UBIGINT, files_per_task := 2, page_size := 2)
+SELECT * FROM ducklake_rest_serve('rest_lake', port := regexp_extract(getvariable('rest_listen_uri'), ':([0-9]+)/', 1)::UBIGINT, files_per_page := 2, page_size := 2)
 
 statement ok
 ATTACH 'ducklake:rest:{rest_server}' AS dl (DATA_INLINING_ROW_LIMIT 0)
@@ -34,54 +34,83 @@ SELECT count(*) FROM ducklake_list_files('dl', 't')
 ----
 7
 
-# the first response of a scan has the first task, and there is a plan task for each other one
+# the first response of a scan has the first page, and there is a page token for each other one
 query III
-SELECT status, json_array_length(response->'$.files'), json_array_length(response->'$.plan_tasks')
+SELECT status, json_array_length(response->'$.files'), json_array_length(response->'$.page_tokens')
 FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}')
 ----
 200	2	3
 
 statement ok
-SET VARIABLE first_task = (SELECT response->>'$.plan_tasks[0]' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}'))
+SET VARIABLE first_page = (SELECT response->>'$.page_tokens[0]' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}'))
 
 statement ok
-SET VARIABLE last_task = (SELECT response->>'$.plan_tasks[2]' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}'))
+SET VARIABLE last_page = (SELECT response->>'$.page_tokens[2]' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}'))
 
 query II
-SELECT status, json_array_length(response->'$.files') FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/plan-tasks', '{"plan_task": "' || getvariable('first_task') || '"}')
+SELECT status, json_array_length(response->'$.files') FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"page_token": "' || getvariable('first_page') || '"}')
 ----
 200	2
 
 query II
-SELECT status, json_array_length(response->'$.files') FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/plan-tasks', '{"plan_task": "' || getvariable('last_task') || '"}')
+SELECT status, json_array_length(response->'$.files') FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"page_token": "' || getvariable('last_page') || '"}')
 ----
 200	1
 
-# a plan task is for the table of the scan
+# a page token is for the table of the scan
 query II
-SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/2/plan-tasks', '{"plan_task": "' || getvariable('first_task') || '"}')
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/2/scan', '{"page_token": "' || getvariable('first_page') || '"}')
 ----
 404	Catalog
 
 query II
-SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/plan-tasks', '{"plan_task": "unknown.1"}')
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"page_token": "unknown.1"}')
 ----
 404	Catalog
 
 query II
-SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/plan-tasks', '{"plan_task": "nonsense"}')
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"page_token": "nonsense"}')
 ----
 404	Catalog
+
+# a request is either the request for the files or a page token, not both
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"page_token": "' || getvariable('first_page') || '", "extended": true}')
+----
+400	Invalid Input
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"page_token": "' || getvariable('first_page') || '", "snapshot_id": 1}')
+----
+400	Invalid Input
 
 # the files of the changes are split as well
 query III
-SELECT status, json_array_length(response->'$.insertions'), json_array_length(response->'$.plan_tasks')
+SELECT status, json_array_length(response->'$.insertions'), json_array_length(response->'$.page_tokens')
 FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/changes', '{"start_snapshot_id": 0, "changes": "insertions"}')
 ----
 200	2	3
 
 statement ok
 SET VARIABLE last_snapshot = (SELECT max(snapshot_id) FROM dl.snapshots())
+
+statement ok
+SET VARIABLE change_page = (SELECT response->>'$.page_tokens[0]' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/changes', '{"start_snapshot_id": 0, "changes": "insertions"}'))
+
+query II
+SELECT status, json_array_length(response->'$.insertions') FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/changes', '{"page_token": "' || getvariable('change_page') || '"}')
+----
+200	2
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/changes', '{"page_token": "' || getvariable('change_page') || '", "changes": "insertions"}')
+----
+400	Invalid Input
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/changes', '{"start_snapshot_id": 0}')
+----
+400	Invalid Input
 
 query II
 SELECT count(*), sum(i) FROM ducklake_table_insertions('dl', 'main', 't', 0, getvariable('last_snapshot'))

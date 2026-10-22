@@ -132,27 +132,30 @@ static void GetKeyPage(DuckLakeRESTRequest &request, vector<T> &entries, const K
 	next_page_token = to_string(get_key(entries.back()));
 }
 
-//! Moves the entries that follow the first task of a scan into a plan, and returns the plan tasks of the plan
+//! Moves the entries that follow the first page of a scan into a plan, and returns the page tokens of the plan. The
+//! plan is shared by the lists of entries of the scan
 template <class T>
-static void SplitIntoPlanTasks(DuckLakeRESTRequest &request, TableIndex table_id, vector<T> &entries,
-                               vector<T> DuckLakeRESTPlan::*member, vector<string> &plan_tasks) {
-	auto task_size = request.server->FilesPerTask();
-	if (entries.size() <= task_size) {
+static void SplitIntoPages(DuckLakeRESTRequest &request, TableIndex table_id, vector<T> &entries,
+                           vector<T> DuckLakeRESTPlan::*member, const set<idx_t> &known_mappings,
+                           vector<string> &page_tokens) {
+	auto page_size = request.server->FilesPerPage();
+	if (entries.size() <= page_size) {
 		return;
 	}
 	auto plan = make_shared_ptr<DuckLakeRESTPlan>();
 	plan->prefix = request.prefix;
 	plan->table_id = table_id.index;
-	plan->task_size = task_size;
+	plan->page_size = page_size;
+	plan->known_mappings = known_mappings;
 	auto &remainder = plan.get()->*member;
-	for (idx_t i = task_size; i < entries.size(); i++) {
+	for (idx_t i = page_size; i < entries.size(); i++) {
 		remainder.push_back(std::move(entries[i]));
 	}
-	entries.erase(entries.begin() + NumericCast<int64_t>(task_size), entries.end());
-	auto task_count = (remainder.size() + task_size - 1) / task_size;
+	entries.erase(entries.begin() + NumericCast<int64_t>(page_size), entries.end());
+	auto page_count = (remainder.size() + page_size - 1) / page_size;
 	auto id = request.server->Plans().Add(std::move(plan));
-	for (idx_t i = 0; i < task_count; i++) {
-		plan_tasks.push_back(id + "." + to_string(i));
+	for (idx_t i = 0; i < page_count; i++) {
+		page_tokens.push_back(id + "." + to_string(i));
 	}
 }
 
@@ -380,7 +383,54 @@ ReadInlinedRows(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, DuckLak
 	return result;
 }
 
+//! The plan of a page token and the position of the page, throws if the plan expired or belongs to another catalog or
+//! table
+static shared_ptr<DuckLakeRESTPlan> GetPlanOfPage(DuckLakeRESTRequest &request, idx_t table_id,
+                                                  const string &page_token, idx_t &page_index) {
+	auto separator = page_token.rfind('.');
+	shared_ptr<DuckLakeRESTPlan> plan;
+	if (separator != string::npos &&
+	    TryCast::Operation<string_t, idx_t>(string_t(page_token.substr(separator + 1)), page_index)) {
+		plan = request.server->Plans().Get(page_token.substr(0, separator));
+	}
+	if (!plan || plan->prefix != request.prefix || plan->table_id != table_id) {
+		throw CatalogException("The page \"%s\" does not exist: it expired or it belongs to another table", page_token);
+	}
+	return plan;
+}
+
+//! The entries of the page of a plan
+template <class T>
+static void GetPage(const vector<T> &entries, idx_t page_size, idx_t page_index, vector<T> &result) {
+	for (idx_t i = page_index * page_size; i < entries.size() && i < (page_index + 1) * page_size; i++) {
+		result.push_back(entries[i]);
+	}
+}
+
+static void RequireOnlyPageToken(bool no_other_members) {
+	if (!no_other_members) {
+		throw InvalidInputException(
+		    "A request with a page_token cannot have other members: they are the ones of the request that returned it");
+	}
+}
+
 RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, const RESTSelectRequest &parameters) {
+	if (!parameters.page_token.empty()) {
+		RequireOnlyPageToken(RESTIsNull(parameters.snapshot) && !parameters.snapshot_id.IsValid() &&
+		                     !parameters.extended && !parameters.filters && !parameters.include_inlined_data &&
+		                     parameters.time_zone.empty() && parameters.known_column_mappings.empty() &&
+		                     !parameters.columns.has_value);
+		idx_t page_index = 0;
+		auto plan = GetPlanOfPage(request, parameters.table_id, parameters.page_token, page_index);
+		RESTSelectResponse page;
+		GetPage(plan->files, plan->page_size, page_index, page.files);
+		GetPage(plan->extended_files, plan->page_size, page_index, page.extended_files);
+		set<idx_t> mapping_ids;
+		AddMappingIds(page.files, mapping_ids);
+		AddMappingIds(page.extended_files, mapping_ids);
+		page.column_mappings = GetColumnMappings(request, std::move(mapping_ids), plan->known_mappings);
+		return page;
+	}
 	auto snapshot = request.GetSnapshot(parameters);
 	auto &table = GetTableEntry(request, snapshot, TableIndex(parameters.table_id));
 	auto &metadata_manager = request.GetMetadataManager();
@@ -394,9 +444,10 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	} else {
 		result.files = metadata_manager.GetFilesForTable(table, snapshot, filters.get());
 	}
-	SplitIntoPlanTasks(request, table.GetTableId(), result.files, &DuckLakeRESTPlan::files, result.plan_tasks);
-	SplitIntoPlanTasks(request, table.GetTableId(), result.extended_files, &DuckLakeRESTPlan::extended_files,
-	                   result.plan_tasks);
+	SplitIntoPages(request, table.GetTableId(), result.files, &DuckLakeRESTPlan::files,
+	               parameters.known_column_mappings, result.page_tokens);
+	SplitIntoPages(request, table.GetTableId(), result.extended_files, &DuckLakeRESTPlan::extended_files,
+	               parameters.known_column_mappings, result.page_tokens);
 	set<idx_t> mapping_ids;
 	AddMappingIds(result.files, mapping_ids);
 	AddMappingIds(result.extended_files, mapping_ids);
@@ -464,6 +515,26 @@ RESTTableSizesResponse DuckLakeRESTEndpoints::TableSizes(DuckLakeRESTRequest &re
 
 RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest &request,
                                                              const RESTTableChangesRequest &parameters) {
+	if (!parameters.page_token.empty()) {
+		RequireOnlyPageToken(RESTIsNull(parameters.snapshot) && !parameters.snapshot_id.IsValid() &&
+		                     RESTIsNull(parameters.start_snapshot) && !parameters.start_snapshot_id.IsValid() &&
+		                     parameters.changes.empty() && !parameters.include_inlined_data &&
+		                     parameters.time_zone.empty() && parameters.known_column_mappings.empty() &&
+		                     !parameters.columns.has_value);
+		idx_t page_index = 0;
+		auto plan = GetPlanOfPage(request, parameters.table_id, parameters.page_token, page_index);
+		RESTTableChangesResponse page;
+		GetPage(plan->insertions, plan->page_size, page_index, page.insertions);
+		GetPage(plan->deletions, plan->page_size, page_index, page.deletions);
+		set<idx_t> mapping_ids;
+		AddMappingIds(page.insertions, mapping_ids);
+		AddMappingIds(page.deletions, mapping_ids);
+		page.column_mappings = GetColumnMappings(request, std::move(mapping_ids), plan->known_mappings);
+		return page;
+	}
+	if (parameters.changes.empty()) {
+		throw InvalidInputException("The request for the changes of a table needs the changes to return");
+	}
 	auto snapshot = request.GetSnapshot(parameters);
 	auto start_snapshot = request.GetSnapshot(parameters.start_snapshot, parameters.start_snapshot_id);
 	auto &table = GetTableEntry(request, snapshot, TableIndex(parameters.table_id));
@@ -472,12 +543,12 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 	bool deletions = parameters.changes == "deletions";
 	if (deletions) {
 		result.deletions = metadata_manager.GetTableDeletions(table, start_snapshot, snapshot);
-		SplitIntoPlanTasks(request, table.GetTableId(), result.deletions, &DuckLakeRESTPlan::deletions,
-		                   result.plan_tasks);
+		SplitIntoPages(request, table.GetTableId(), result.deletions, &DuckLakeRESTPlan::deletions,
+		               parameters.known_column_mappings, result.page_tokens);
 	} else {
 		result.insertions = metadata_manager.GetTableInsertions(table, start_snapshot, snapshot);
-		SplitIntoPlanTasks(request, table.GetTableId(), result.insertions, &DuckLakeRESTPlan::insertions,
-		                   result.plan_tasks);
+		SplitIntoPages(request, table.GetTableId(), result.insertions, &DuckLakeRESTPlan::insertions,
+		               parameters.known_column_mappings, result.page_tokens);
 	}
 	set<idx_t> mapping_ids;
 	AddMappingIds(result.insertions, mapping_ids);
@@ -552,39 +623,6 @@ RESTDuckLakeTableResponse DuckLakeRESTEndpoints::DuckLakeTable(DuckLakeRESTReque
 	if (more_rows) {
 		result.next_page_token = to_string(start + size);
 	}
-	return result;
-}
-
-RESTFetchPlanTaskResponse DuckLakeRESTEndpoints::FetchPlanTask(DuckLakeRESTRequest &request,
-                                                               const RESTFetchPlanTaskRequest &parameters) {
-	auto separator = parameters.plan_task.rfind('.');
-	shared_ptr<DuckLakeRESTPlan> plan;
-	idx_t index = 0;
-	if (separator != string::npos &&
-	    TryCast::Operation<string_t, idx_t>(string_t(parameters.plan_task.substr(separator + 1)), index)) {
-		plan = request.server->Plans().Get(parameters.plan_task.substr(0, separator));
-	}
-	if (!plan || plan->prefix != request.prefix || plan->table_id != parameters.table_id) {
-		throw CatalogException("The plan task \"%s\" does not exist: it expired or it belongs to another table",
-		                       parameters.plan_task);
-	}
-	auto start = index * plan->task_size;
-	auto get_task = [&](const auto &entries, auto &result) {
-		for (idx_t i = start; i < entries.size() && i < start + plan->task_size; i++) {
-			result.push_back(entries[i]);
-		}
-	};
-	RESTFetchPlanTaskResponse result;
-	get_task(plan->files, result.files);
-	get_task(plan->extended_files, result.extended_files);
-	get_task(plan->insertions, result.insertions);
-	get_task(plan->deletions, result.deletions);
-	set<idx_t> mapping_ids;
-	AddMappingIds(result.files, mapping_ids);
-	AddMappingIds(result.extended_files, mapping_ids);
-	AddMappingIds(result.insertions, mapping_ids);
-	AddMappingIds(result.deletions, mapping_ids);
-	result.column_mappings = GetColumnMappings(request, std::move(mapping_ids), parameters.known_column_mappings);
 	return result;
 }
 

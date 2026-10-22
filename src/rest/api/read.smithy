@@ -98,6 +98,12 @@ operation SnapshotData {
 /// `include_inlined_data`, `inlined_data` holds the visible inlined rows, with the row id, the begin and end snapshot
 /// and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. It is
 /// absent if the table has no inlined rows.
+///
+/// A scan of many files is returned in pages. The response has the first page of files, and `page_tokens` has the token
+/// of every other page. A request with a `page_token` and no other member (except for the table) returns the page of
+/// the token: the other members are those of the request that returned the token, and are not repeated. The pages of a
+/// response can be requested in parallel and in any order. They belong to the catalog and the table of the request, and
+/// expire after a while: the request fails with a `404`, and a client plans the scan again.
 @http(method: "POST", uri: "/v1/tables/{table_id}/scan")
 @readonly
 operation Select {
@@ -106,6 +112,9 @@ operation Select {
         @required
         @httpLabel
         table_id: UInt64
+
+        /// A page token of an earlier response: returns that page of files. The request has no other members then.
+        page_token: String
 
         /// Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`.
         extended: Boolean = false
@@ -141,53 +150,9 @@ operation Select {
         /// The inlined rows of the table, for `include_inlined_data`.
         inlined_data: InlinedRows
 
-        /// Plan tasks for the files that are not in this response, if there are many files. Each plan task is sent to
-        /// `plan-tasks`, which returns its files. The files of the scan are the files of the response and the files of
-        /// all its plan tasks.
-        plan_tasks: StringList = []
-
-        /// The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
-        /// not have. They map the columns of files that were added with `ducklake_add_data_files` by name.
-        column_mappings: NameMapList = []
-    }
-}
-
-/// Returns the files of a plan task of `scan` or `changes`.
-///
-/// A large scan is split into chunks of files: the response of the request has the first chunk, and a plan task for every
-/// other one. The plan tasks of a response can be fetched in parallel, in any order. They are tied to the catalog and the
-/// table of the request, and expire after a while (the request fails with a `404`): a client plans the scan again then.
-@http(method: "POST", uri: "/v1/tables/{table_id}/plan-tasks")
-@readonly
-operation FetchPlanTask {
-    input := {
-        /// The table of the plan task.
-        @required
-        @httpLabel
-        table_id: UInt64
-
-        /// The plan task.
-        @required
-        plan_task: String
-
-        /// The ids of the column mappings that the client has: the response only has the other column mappings that its
-        /// files refer to.
-        @cppType("set<idx_t>")
-        known_column_mappings: UInt64List = []
-    }
-
-    output := {
-        /// The files of a plan task of `scan`.
-        files: FileListEntryList = []
-
-        /// The files of a plan task of `scan` with `extended`.
-        extended_files: FileListExtendedEntryList
-
-        /// The files of a plan task of `changes` with `insertions`.
-        insertions: FileListEntryList = []
-
-        /// The files of a plan task of `changes` with `deletions`.
-        deletions: DeleteScanEntryList = []
+        /// The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files
+        /// of the response and the files of all its pages.
+        page_tokens: StringList = []
 
         /// The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
         /// not have. They map the columns of files that were added with `ducklake_add_data_files` by name.
@@ -281,6 +246,9 @@ operation TableSizes {
 /// With `include_inlined_data`, `inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted
 /// (`deletions`) in the range, with the row id, the begin and end snapshot and the columns of the table at the last
 /// snapshot of the range. It is absent if the table has no inlined rows.
+///
+/// Many files are returned in pages, see `scan`: a request is either the request for the changes, or has a `page_token`
+/// and no other member (except for the table).
 @http(method: "POST", uri: "/v1/tables/{table_id}/changes")
 @readonly
 operation TableChanges {
@@ -296,8 +264,10 @@ operation TableChanges {
         /// The id of the first snapshot of the range.
         start_snapshot_id: UInt64
 
-        /// The changes to return.
-        @required
+        /// A page token of an earlier response: returns that page of files. The request has no other members then.
+        page_token: String
+
+        /// The changes to return. Required, unless the request has a `page_token`.
         changes: TableChangeType
 
         /// Also return the inlined rows that changed.
@@ -328,8 +298,8 @@ operation TableChanges {
         /// The inlined rows that changed, for `include_inlined_data`.
         inlined_data: InlinedRows
 
-        /// Plan tasks for the files that are not in this response, see `scan`.
-        plan_tasks: StringList = []
+        /// The tokens of the other pages of the files, see `scan`.
+        page_tokens: StringList = []
 
         /// The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does
         /// not have. They map the columns of files that were added with `ducklake_add_data_files` by name.

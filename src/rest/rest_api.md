@@ -29,7 +29,7 @@ SELECT listen_uri FROM ducklake_rest_serve('ducklake:metadata.ducklake', port :=
 | `wait`           | Block until the server is stopped, e.g. to run a server from the CLI.                    |
 | `token`          | Require requests to carry this token (`Authorization: Bearer <token>`).                  |
 | `prefix`         | The prefix of the catalog in the URLs of the server (default: the name of the catalog).  |
-| `files_per_task` | The number of files in a response of a scan and in each of its plan tasks (default 10000). |
+| `files_per_page` | The number of files in a response of a scan and in each of its pages (default 10000).   |
 | `page_size`      | The number of entries of a page of a list if the request has no `page_size` (default 1000). |
 | `defaults`       | A `MAP` of the properties that clients use unless they have a value of their own.        |
 | `overrides`      | A `MAP` of the properties that clients use instead of their own values.                  |
@@ -91,20 +91,11 @@ client directly, so the data path has to be accessible from both the client and 
   entries. The first page has no token, a page token is only valid for the request that returned it, and the server
   picks the number of entries (and can return fewer than the `page_size`, and at most 10000). A response without
   `next_page_token` is the last page.
-* The files of `scan` and `changes` are split into plan tasks if there are many. The response has the first chunk of
-  files and a list of `plan_tasks`, one for each other chunk. A client sends every plan task to `plan-tasks` of the same
-  table, in parallel and in any order, and gets the files of its chunk. Plan tasks are kept by the server for a few
-  minutes, and fail with a `404` after that (or on another server): a client then plans the scan again.
-* Errors are reported with a non-200 status code and a body of the form
-  `{"error": {"type": "<DuckDB exception type>", "message": "...", "code": <status>}}`. The status code is `409` for
-  transaction conflicts, `404` for catalog errors (e.g. entries that do not exist) and unknown endpoints, `400` for
-  invalid input, `401` for a missing or invalid token, `501` for unsupported operations and `500` otherwise.
-* Identifiers (`snapshot_id`, `table_id`, `column_id`, ...) are the ids of the DuckLake specification.
-* Optional values are `null` or absent.
-* Read requests identify the snapshot to read with a `snapshot` object (as returned by `snapshot_data`), or with a
-  `snapshot_id`. A `snapshot` is used as-is, which also allows reading at snapshots that have been expired since the
-  client loaded them.
-* Paths of files are absolute.
+* The files of `scan` and `changes` are split into pages if there are many. The response has the first page of files and
+  `page_tokens`, the token of every other page. A request with a `page_token` returns that page, and has no other
+  members besides the table: the request is either the request for the files, or a page token. A client can request the
+  pages in parallel and in any order. The server keeps the pages of a scan for a few minutes: after that (or on another
+  server) the request fails with a `404`, and a client plans the scan again.
 
 ### Types
 
@@ -255,39 +246,6 @@ Response:
 |-------|------|-------------|
 | `table_names` | list of `string` (default `[]`) | The tables. |
 
-### `fetch_plan_task`
-
-Returns the files of a plan task of `scan` or `changes`.
-
-A large scan is split into chunks of files: the response of the request has the first chunk, and a plan task for every
-other one. The plan tasks of a response can be fetched in parallel, in any order. They are tied to the catalog and the
-table of the request, and expire after a while (the request fails with a `404`): a client plans the scan again then.
-
-`POST /v1/tables/{table_id}/plan-tasks`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `table_id` | path | `uint64` | The table of the plan task. |
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `plan_task` | `string` | The plan task. |
-| `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `files` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of a plan task of `scan`. |
-| `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of a plan task of `scan` with `extended`. |
-| `insertions` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of a plan task of `changes` with `insertions`. |
-| `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | The files of a plan task of `changes` with `deletions`. |
-| `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
-
 ### `get_metadata`
 
 Returns the global metadata of the DuckLake (the contents of `ducklake_metadata`).
@@ -361,6 +319,12 @@ inlined deletions, and optionally the rows of the table that are inlined in the 
 and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. It is
 absent if the table has no inlined rows.
 
+A scan of many files is returned in pages. The response has the first page of files, and `page_tokens` has the token
+of every other page. A request with a `page_token` and no other member (except for the table) returns the page of
+the token: the other members are those of the request that returned the token, and are not repeated. The pages of a
+response can be requested in parallel and in any order. They belong to the catalog and the table of the request, and
+expire after a while: the request fails with a `404`, and a client plans the scan again.
+
 `POST /v1/tables/{table_id}/scan`
 
 Parameters in the URL (the other fields of the request are the JSON body):
@@ -375,6 +339,7 @@ Request:
 |-------|------|-------------|
 | `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshot_data`. |
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
+| `page_token` | `string` (optional) | A page token of an earlier response: returns that page of files. The request has no other members then. |
 | `extended` | `bool` (default `false`) | Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`. |
 | `filters` | [`ScanFilters`](#scanfilters) (optional) | Filters to prune files with. |
 | `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows of the table that are visible in the snapshot. |
@@ -389,7 +354,7 @@ Response:
 | `files` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of the scan. |
 | `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of the scan, for `extended` scans. |
 | `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows of the table, for `include_inlined_data`. |
-| `plan_tasks` | list of `string` (default `[]`) | Plan tasks for the files that are not in this response, if there are many files. Each plan task is sent to `plan-tasks`, which returns its files. The files of the scan are the files of the response and the files of all its plan tasks. |
+| `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files of the response and the files of all its pages. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
 
 ### `snapshot_data`
@@ -431,6 +396,9 @@ With `include_inlined_data`, `inlined_data` holds the inlined rows that were ins
 (`deletions`) in the range, with the row id, the begin and end snapshot and the columns of the table at the last
 snapshot of the range. It is absent if the table has no inlined rows.
 
+Many files are returned in pages, see `scan`: a request is either the request for the changes, or has a `page_token`
+and no other member (except for the table).
+
 `POST /v1/tables/{table_id}/changes`
 
 Parameters in the URL (the other fields of the request are the JSON body):
@@ -447,7 +415,8 @@ Request:
 | `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
 | `start_snapshot` | [`Snapshot`](#snapshot) (optional) | The first snapshot of the range. |
 | `start_snapshot_id` | `uint64` (optional) | The id of the first snapshot of the range. |
-| `changes` | [`TableChangeType`](#tablechangetype) | The changes to return. |
+| `page_token` | `string` (optional) | A page token of an earlier response: returns that page of files. The request has no other members then. |
+| `changes` | [`TableChangeType`](#tablechangetype) (optional) | The changes to return. Required, unless the request has a `page_token`. |
 | `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows that changed. |
 | `time_zone` | `string` (optional) | The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The time zone of the server if absent. |
 | `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
@@ -460,7 +429,7 @@ Response:
 | `insertions` | list of [`FileListEntry`](#filelistentry) (default `[]`) | For `insertions`: the files with inserted rows. |
 | `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | For `deletions`: the files with deleted rows. |
 | `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows that changed, for `include_inlined_data`. |
-| `plan_tasks` | list of `string` (default `[]`) | Plan tasks for the files that are not in this response, see `scan`. |
+| `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files, see `scan`. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
 
 ### `table_sizes`

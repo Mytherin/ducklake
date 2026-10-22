@@ -231,34 +231,28 @@ map<TableIndex, idx_t> RESTMetadataManager::GetTableRecordCounts(DuckLakeSnapsho
 	return result;
 }
 
-//! Fetches the plan tasks of a response, which are the chunks of its files, in parallel. The files are added to the
-//! files of the response in the order of the tasks.
-static void AddPlanTasks(DuckLakeCatalog &catalog, idx_t table_id, const vector<string> &plan_tasks,
-                         vector<DuckLakeFileListEntry> *files, vector<DuckLakeFileListExtendedEntry> *extended_files,
-                         vector<DuckLakeFileListEntry> *insertions, vector<DuckLakeDeleteScanEntry> *deletions) {
-	if (plan_tasks.empty()) {
+//! Fetches the pages of a response in parallel. The column mappings of the pages are added to the catalog, and the
+//! files of the pages are added to the response in the order of the pages.
+template <class RESPONSE, class FETCH, class APPEND>
+static void AddPages(DuckLakeCatalog &catalog, const vector<string> &page_tokens, const FETCH &fetch_page,
+                     const APPEND &append_page) {
+	if (page_tokens.empty()) {
 		return;
 	}
-	static constexpr idx_t MAX_PARALLEL_TASKS = 8;
-	auto &client = catalog.GetRESTClient();
-	auto known_mappings = catalog.GetLoadedNameMapIds();
-	vector<RESTFetchPlanTaskResponse> results(plan_tasks.size());
-	std::atomic<idx_t> next_task {0};
+	static constexpr idx_t MAX_PARALLEL_PAGES = 8;
+	vector<RESPONSE> results(page_tokens.size());
+	std::atomic<idx_t> next_page {0};
 	std::atomic<bool> failed {false};
 	mutex error_lock;
 	std::exception_ptr error;
 	auto fetch = [&]() {
 		while (!failed) {
-			auto task = next_task++;
-			if (task >= plan_tasks.size()) {
+			auto page = next_page++;
+			if (page >= page_tokens.size()) {
 				return;
 			}
 			try {
-				RESTFetchPlanTaskRequest request;
-				request.table_id = table_id;
-				request.plan_task = plan_tasks[task];
-				request.known_column_mappings = known_mappings;
-				results[task] = client.FetchPlanTask(request);
+				results[page] = fetch_page(page_tokens[page]);
 			} catch (...) {
 				lock_guard<mutex> guard(error_lock);
 				if (!error) {
@@ -269,7 +263,7 @@ static void AddPlanTasks(DuckLakeCatalog &catalog, idx_t table_id, const vector<
 		}
 	};
 	vector<std::thread> threads;
-	for (idx_t i = 1; i < MinValue<idx_t>(plan_tasks.size(), MAX_PARALLEL_TASKS); i++) {
+	for (idx_t i = 1; i < MinValue<idx_t>(page_tokens.size(), MAX_PARALLEL_PAGES); i++) {
 		threads.emplace_back(fetch);
 	}
 	fetch();
@@ -281,19 +275,14 @@ static void AddPlanTasks(DuckLakeCatalog &catalog, idx_t table_id, const vector<
 	}
 	for (auto &result : results) {
 		catalog.AddNameMaps(std::move(result.column_mappings));
-		if (files) {
-			std::move(result.files.begin(), result.files.end(), std::back_inserter(*files));
-		}
-		if (extended_files) {
-			std::move(result.extended_files.begin(), result.extended_files.end(), std::back_inserter(*extended_files));
-		}
-		if (insertions) {
-			std::move(result.insertions.begin(), result.insertions.end(), std::back_inserter(*insertions));
-		}
-		if (deletions) {
-			std::move(result.deletions.begin(), result.deletions.end(), std::back_inserter(*deletions));
-		}
+		append_page(result);
 	}
+}
+
+//! Appends the entries of a page to the entries of a response
+template <class T>
+static void AppendEntries(vector<T> &entries, vector<T> &page) {
+	std::move(page.begin(), page.end(), std::back_inserter(entries));
 }
 
 //! The time zone of the client, which the server casts inlined rows with
@@ -354,8 +343,15 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 	request.known_column_mappings = transaction.GetCatalog().GetLoadedNameMapIds();
 	auto response = GetClient().Select(request);
 	transaction.GetCatalog().AddNameMaps(std::move(response.column_mappings));
-	AddPlanTasks(transaction.GetCatalog(), table.GetTableId().index, response.plan_tasks, &response.files, nullptr,
-	             nullptr, nullptr);
+	AddPages<RESTSelectResponse>(
+	    transaction.GetCatalog(), response.page_tokens,
+	    [&](const string &page_token) {
+		    RESTSelectRequest page_request;
+		    page_request.table_id = table.GetTableId().index;
+		    page_request.page_token = page_token;
+		    return GetClient().Select(page_request);
+	    },
+	    [&](RESTSelectResponse &page) { AppendEntries(response.files, page.files); });
 	if (plan.fetch) {
 		inlined_rows_cache.Add(inlined_key, plan.projection, std::move(response.inlined_data));
 	}
@@ -386,8 +382,15 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 	request.known_column_mappings = transaction.GetCatalog().GetLoadedNameMapIds();
 	auto response = GetClient().Select(request);
 	transaction.GetCatalog().AddNameMaps(std::move(response.column_mappings));
-	AddPlanTasks(transaction.GetCatalog(), table.GetTableId().index, response.plan_tasks, nullptr,
-	             &response.extended_files, nullptr, nullptr);
+	AddPages<RESTSelectResponse>(
+	    transaction.GetCatalog(), response.page_tokens,
+	    [&](const string &page_token) {
+		    RESTSelectRequest page_request;
+		    page_request.table_id = table.GetTableId().index;
+		    page_request.page_token = page_token;
+		    return GetClient().Select(page_request);
+	    },
+	    [&](RESTSelectResponse &page) { AppendEntries(response.extended_files, page.extended_files); });
 	if (plan.fetch) {
 		inlined_rows_cache.Add(inlined_key, plan.projection, std::move(response.inlined_data));
 	}
@@ -713,8 +716,18 @@ RESTTableChangesResponse RESTMetadataManager::GetTableChanges(DuckLakeTableEntry
 	request.known_column_mappings = transaction.GetCatalog().GetLoadedNameMapIds();
 	auto response = GetClient().TableChanges(request);
 	transaction.GetCatalog().AddNameMaps(std::move(response.column_mappings));
-	AddPlanTasks(transaction.GetCatalog(), table.GetTableId().index, response.plan_tasks, nullptr, nullptr,
-	             &response.insertions, &response.deletions);
+	AddPages<RESTTableChangesResponse>(
+	    transaction.GetCatalog(), response.page_tokens,
+	    [&](const string &page_token) {
+		    RESTTableChangesRequest page_request;
+		    page_request.table_id = table.GetTableId().index;
+		    page_request.page_token = page_token;
+		    return GetClient().TableChanges(page_request);
+	    },
+	    [&](RESTTableChangesResponse &page) {
+		    AppendEntries(response.insertions, page.insertions);
+		    AppendEntries(response.deletions, page.deletions);
+	    });
 	if (plan.fetch) {
 		inlined_rows_cache.Add(inlined_key, plan.projection, std::move(response.inlined_data));
 	}
