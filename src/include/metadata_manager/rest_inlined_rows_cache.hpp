@@ -11,6 +11,7 @@
 #include "rest/ducklake_rest_api.hpp"
 #include "common/index.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/common/map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 
 namespace duckdb {
@@ -18,14 +19,22 @@ namespace duckdb {
 //! Which inlined rows a response holds: the rows of a scan, or the rows that were inserted or deleted in a range
 enum class RESTInlinedRowsKind : uint8_t { SCAN, INSERTIONS, DELETIONS };
 
+//! A column of inlined rows, or a field of a struct: all of it, or the fields of the struct that are read
+struct RESTInlinedField {
+	bool Covers(const RESTInlinedField &other) const;
+
+	bool all = true;
+	map<idx_t, RESTInlinedField> fields;
+};
+
 //! The columns of inlined rows: all columns, or the field ids of top-level columns
 struct RESTInlinedProjection {
-	static RESTInlinedProjection From(optional_ptr<const vector<FieldIndex>> projection);
+	static RESTInlinedProjection From(optional_ptr<const vector<DuckLakeProjectedColumn>> projection);
 
 	bool Covers(const RESTInlinedProjection &other) const;
 
 	bool all = true;
-	unordered_set<idx_t> columns;
+	map<idx_t, RESTInlinedField> columns;
 };
 
 //! The inlined rows of a table

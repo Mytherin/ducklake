@@ -323,7 +323,7 @@ Request:
 | `filters` | [`ScanFilters`](#scanfilters) (optional) | Filters to prune files with. |
 | `time_zone` | `string` (optional) | The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The time zone of the server if absent. |
 | `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
-| `columns` | list of `uint64` (optional) | The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
+| `columns` | list of [`ColumnIdentifier`](#columnidentifier) (optional) | The columns that the client reads. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
 
 Response:
 
@@ -367,7 +367,7 @@ Request:
 | `changes` | [`TableChangeType`](#tablechangetype) (optional) | The changes to return. Required, unless the request has a `page_token`. |
 | `time_zone` | `string` (optional) | The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The time zone of the server if absent. |
 | `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
-| `columns` | list of `uint64` (optional) | The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
+| `columns` | list of [`ColumnIdentifier`](#columnidentifier) (optional) | The columns that the client reads. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
 
 Response:
 
@@ -785,6 +785,15 @@ The definition of a column in a catalog change.
 | `default` | `string` (optional) | The default of the column, as a SQL expression. |
 | `comment` | `string` (optional) | The comment of the column. |
 | `not_null` | `bool` (default `false`) | Whether the column is `NOT NULL`. |
+
+### `ColumnIdentifier`
+
+A column that a request reads, as the field id of a top-level column, or of a field of a struct.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `field_id` | `uint64` | The field id of the column or field. |
+| `children` | list of [`ColumnIdentifier`](#columnidentifier) (default `[]`) | The fields of a struct that the client reads, as column identifiers. The other fields are `NULL` in the response. The whole column if empty. |
 
 ### `ColumnInfo`
 

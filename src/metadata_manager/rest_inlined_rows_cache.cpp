@@ -6,15 +6,40 @@
 
 namespace duckdb {
 
-RESTInlinedProjection RESTInlinedProjection::From(optional_ptr<const vector<FieldIndex>> projection) {
+static RESTInlinedField ToInlinedField(const DuckLakeProjectedColumn &column) {
+	RESTInlinedField result;
+	result.all = column.children.empty();
+	for (auto &child : column.children) {
+		result.fields[child.field_index.index] = ToInlinedField(child);
+	}
+	return result;
+}
+
+RESTInlinedProjection RESTInlinedProjection::From(optional_ptr<const vector<DuckLakeProjectedColumn>> projection) {
 	RESTInlinedProjection result;
 	if (projection) {
 		result.all = false;
 		for (auto &column : *projection) {
-			result.columns.insert(column.index);
+			result.columns[column.field_index.index] = ToInlinedField(column);
 		}
 	}
 	return result;
+}
+
+bool RESTInlinedField::Covers(const RESTInlinedField &other) const {
+	if (all) {
+		return true;
+	}
+	if (other.all) {
+		return false;
+	}
+	for (auto &entry : other.fields) {
+		auto field = fields.find(entry.first);
+		if (field == fields.end() || !field->second.Covers(entry.second)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 bool RESTInlinedProjection::Covers(const RESTInlinedProjection &other) const {
@@ -24,8 +49,9 @@ bool RESTInlinedProjection::Covers(const RESTInlinedProjection &other) const {
 	if (other.all) {
 		return false;
 	}
-	for (auto column : other.columns) {
-		if (columns.find(column) == columns.end()) {
+	for (auto &entry : other.columns) {
+		auto column = columns.find(entry.first);
+		if (column == columns.end() || !column->second.Covers(entry.second)) {
 			return false;
 		}
 	}

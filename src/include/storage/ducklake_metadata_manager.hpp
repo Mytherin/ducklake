@@ -387,20 +387,21 @@ public:
 	virtual map<TableIndex, idx_t> GetTableRecordCounts(DuckLakeSnapshot snapshot);
 	//! The projection are the columns (field ids of top-level columns) that the scan reads, all columns if it is not
 	//! set: metadata managers that return the inlined rows with the files only have to return these columns
-	virtual vector<DuckLakeFileListEntry> GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
-	                                                       const FilterPushdownInfo *filter_info = nullptr,
-	                                                       bool include_local_changes = true,
-	                                                       optional_ptr<const vector<FieldIndex>> projection = nullptr);
+	virtual vector<DuckLakeFileListEntry>
+	GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
+	                 const FilterPushdownInfo *filter_info = nullptr, bool include_local_changes = true,
+	                 optional_ptr<const vector<DuckLakeProjectedColumn>> projection = nullptr);
 	virtual vector<DuckLakeFileListEntry>
 	GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot,
-	                   optional_ptr<const vector<FieldIndex>> projection = nullptr);
+	                   optional_ptr<const vector<DuckLakeProjectedColumn>> projection = nullptr);
 	virtual vector<DuckLakeDeleteScanEntry>
 	GetTableDeletions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot,
-	                  bool include_local_changes = true, optional_ptr<const vector<FieldIndex>> projection = nullptr);
+	                  bool include_local_changes = true,
+	                  optional_ptr<const vector<DuckLakeProjectedColumn>> projection = nullptr);
 	virtual vector<DuckLakeFileListExtendedEntry>
 	GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
 	                         const FilterPushdownInfo *filter_info = nullptr,
-	                         optional_ptr<const vector<FieldIndex>> projection = nullptr);
+	                         optional_ptr<const vector<DuckLakeProjectedColumn>> projection = nullptr);
 	virtual vector<DuckLakeCompactionFileEntry> GetFilesForCompaction(DuckLakeTableEntry &table, CompactionType type,
 	                                                                  double deletion_threshold,
 	                                                                  DuckLakeSnapshot snapshot,

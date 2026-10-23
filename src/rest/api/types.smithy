@@ -1058,6 +1058,17 @@ structure RowSet {
 /// ```
 structure InlinedRows with [RowSet] {}
 
+/// A column that a request reads, as the field id of a top-level column, or of a field of a struct.
+structure ColumnIdentifier {
+    /// The field id of the column or field.
+    @required
+    field_id: UInt64
+
+    /// The fields of a struct that the client reads, as column identifiers. The other fields are `NULL` in the
+    /// response. The whole column if empty.
+    children: ColumnIdentifierList = []
+}
+
 /// The definition of a column in a catalog change.
 structure ColumnDefinition {
     /// The name of the column.
@@ -1098,6 +1109,10 @@ structure InlinedFileDeletionsEntry {
 
     @required
     snapshot_id: UInt64
+}
+
+list ColumnIdentifierList {
+    member: ColumnIdentifier
 }
 
 list ColumnDefinitionList {

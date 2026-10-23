@@ -136,6 +136,7 @@ struct RESTAggregate;
 struct RESTAggregateResult;
 struct RESTChangeColumnType;
 struct RESTColumnDefinition;
+struct RESTColumnIdentifier;
 struct RESTCompactionResult;
 struct RESTCreatedEntry;
 struct RESTCreatedTable;
@@ -215,6 +216,7 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeCatalogInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTChangeColumnType &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnDefinition &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTColumnIdentifier &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeColumnInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeColumnStats &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSnapshotCommit &value);
@@ -324,6 +326,8 @@ template <>
 RESTChangeColumnType DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTColumnDefinition DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTColumnIdentifier DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeColumnInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -713,6 +717,14 @@ struct RESTChangeColumnType : public RESTAlteration {
 	LogicalType column_type;
 	//! The `USING` expression that converts the old values.
 	string expression;
+};
+
+//! A column that a request reads, as the field id of a top-level column, or of a field of a struct.
+struct RESTColumnIdentifier {
+	//! The field id of the column or field.
+	idx_t field_id = 0;
+	//! The fields of a struct that the client reads, as column identifiers. The other fields are `NULL` in the
+	vector<RESTColumnIdentifier> children;
 };
 
 //! The compaction of a table.
@@ -1108,8 +1120,8 @@ struct RESTSelectRequest : public RESTSnapshotReference {
 	string time_zone;
 	//! The ids of the column mappings that the client has: the response only has the other column mappings that its
 	set<idx_t> known_column_mappings;
-	//! The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
-	RESTOptional<vector<idx_t>> columns;
+	//! The columns that the client reads. The inlined rows only have these columns, besides the row id and the
+	RESTOptional<vector<RESTColumnIdentifier>> columns;
 };
 
 struct RESTSelectResponse {
@@ -1142,8 +1154,8 @@ struct RESTTableChangesRequest : public RESTSnapshotReference {
 	string time_zone;
 	//! The ids of the column mappings that the client has: the response only has the other column mappings that its
 	set<idx_t> known_column_mappings;
-	//! The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
-	RESTOptional<vector<idx_t>> columns;
+	//! The columns that the client reads. The inlined rows only have these columns, besides the row id and the
+	RESTOptional<vector<RESTColumnIdentifier>> columns;
 };
 
 struct RESTTableChangesResponse {

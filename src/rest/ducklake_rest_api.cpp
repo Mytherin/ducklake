@@ -687,6 +687,30 @@ RESTColumnDefinition DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTColumnIdentifier &value) {
+	auto result = writer.CreateObject();
+	result.Add("field_id", RESTWriteValue<RESTUInt64Codec>(writer, value.field_id));
+	result.Add("children",
+	           RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTColumnIdentifier>>>(writer, value.children));
+	return result;
+}
+
+template <>
+RESTColumnIdentifier DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for ColumnIdentifier");
+	}
+	RESTColumnIdentifier result;
+	RESTReadValue<RESTUInt64Codec>(in.Get("field_id"), result.field_id);
+	{
+		auto entry = in.TryGet("children");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTColumnIdentifier>>>(entry, result.children);
+		}
+	}
+	return result;
+}
+
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeColumnInfo &value) {
 	auto result = writer.CreateObject();
 	if (!RESTIsNull(value.id)) {
@@ -3752,7 +3776,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSel
 	result.Add("known_column_mappings",
 	           RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.known_column_mappings));
 	if (!RESTIsNull(value.columns)) {
-		result.Add("columns", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.columns));
+		result.Add("columns",
+		           RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTColumnIdentifier>>>(writer, value.columns));
 	}
 	return result;
 }
@@ -3817,7 +3842,7 @@ RESTSelectRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("columns");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.columns);
+			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTColumnIdentifier>>>(entry, result.columns);
 		}
 	}
 	return result;
@@ -3913,7 +3938,8 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTab
 	result.Add("known_column_mappings",
 	           RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.known_column_mappings));
 	if (!RESTIsNull(value.columns)) {
-		result.Add("columns", RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.columns));
+		result.Add("columns",
+		           RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTColumnIdentifier>>>(writer, value.columns));
 	}
 	return result;
 }
@@ -3976,7 +4002,7 @@ RESTTableChangesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("columns");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTUInt64Codec>>(entry, result.columns);
+			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTColumnIdentifier>>>(entry, result.columns);
 		}
 	}
 	return result;

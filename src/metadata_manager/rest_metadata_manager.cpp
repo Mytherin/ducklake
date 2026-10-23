@@ -293,24 +293,38 @@ static string GetClientTimeZone(ClientContext &context) {
 	return string();
 }
 
+static RESTColumnIdentifier ToColumnIdentifier(idx_t field_id, const RESTInlinedField &field) {
+	RESTColumnIdentifier result;
+	result.field_id = field_id;
+	if (!field.all) {
+		for (auto &child : field.fields) {
+			result.children.push_back(ToColumnIdentifier(child.first, child.second));
+		}
+	}
+	return result;
+}
+
 //! Sets the columns of a request that returns inlined rows: none if the client has the rows already
 template <class REQUEST, class PLAN>
 static void SetProjection(REQUEST &request, const PLAN &plan) {
 	if (!plan.fetch) {
-		request.columns = RESTOptional<vector<idx_t>>(vector<idx_t>());
+		request.columns = RESTOptional<vector<RESTColumnIdentifier>>(vector<RESTColumnIdentifier>());
 		return;
 	}
 	auto &projection = plan.projection;
 	if (projection.all) {
 		return;
 	}
-	vector<idx_t> columns(projection.columns.begin(), projection.columns.end());
-	std::sort(columns.begin(), columns.end());
-	request.columns = RESTOptional<vector<idx_t>>(std::move(columns));
+	vector<RESTColumnIdentifier> columns;
+	for (auto &column : projection.columns) {
+		columns.push_back(ToColumnIdentifier(column.first, column.second));
+	}
+	request.columns = RESTOptional<vector<RESTColumnIdentifier>>(std::move(columns));
 }
 
 RESTMetadataManager::InlinedRowsPlan
-RESTMetadataManager::PlanInlinedRows(const RESTInlinedRowsKey &key, optional_ptr<const vector<FieldIndex>> projection) {
+RESTMetadataManager::PlanInlinedRows(const RESTInlinedRowsKey &key,
+                                     optional_ptr<const vector<DuckLakeProjectedColumn>> projection) {
 	auto wanted = RESTInlinedProjection::From(projection);
 	if (inlined_rows_cache.Covers(key, wanted)) {
 		return {false, wanted};
@@ -322,11 +336,10 @@ RESTMetadataManager::PlanInlinedRows(const RESTInlinedRowsKey &key, optional_ptr
 	return {true, wanted};
 }
 
-vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTableEntry &table,
-                                                                    DuckLakeSnapshot snapshot,
-                                                                    const FilterPushdownInfo *filter_info,
-                                                                    bool include_local_changes,
-                                                                    optional_ptr<const vector<FieldIndex>> projection) {
+vector<DuckLakeFileListEntry>
+RESTMetadataManager::GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
+                                      const FilterPushdownInfo *filter_info, bool include_local_changes,
+                                      optional_ptr<const vector<DuckLakeProjectedColumn>> projection) {
 	if (IsTransactionLocal(table.GetTableId())) {
 		return {};
 	}
@@ -364,7 +377,7 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 vector<DuckLakeFileListExtendedEntry>
 RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
                                               const FilterPushdownInfo *filter_info,
-                                              optional_ptr<const vector<FieldIndex>> projection) {
+                                              optional_ptr<const vector<DuckLakeProjectedColumn>> projection) {
 	if (IsTransactionLocal(table.GetTableId())) {
 		return {};
 	}
@@ -676,10 +689,10 @@ vector<DuckLakeColumnMappingInfo> RESTMetadataManager::GetColumnMappings(optiona
 	return {};
 }
 
-RESTTableChangesResponse RESTMetadataManager::GetTableChanges(DuckLakeTableEntry &table,
-                                                              DuckLakeSnapshot start_snapshot,
-                                                              DuckLakeSnapshot snapshot, const string &changes,
-                                                              optional_ptr<const vector<FieldIndex>> projection) {
+RESTTableChangesResponse
+RESTMetadataManager::GetTableChanges(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
+                                     DuckLakeSnapshot snapshot, const string &changes,
+                                     optional_ptr<const vector<DuckLakeProjectedColumn>> projection) {
 	RESTTableChangesRequest request;
 	request.table_id = table.GetTableId().index;
 	request.start_snapshot = start_snapshot;
@@ -715,7 +728,8 @@ RESTTableChangesResponse RESTMetadataManager::GetTableChanges(DuckLakeTableEntry
 
 vector<DuckLakeFileListEntry>
 RESTMetadataManager::GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
-                                        DuckLakeSnapshot snapshot, optional_ptr<const vector<FieldIndex>> projection) {
+                                        DuckLakeSnapshot snapshot,
+                                        optional_ptr<const vector<DuckLakeProjectedColumn>> projection) {
 	if (IsTransactionLocal(table.GetTableId())) {
 		return {};
 	}
@@ -725,7 +739,7 @@ RESTMetadataManager::GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnaps
 vector<DuckLakeDeleteScanEntry>
 RESTMetadataManager::GetTableDeletions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
                                        DuckLakeSnapshot snapshot, bool include_local_changes,
-                                       optional_ptr<const vector<FieldIndex>> projection) {
+                                       optional_ptr<const vector<DuckLakeProjectedColumn>> projection) {
 	if (IsTransactionLocal(table.GetTableId())) {
 		return {};
 	}

@@ -1052,11 +1052,11 @@ def topological_order(spec, objects):
     order = []
     visited = set()
 
-    def dependencies(expr, result):
+    def dependencies(expr, result, in_list=False):
         if expr.kind == "named" and expr.name in by_name:
-            result.append(expr.name)
+            result.append((expr.name, in_list))
         for arg in expr.args:
-            dependencies(arg, result)
+            dependencies(arg, result, in_list or expr.kind == "list")
 
     def visit(obj, stack):
         if obj.name in visited:
@@ -1065,10 +1065,13 @@ def topological_order(spec, objects):
             raise SpecError(f"Types {stack} hold each other")
         deps = []
         if obj.extends and obj.extends in by_name:
-            deps.append(obj.extends)
+            deps.append((obj.extends, False))
         for field in obj.fields:
             dependencies(field.type, deps)
-        for dep in deps:
+        for dep, in_list in deps:
+            if in_list and (dep in stack or dep == obj.name):
+                # a vector can hold the structure that holds it
+                continue
             visit(by_name[dep], stack + [obj.name])
         visited.add(obj.name)
         order.append(obj)

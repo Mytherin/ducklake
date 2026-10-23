@@ -86,7 +86,7 @@ static unique_ptr<FunctionData> DuckLakeListFilesBind(ClientContext &context, Ta
 	auto &metadata_manager = transaction.GetMetadataManager();
 	// FIXME: support predicate pushdown
 	// only the files are listed, not the columns of the inlined rows
-	vector<FieldIndex> no_columns;
+	vector<DuckLakeProjectedColumn> no_columns;
 	auto files = metadata_manager.GetFilesForTable(ducklake_table, snapshot, nullptr, true, no_columns);
 	// generate the result
 	auto result = make_uniq<MetadataBindData>();

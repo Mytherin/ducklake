@@ -136,13 +136,13 @@ SELECT json_array_length(response->'$.inlined_data.columns') FROM ducklake_rest_
 
 query II
 SELECT json_array_length(response->'$.inlined_data.columns'), response->>'$.inlined_data.columns[3].name'
-FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": [1]}')
+FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": [{"field_id": 1}]}')
 ----
 4	i
 
 query II
 SELECT json_array_length(response->'$.inlined_data.columns'), json_array_length(response->'$.inlined_data.rows[0]')
-FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": [2, 1000]}')
+FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": [{"field_id": 2}, {"field_id": 1000}]}')
 ----
 4	4
 

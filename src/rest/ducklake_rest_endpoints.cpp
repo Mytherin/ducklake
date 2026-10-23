@@ -1,4 +1,5 @@
 #include "rest/ducklake_rest_server.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "rest/ducklake_rest_catalog_changes.hpp"
 #include "rest/ducklake_rest_filters.hpp"
 
@@ -332,13 +333,35 @@ static string EvolveFieldExpression(const string &expression, const DuckLakeFiel
 	return StringUtil::Format("CAST(%s AS %s)", expression, field.Type().ToString());
 }
 
+//! Sets the fields of a struct that the client does not read to NULL, in the struct and in the structs it holds
+static void RemoveUnreadFields(Vector &column, idx_t count, const DuckLakeFieldId &field,
+                               const RESTColumnIdentifier &identifier) {
+	if (identifier.children.empty() || column.GetType().id() != LogicalTypeId::STRUCT) {
+		return;
+	}
+	auto &entries = StructVector::GetEntries(column);
+	auto &children = field.Children();
+	for (idx_t i = 0; i < children.size() && i < entries.size(); i++) {
+		auto child = std::find_if(
+		    identifier.children.begin(), identifier.children.end(),
+		    [&](const RESTColumnIdentifier &child) { return child.field_id == children[i]->GetFieldIndex().index; });
+		entries[i].Flatten();
+		if (child == identifier.children.end()) {
+			entries[i].Reference(Value(entries[i].GetType()), count_t(count));
+			entries[i].Flatten();
+			continue;
+		}
+		RemoveUnreadFields(entries[i], count, *children[i], *child);
+	}
+}
+
 //! Reads the inlined rows of a table, in the schema that the table has at the snapshot: the inlined rows of each schema
 //! version of the table are turned into rows of that schema. The rows have the row id, the begin and end snapshot and
 //! the columns of the table. Returns nothing if the table has no inlined rows.
 static unique_ptr<RESTInlinedRows>
 ReadInlinedRows(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
                 const std::function<unique_ptr<QueryResult>(const string &, const vector<string> &)> &read_rows,
-                const RESTOptional<vector<idx_t>> &projection, const string &time_zone) {
+                const RESTOptional<vector<RESTColumnIdentifier>> &projection, const string &time_zone) {
 	auto inlined_tables = table.GetInlinedDataTables(*request.transaction, snapshot);
 	if (inlined_tables.empty()) {
 		return nullptr;
@@ -348,18 +371,29 @@ ReadInlinedRows(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, DuckLak
 		auto result = request.transaction->GetConnection().Query("SET TimeZone = " + SQLString::ToString(time_zone));
 		result->ThrowIfError();
 	}
-	unordered_set<idx_t> projected_fields(projection.value.begin(), projection.value.end());
+	unordered_map<idx_t, reference<const RESTColumnIdentifier>> projected_fields;
+	for (auto &column : projection.value) {
+		projected_fields.emplace(column.field_id, column);
+	}
 	auto &metadata_manager = request.GetMetadataManager();
 	auto col_names = metadata_manager.InlinedColNames();
 	vector<string> names {col_names.row_id, col_names.begin_snapshot, col_names.end_snapshot};
 	vector<reference<const DuckLakeFieldId>> fields;
+	//! The identifiers of the columns, to leave out the fields of structs that are not read
+	vector<optional_ptr<const RESTColumnIdentifier>> identifiers;
 	for (auto &column : table.GetColumns().Physical()) {
 		auto &field = table.GetFieldId(column.Physical());
-		if (projection.has_value && projected_fields.find(field.GetFieldIndex().index) == projected_fields.end()) {
-			continue;
+		optional_ptr<const RESTColumnIdentifier> identifier;
+		if (projection.has_value) {
+			auto entry = projected_fields.find(field.GetFieldIndex().index);
+			if (entry == projected_fields.end()) {
+				continue;
+			}
+			identifier = &entry->second.get();
 		}
 		names.push_back(column.Name().GetIdentifierName());
 		fields.push_back(field);
+		identifiers.push_back(identifier);
 	}
 	auto result = make_uniq<RESTInlinedRows>();
 	unique_ptr<ColumnDataCollection> collection;
@@ -397,6 +431,13 @@ ReadInlinedRows(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, DuckLak
 			auto chunk = query_result->Fetch();
 			if (!chunk || chunk->size() == 0) {
 				break;
+			}
+			for (idx_t i = 0; i < fields.size(); i++) {
+				if (identifiers[i]) {
+					auto &column = chunk->data[DuckLakeInlinedColNames::COLUMN_COUNT + i];
+					column.Flatten();
+					RemoveUnreadFields(column, chunk->size(), fields[i].get(), *identifiers[i]);
+				}
 			}
 			collection->Append(*chunk);
 		}

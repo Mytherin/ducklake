@@ -168,10 +168,10 @@ operation Select {
         @cppType("set<idx_t>")
         known_column_mappings: UInt64List = []
 
-        /// The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
-        /// columns, besides the row id and the begin and end snapshot. All columns of the table if absent.
-        @cppType("RESTOptional<vector<idx_t>>")
-        columns: UInt64List
+        /// The columns that the client reads. The inlined rows only have these columns, besides the row id and the
+        /// begin and end snapshot. All columns of the table if absent.
+        @cppType("RESTOptional<vector<RESTColumnIdentifier>>")
+        columns: ColumnIdentifierList
     }
 
     output := {
@@ -295,10 +295,10 @@ operation TableChanges {
         @cppType("set<idx_t>")
         known_column_mappings: UInt64List = []
 
-        /// The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these
-        /// columns, besides the row id and the begin and end snapshot. All columns of the table if absent.
-        @cppType("RESTOptional<vector<idx_t>>")
-        columns: UInt64List
+        /// The columns that the client reads. The inlined rows only have these columns, besides the row id and the
+        /// begin and end snapshot. All columns of the table if absent.
+        @cppType("RESTOptional<vector<RESTColumnIdentifier>>")
+        columns: ColumnIdentifierList
     }
 
     output := {

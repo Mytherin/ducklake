@@ -68,11 +68,11 @@ public:
 	vector<DuckLakeFileListEntry>
 	GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
 	                 const FilterPushdownInfo *filter_info = nullptr, bool include_local_changes = true,
-	                 optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
+	                 optional_ptr<const vector<DuckLakeProjectedColumn>> projection = nullptr) override;
 	vector<DuckLakeFileListExtendedEntry>
 	GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
 	                         const FilterPushdownInfo *filter_info = nullptr,
-	                         optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
+	                         optional_ptr<const vector<DuckLakeProjectedColumn>> projection = nullptr) override;
 	unique_ptr<QueryResult> ReadInlinedDataInsertions(DuckLakeSnapshot start_snapshot, DuckLakeSnapshot end_snapshot,
 	                                                  const string &inlined_table_name,
 	                                                  const vector<string> &columns_to_read) override;
@@ -93,11 +93,11 @@ public:
 	vector<DuckLakeColumnMappingInfo> GetColumnMappings(optional_idx start_from) override;
 	vector<DuckLakeFileListEntry>
 	GetTableInsertions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot,
-	                   optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
+	                   optional_ptr<const vector<DuckLakeProjectedColumn>> projection = nullptr) override;
 	vector<DuckLakeDeleteScanEntry>
 	GetTableDeletions(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot, DuckLakeSnapshot snapshot,
 	                  bool include_local_changes = true,
-	                  optional_ptr<const vector<FieldIndex>> projection = nullptr) override;
+	                  optional_ptr<const vector<DuckLakeProjectedColumn>> projection = nullptr) override;
 	void RemoveFilesScheduledForCleanup(const vector<DuckLakeFileForCleanup> &cleaned_up_files) override;
 	optional_idx GetNetRowCount(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot) override;
 	vector<DuckLakeInlinedTableInfo> GetInlinedDataTables(const DuckLakeTableEntry &table,
@@ -131,7 +131,8 @@ private:
 		bool fetch;
 		RESTInlinedProjection projection;
 	};
-	InlinedRowsPlan PlanInlinedRows(const RESTInlinedRowsKey &key, optional_ptr<const vector<FieldIndex>> projection);
+	InlinedRowsPlan PlanInlinedRows(const RESTInlinedRowsKey &key,
+	                                optional_ptr<const vector<DuckLakeProjectedColumn>> projection);
 	//! Fetches the inlined rows of a table with all columns, if a scan needs rows that the cache does not have
 	shared_ptr<RESTInlinedRowsResponse> FetchInlinedRows(const RESTInlinedRowsKey &key, DuckLakeSnapshot start_snapshot,
 	                                                     DuckLakeSnapshot snapshot);
@@ -144,7 +145,7 @@ private:
 	void AddInserts(const TransactionChangeInformation &changes, vector<unique_ptr<RESTCommitRequest>> &requests);
 	RESTTableChangesResponse GetTableChanges(DuckLakeTableEntry &table, DuckLakeSnapshot start_snapshot,
 	                                         DuckLakeSnapshot snapshot, const string &changes,
-	                                         optional_ptr<const vector<FieldIndex>> projection);
+	                                         optional_ptr<const vector<DuckLakeProjectedColumn>> projection);
 	vector<RESTDroppedFile> GetDroppedFiles(TableIndex table_id);
 
 private:
