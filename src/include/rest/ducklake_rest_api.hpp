@@ -1116,8 +1116,6 @@ struct RESTSelectRequest : public RESTSnapshotReference {
 	bool extended = false;
 	//! Filters to prune files with.
 	unique_ptr<RESTScanFilters> filters;
-	//! The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
-	string time_zone;
 	//! The ids of the column mappings that the client has: the response only has the other column mappings that its
 	set<idx_t> known_column_mappings;
 	//! The columns that the client reads. The inlined rows only have these columns, besides the row id and the
@@ -1150,8 +1148,6 @@ struct RESTTableChangesRequest : public RESTSnapshotReference {
 	string page_token;
 	//! The changes to return. Required, unless the request has a `page_token`.
 	string changes;
-	//! The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
-	string time_zone;
 	//! The ids of the column mappings that the client has: the response only has the other column mappings that its
 	set<idx_t> known_column_mappings;
 	//! The columns that the client reads. The inlined rows only have these columns, besides the row id and the

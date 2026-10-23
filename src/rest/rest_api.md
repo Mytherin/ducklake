@@ -289,8 +289,9 @@ Plans a scan of a table.
 Returns the data files of the table that are visible in a snapshot, together with their delete files and
 inlined deletions, and the rows of the table that are inlined in the catalog. `inlined_data` holds the visible
 inlined rows, with the row id, the begin and end snapshot
-and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. It is
-absent if the table has no inlined rows.
+and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. Values of a
+column that was changed from `TIMESTAMP` to `TIMESTAMPTZ` are the timestamps in UTC. It is absent if the table has
+no inlined rows.
 
 The `aggregates` of a request without `filters` are answered from the statistics of the table where the server can,
 instead of listing the files: `aggregate_results` has an entry for each aggregate, and tells whether the server
@@ -321,7 +322,6 @@ Request:
 | `aggregates` | list of [`Aggregate`](#aggregate) (default `[]`) | Aggregates over the whole table that the server answers from statistics if it can. Not with `filters`. |
 | `extended` | `bool` (default `false`) | Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`. |
 | `filters` | [`ScanFilters`](#scanfilters) (optional) | Filters to prune files with. |
-| `time_zone` | `string` (optional) | The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The time zone of the server if absent. |
 | `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
 | `columns` | list of [`ColumnIdentifier`](#columnidentifier) (optional) | The columns that the client reads. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
 
@@ -365,7 +365,6 @@ Request:
 | `start_snapshot_id` | `uint64` (optional) | The id of the first snapshot of the range. |
 | `page_token` | `string` (optional) | A page token of an earlier response: returns that page of files. The request has no other members then. |
 | `changes` | [`TableChangeType`](#tablechangetype) (optional) | The changes to return. Required, unless the request has a `page_token`. |
-| `time_zone` | `string` (optional) | The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The time zone of the server if absent. |
 | `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
 | `columns` | list of [`ColumnIdentifier`](#columnidentifier) (optional) | The columns that the client reads. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
 

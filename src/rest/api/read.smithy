@@ -125,8 +125,9 @@ structure SnapshotData {
 /// Returns the data files of the table that are visible in a snapshot, together with their delete files and
 /// inlined deletions, and the rows of the table that are inlined in the catalog. `inlined_data` holds the visible
 /// inlined rows, with the row id, the begin and end snapshot
-/// and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. It is
-/// absent if the table has no inlined rows.
+/// and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. Values of a
+/// column that was changed from `TIMESTAMP` to `TIMESTAMPTZ` are the timestamps in UTC. It is absent if the table has
+/// no inlined rows.
 ///
 /// The `aggregates` of a request without `filters` are answered from the statistics of the table where the server can,
 /// instead of listing the files: `aggregate_results` has an entry for each aggregate, and tells whether the server
@@ -158,10 +159,6 @@ operation Select {
 
         /// Filters to prune files with.
         filters: ScanFilters
-
-        /// The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
-        /// time zone of the server if absent.
-        time_zone: String
 
         /// The ids of the column mappings that the client has: the response only has the other column mappings that its
         /// files refer to.
@@ -285,10 +282,6 @@ operation TableChanges {
 
         /// The changes to return. Required, unless the request has a `page_token`.
         changes: TableChangeType
-
-        /// The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
-        /// time zone of the server if absent.
-        time_zone: String
 
         /// The ids of the column mappings that the client has: the response only has the other column mappings that its
         /// files refer to.

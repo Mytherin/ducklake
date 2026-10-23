@@ -361,15 +361,16 @@ static void RemoveUnreadFields(Vector &column, idx_t count, const DuckLakeFieldI
 static unique_ptr<RESTInlinedRows>
 ReadInlinedRows(DuckLakeRESTRequest &request, DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
                 const std::function<unique_ptr<QueryResult>(const string &, const vector<string> &)> &read_rows,
-                const RESTOptional<vector<RESTColumnIdentifier>> &projection, const string &time_zone) {
+                const RESTOptional<vector<RESTColumnIdentifier>> &projection) {
 	auto inlined_tables = table.GetInlinedDataTables(*request.transaction, snapshot);
 	if (inlined_tables.empty()) {
 		return nullptr;
 	}
-	if (!time_zone.empty()) {
-		// casts of columns that were changed to TIMESTAMPTZ depend on the time zone
-		auto result = request.transaction->GetConnection().Query("SET TimeZone = " + SQLString::ToString(time_zone));
-		result->ThrowIfError();
+	// timestamps of columns that were changed to TIMESTAMPTZ are in UTC (without ICU, all timestamps are)
+	auto &connection = request.transaction->GetConnection();
+	Value current_time_zone;
+	if (connection.context->TryGetCurrentSetting("TimeZone", current_time_zone)) {
+		connection.Query("SET TimeZone = 'UTC'")->ThrowIfError();
 	}
 	unordered_map<idx_t, reference<const RESTColumnIdentifier>> projected_fields;
 	for (auto &column : projection.value) {
@@ -584,8 +585,7 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	if (!parameters.page_token.empty()) {
 		RequireOnlyPageToken(RESTIsNull(parameters.snapshot) && !parameters.snapshot_id.IsValid() &&
 		                     !parameters.extended && !parameters.filters && parameters.aggregates.empty() &&
-		                     parameters.time_zone.empty() && parameters.known_column_mappings.empty() &&
-		                     !parameters.columns.has_value);
+		                     parameters.known_column_mappings.empty() && !parameters.columns.has_value);
 		idx_t page_index = 0;
 		auto plan = GetPlanOfPage(request, parameters.table_id, parameters.page_token, page_index);
 		RESTSelectResponse page;
@@ -631,7 +631,7 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	    [&](const string &inlined_table_name, const vector<string> &columns) {
 		    return metadata_manager.ReadInlinedData(snapshot, inlined_table_name, columns);
 	    },
-	    parameters.columns, parameters.time_zone);
+	    parameters.columns);
 	return result;
 }
 
@@ -665,8 +665,8 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 	if (!parameters.page_token.empty()) {
 		RequireOnlyPageToken(RESTIsNull(parameters.snapshot) && !parameters.snapshot_id.IsValid() &&
 		                     RESTIsNull(parameters.start_snapshot) && !parameters.start_snapshot_id.IsValid() &&
-		                     parameters.changes.empty() && parameters.time_zone.empty() &&
-		                     parameters.known_column_mappings.empty() && !parameters.columns.has_value);
+		                     parameters.changes.empty() && parameters.known_column_mappings.empty() &&
+		                     !parameters.columns.has_value);
 		idx_t page_index = 0;
 		auto plan = GetPlanOfPage(request, parameters.table_id, parameters.page_token, page_index);
 		RESTTableChangesResponse page;
@@ -708,7 +708,7 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 		    }
 		    return metadata_manager.ReadInlinedDataInsertions(start_snapshot, snapshot, inlined_table_name, columns);
 	    },
-	    parameters.columns, parameters.time_zone);
+	    parameters.columns);
 	return result;
 }
 

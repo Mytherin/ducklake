@@ -17,6 +17,12 @@
   ],
   "skip_tests": [
     {
+      "reason": "Reads inlined timestamps of a column retyped to TIMESTAMPTZ in the time zone of the session, the REST server reads them in UTC",
+      "paths": [
+        "test/sql/stats/timestamptz_retype_committed_stats.test"
+      ]
+    },
+    {
       "reason": "Tests the migration of metadata that the test writes to the metadata catalog directly",
       "paths": [
         "test/sql/migration/stale_version_after_migration.test",
