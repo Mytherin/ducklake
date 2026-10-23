@@ -159,9 +159,9 @@ structure ChangeColumnType {
     @required
     column_path: StringList
 
-    /// The new type, as a DuckDB SQL type name (e.g. `BIGINT`).
+    /// The new type.
     @required
-    column_type: String
+    column_type: LogicalType
 
     /// The `USING` expression that converts the old values.
     expression: String

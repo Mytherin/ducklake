@@ -99,23 +99,19 @@ client directly, so the data path has to be accessible from both the client and 
 
 ### Types
 
-Types are structured JSON objects. `id` is the name of the DuckDB `LogicalTypeId`; nested and parameterized types
-have additional fields:
+Types are structured JSON objects. `id` is the name of the type in the
+[DuckLake specification](https://ducklake.select/docs/stable/specification/data_types) (e.g. `int32`, `varchar`,
+`timestamptz`, `json`); nested and parameterized types have additional fields:
 
 ```json
-{"id": "INTEGER"}
-{"id": "DECIMAL", "width": 18, "scale": 3}
-{"id": "LIST", "child": {"id": "VARCHAR"}}
-{"id": "ARRAY", "child": {"id": "DOUBLE"}, "size": 3}
-{"id": "MAP", "key": {"id": "VARCHAR"}, "value": {"id": "BIGINT"}}
-{"id": "STRUCT", "children": [{"name": "a", "type": {"id": "INTEGER"}}]}
-{"id": "GEOMETRY", "crs": "EPSG:4326"}
-{"id": "VARCHAR", "alias": "JSON"}
+{"id": "int32"}
+{"id": "decimal", "width": 18, "scale": 3}
+{"id": "list", "child": {"id": "varchar"}}
+{"id": "map", "key": {"id": "varchar"}, "value": {"id": "int64"}}
+{"id": "struct", "children": [{"name": "a", "type": {"id": "int32"}}]}
+{"id": "geometry", "crs": "EPSG:4326"}
+{"id": "json"}
 ```
-
-Column types in table definitions use the type names of the DuckLake specification (e.g. `int32`, `varchar`), as they
-are stored in `ducklake_column`. Column types in `create_table` requests use DuckDB SQL type names
-(e.g. `INTEGER`, `STRUCT(a INTEGER)`).
 
 ### Values
 
@@ -123,18 +119,18 @@ Values whose type is known from the context (e.g. the rows of a table) are encod
 
 | Type                             | Encoding                                                        |
 |----------------------------------|-----------------------------------------------------------------|
-| `NULL`                           | `null`                                                          |
-| `BOOLEAN`                        | JSON boolean                                                    |
+| `null`                           | `null`                                                          |
+| `boolean`                        | JSON boolean                                                    |
 | integers up to 64 bits           | JSON number                                                     |
-| `FLOAT`, `DOUBLE`                | JSON number, or a string (`"nan"`, `"inf"`, `"-inf"`)          |
-| `STRUCT`                         | JSON object with a field per child                              |
-| `LIST`, `ARRAY`                  | JSON array                                                      |
-| `MAP`                            | JSON array of `{"key": ..., "value": ...}` objects              |
-| `INTERVAL`                       | `{"months": 1, "days": 2, "micros": 3}`                         |
-| `VARIANT`                        | the value the variant holds, as a value without a known type (see below) |
+| `float32`, `float64`             | JSON number, or a string (`"nan"`, `"inf"`, `"-inf"`)          |
+| `struct`                         | JSON object with a field per child                              |
+| `list`                           | JSON array                                                      |
+| `map`                            | JSON array of `{"key": ..., "value": ...}` objects              |
+| `interval`                       | `{"months": 1, "days": 2, "micros": 3}`                         |
+| `variant`                        | the value the variant holds, as a value without a known type (see below) |
 | everything else                  | the string representation of the value, e.g. `"2025-01-01"`    |
 
-Values without a known type (e.g. tags) are `null`, a JSON string for `VARCHAR` values, or an object
+Values without a known type (e.g. tags) are `null`, a JSON string for `varchar` values, or an object
 `{"type": <type>, "value": <value>}`.
 
 ## Specification
@@ -777,7 +773,7 @@ The catalog at a snapshot.
 | Field | Type | Description |
 |-------|------|-------------|
 | `column_path` | list of `string` | The path of the column. |
-| `column_type` | `string` | The new type, as a DuckDB SQL type name (e.g. `BIGINT`). |
+| `column_type` | `logical_type` | The new type. |
 | `expression` | `string` (optional) | The `USING` expression that converts the old values. |
 
 ### `ColumnDefinition`
@@ -787,7 +783,7 @@ The definition of a column in a catalog change.
 | Field | Type | Description |
 |-------|------|-------------|
 | `column_name` | `string` | The name of the column. |
-| `column_type` | `string` | The type of the column, as a DuckDB SQL type name (e.g. `INTEGER`, `STRUCT(a INTEGER)`). |
+| `column_type` | `logical_type` | The type of the column. |
 | `default` | `string` (optional) | The default of the column, as a SQL expression. |
 | `comment` | `string` (optional) | The comment of the column. |
 | `not_null` | `bool` (default `false`) | Whether the column is `NOT NULL`. |
@@ -813,7 +809,7 @@ A column of a table, as stored in `ducklake_column`.
 The statistics of a column of a file or of inserted rows.
 
 ```json
-{"type": {"id": "INTEGER"}, "min_value": "1", "max_value": "2", "null_count": 0, "value_count": 2,
+{"type": {"id": "int32"}, "min_value": "1", "max_value": "2", "null_count": 0, "value_count": 2,
  "column_size_bytes": 10, "any_valid": true, "bounds_unknown": false, "min_is_exact": true, "max_is_exact": true}
 ```
 
@@ -1165,7 +1161,7 @@ A deletion of a row of a data file that is inlined in the catalog.
 A set of rows, e.g. the rows of an inlined data table.
 
 ```json
-{"columns": [{"name": "row_id", "type": {"id": "BIGINT"}}, {"name": "i", "type": {"id": "INTEGER"}}],
+{"columns": [{"name": "row_id", "type": {"id": "int64"}}, {"name": "i", "type": {"id": "int32"}}],
  "rows": [[0, 1], [1, 2]]}
 ```
 
@@ -1388,7 +1384,7 @@ can prune files at runtime.
 
 ```json
 {"expressions": ["i >= 150", "s = 'a' OR st.a IN (1, 2)"],
- "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "INTEGER"}}],
+ "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "int32"}}],
  "runtime_filter_columns": [1]}
 ```
 

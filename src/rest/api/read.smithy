@@ -374,7 +374,7 @@ structure DynamicFilter {
 ///
 /// ```json
 /// {"expressions": ["i >= 150", "s = 'a' OR st.a IN (1, 2)"],
-///  "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "INTEGER"}}],
+///  "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "int32"}}],
 ///  "runtime_filter_columns": [1]}
 /// ```
 structure ScanFilters {

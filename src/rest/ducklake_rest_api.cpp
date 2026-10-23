@@ -618,7 +618,7 @@ DuckLakeCatalogInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTChangeColumnType &value) {
 	auto result = writer.CreateObject();
 	result.Add("column_path", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.column_path));
-	result.Add("column_type", RESTWriteValue<RESTStringCodec>(writer, value.column_type));
+	result.Add("column_type", RESTWriteValue<RESTLogicalTypeCodec>(writer, value.column_type));
 	if (!RESTIsNull(value.expression)) {
 		result.Add("expression", RESTWriteValue<RESTStringCodec>(writer, value.expression));
 	}
@@ -632,7 +632,7 @@ RESTChangeColumnType DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	}
 	RESTChangeColumnType result;
 	RESTReadValue<RESTListCodec<RESTStringCodec>>(in.Get("column_path"), result.column_path);
-	RESTReadValue<RESTStringCodec>(in.Get("column_type"), result.column_type);
+	RESTReadValue<RESTLogicalTypeCodec>(in.Get("column_type"), result.column_type);
 	{
 		auto entry = in.TryGet("expression");
 		if (!entry.IsNull()) {
@@ -645,7 +645,7 @@ RESTChangeColumnType DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTColumnDefinition &value) {
 	auto result = writer.CreateObject();
 	result.Add("column_name", RESTWriteValue<RESTStringCodec>(writer, value.column_name));
-	result.Add("column_type", RESTWriteValue<RESTStringCodec>(writer, value.column_type));
+	result.Add("column_type", RESTWriteValue<RESTLogicalTypeCodec>(writer, value.column_type));
 	if (!RESTIsNull(value.default_value)) {
 		result.Add("default", RESTWriteValue<RESTStringCodec>(writer, value.default_value));
 	}
@@ -663,7 +663,7 @@ RESTColumnDefinition DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	}
 	RESTColumnDefinition result;
 	RESTReadValue<RESTStringCodec>(in.Get("column_name"), result.column_name);
-	RESTReadValue<RESTStringCodec>(in.Get("column_type"), result.column_type);
+	RESTReadValue<RESTLogicalTypeCodec>(in.Get("column_type"), result.column_type);
 	{
 		auto entry = in.TryGet("default");
 		if (!entry.IsNull()) {

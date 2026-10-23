@@ -1,4 +1,5 @@
 #include "rest/ducklake_rest_json.hpp"
+#include "common/ducklake_types.hpp"
 
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/exception.hpp"
@@ -212,34 +213,30 @@ Value RESTJson::ValueFromJson(RESTJsonIn json) {
 
 JSONMutableValue RESTJson::TypeToJson(JSONWriter &writer, const LogicalType &type) {
 	auto result = writer.CreateObject();
-	result.AddString("id", EnumUtil::ToString(type.id()));
-	if (type.HasAlias()) {
-		result.AddString("alias", type.GetAlias());
-	}
-	switch (type.id()) {
+	// arrays are stored as lists
+	auto ducklake_type = type.id() == LogicalTypeId::ARRAY ? LogicalType::LIST(ArrayType::GetChildType(type)) : type;
+	auto name = DuckLakeTypes::ToString(ducklake_type);
+	result.AddString("id", name.substr(0, name.find('(')));
+	switch (ducklake_type.id()) {
 	case LogicalTypeId::GEOMETRY:
-		if (GeoType::HasCRS(type)) {
-			result.AddString("crs", GeoType::GetCRS(type).GetDefinition());
+		if (GeoType::HasCRS(ducklake_type)) {
+			result.AddString("crs", GeoType::GetCRS(ducklake_type).GetDefinition());
 		}
 		break;
 	case LogicalTypeId::DECIMAL:
-		result.Add("width", writer.CreateUnsignedInteger(DecimalType::GetWidth(type)));
-		result.Add("scale", writer.CreateUnsignedInteger(DecimalType::GetScale(type)));
+		result.Add("width", writer.CreateUnsignedInteger(DecimalType::GetWidth(ducklake_type)));
+		result.Add("scale", writer.CreateUnsignedInteger(DecimalType::GetScale(ducklake_type)));
 		break;
 	case LogicalTypeId::LIST:
-		result.Add("child", TypeToJson(writer, ListType::GetChildType(type)));
-		break;
-	case LogicalTypeId::ARRAY:
-		result.Add("child", TypeToJson(writer, ArrayType::GetChildType(type)));
-		result.Add("size", writer.CreateUnsignedInteger(ArrayType::GetSize(type)));
+		result.Add("child", TypeToJson(writer, ListType::GetChildType(ducklake_type)));
 		break;
 	case LogicalTypeId::MAP:
-		result.Add("key", TypeToJson(writer, MapType::KeyType(type)));
-		result.Add("value", TypeToJson(writer, MapType::ValueType(type)));
+		result.Add("key", TypeToJson(writer, MapType::KeyType(ducklake_type)));
+		result.Add("value", TypeToJson(writer, MapType::ValueType(ducklake_type)));
 		break;
 	case LogicalTypeId::STRUCT: {
 		auto children = writer.CreateArray();
-		for (auto &child : StructType::GetChildTypes(type)) {
+		for (auto &child : StructType::GetChildTypes(ducklake_type)) {
 			auto child_obj = writer.CreateObject();
 			child_obj.AddString("name", child.first.GetIdentifierName());
 			child_obj.Add("type", TypeToJson(writer, child.second));
@@ -254,40 +251,30 @@ JSONMutableValue RESTJson::TypeToJson(JSONWriter &writer, const LogicalType &typ
 	return result;
 }
 
-static LogicalType TypeFromJsonInternal(RESTJsonIn json) {
-	auto id = EnumUtil::FromString<LogicalTypeId>(json.Str("id"));
-	switch (id) {
-	case LogicalTypeId::VARIANT:
-		return LogicalType::VARIANT();
-	case LogicalTypeId::GEOMETRY:
+LogicalType RESTJson::TypeFromJson(RESTJsonIn json) {
+	auto id = json.Str("id");
+	if (StringUtil::CIEquals(id, "geometry")) {
 		return LogicalType::GEOMETRY(json.Str("crs", string()));
-	case LogicalTypeId::DECIMAL:
+	}
+	if (StringUtil::CIEquals(id, "decimal")) {
 		return LogicalType::DECIMAL(NumericCast<uint8_t>(json.UInt("width")), NumericCast<uint8_t>(json.UInt("scale")));
+	}
+	auto type = DuckLakeTypes::FromString(id);
+	switch (type.id()) {
 	case LogicalTypeId::LIST:
-		return LogicalType::LIST(RESTJson::TypeFromJson(json.Get("child")));
-	case LogicalTypeId::ARRAY:
-		return LogicalType::ARRAY(RESTJson::TypeFromJson(json.Get("child")), json.UInt("size"));
+		return LogicalType::LIST(TypeFromJson(json.Get("child")));
 	case LogicalTypeId::MAP:
-		return LogicalType::MAP(RESTJson::TypeFromJson(json.Get("key")), RESTJson::TypeFromJson(json.Get("value")));
+		return LogicalType::MAP(TypeFromJson(json.Get("key")), TypeFromJson(json.Get("value")));
 	case LogicalTypeId::STRUCT: {
 		child_list_t<LogicalType> children;
 		for (auto &child : json.Get("children").Items()) {
-			children.emplace_back(Identifier(child.Str("name")), RESTJson::TypeFromJson(child.Get("type")));
+			children.emplace_back(Identifier(child.Str("name")), TypeFromJson(child.Get("type")));
 		}
 		return LogicalType::STRUCT(std::move(children));
 	}
 	default:
-		return LogicalType(id);
+		return type;
 	}
-}
-
-LogicalType RESTJson::TypeFromJson(RESTJsonIn json) {
-	auto result = TypeFromJsonInternal(json);
-	auto alias = json.Str("alias", string());
-	if (!alias.empty()) {
-		result = result.WithAlias(std::move(alias));
-	}
-	return result;
 }
 
 JSONMutableValue RESTJson::TypedValueToJson(JSONWriter &writer, const Value &value) {

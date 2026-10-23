@@ -9,13 +9,13 @@ include test/template/rest_setup.test_template
 # a commit request can be sent on its own
 query I
 SELECT response->>'$.table_ids[0].table_id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_table": {"schema_path": ["main"], "table_name": "t", "columns": [{"column_name": "i", "column_type": "INTEGER"}, {"column_name": "s", "column_type": "VARCHAR"}]}}]}')
+'{"requests": [{"create_table": {"schema_path": ["main"], "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}, {"column_name": "s", "column_type": {"id": "varchar"}}]}}]}')
 ----
 1
 
 query I
 SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"insert_rows": {"table_id": 1, "column_types": [{"id": "INTEGER"}, {"id": "VARCHAR"}], "rows": [[1, "one"], [2, null]], "column_stats": []}}]}')
+'{"requests": [{"insert_rows": {"table_id": 1, "column_types": [{"id": "int32"}, {"id": "varchar"}], "rows": [[1, "one"], [2, null]], "column_stats": []}}]}')
 ----
 200
 
@@ -23,8 +23,8 @@ SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transacti
 query II
 SELECT response->>'$.snapshot_id', response->>'$.table_ids[0].placeholder' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
 '{"requests": [
-  {"create_table": {"table_id": -1, "schema_path": ["main"], "table_name": "t2", "columns": [{"column_name": "j", "column_type": "BIGINT", "default": "42"}]}},
-  {"insert_rows": {"table_id": -1, "column_types": [{"id": "BIGINT"}], "rows": [[100]], "column_stats": []}}
+  {"create_table": {"table_id": -1, "schema_path": ["main"], "table_name": "t2", "columns": [{"column_name": "j", "column_type": {"id": "int64"}, "default": "42"}]}},
+  {"insert_rows": {"table_id": -1, "column_types": [{"id": "int64"}], "rows": [[100]], "column_stats": []}}
 ]}')
 ----
 3	-1
@@ -128,7 +128,7 @@ SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_serve
 
 query I
 SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_table": {"schema_path": ["main"], "table_name": "t", "columns": [{"column_name": "i", "column_type": "INTEGER"}]}}]}')
+'{"requests": [{"create_table": {"schema_path": ["main"], "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}]}}]}')
 ----
 404
 

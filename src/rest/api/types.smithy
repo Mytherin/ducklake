@@ -485,7 +485,7 @@ structure GlobalTableStats {
 /// The statistics of a column of a file or of inserted rows.
 ///
 /// ```json
-/// {"type": {"id": "INTEGER"}, "min_value": "1", "max_value": "2", "null_count": 0, "value_count": 2,
+/// {"type": {"id": "int32"}, "min_value": "1", "max_value": "2", "null_count": 0, "value_count": 2,
 ///  "column_size_bytes": 10, "any_valid": true, "bounds_unknown": false, "min_is_exact": true, "max_is_exact": true}
 /// ```
 @mixin(
@@ -1053,7 +1053,7 @@ structure RowSet {
 /// A set of rows, e.g. the rows of an inlined data table.
 ///
 /// ```json
-/// {"columns": [{"name": "row_id", "type": {"id": "BIGINT"}}, {"name": "i", "type": {"id": "INTEGER"}}],
+/// {"columns": [{"name": "row_id", "type": {"id": "int64"}}, {"name": "i", "type": {"id": "int32"}}],
 ///  "rows": [[0, 1], [1, 2]]}
 /// ```
 structure InlinedRows with [RowSet] {}
@@ -1064,9 +1064,9 @@ structure ColumnDefinition {
     @required
     column_name: String
 
-    /// The type of the column, as a DuckDB SQL type name (e.g. `INTEGER`, `STRUCT(a INTEGER)`).
+    /// The type of the column.
     @required
-    column_type: String
+    column_type: LogicalType
 
     /// The default of the column, as a SQL expression.
     @cppMember("default_value")

@@ -112,7 +112,7 @@ string Timestamp
 @wireType("value")
 document Value
 
-/// A DuckDB type, e.g. `{"id": "DECIMAL", "width": 18, "scale": 3}`.
+/// A DuckLake type, e.g. `{"id": "decimal", "width": 18, "scale": 3}`.
 @wireType("logical_type")
 document LogicalType
 

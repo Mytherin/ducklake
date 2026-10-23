@@ -649,8 +649,8 @@ struct RESTAlterationCodec : public RESTCodec<RESTAlterationCodec> {
 struct RESTColumnDefinition {
 	//! The name of the column.
 	string column_name;
-	//! The type of the column, as a DuckDB SQL type name (e.g. `INTEGER`, `STRUCT(a INTEGER)`).
-	string column_type;
+	//! The type of the column.
+	LogicalType column_type;
 	//! The default of the column, as a SQL expression.
 	string default_value;
 	//! The comment of the column.
@@ -709,8 +709,8 @@ struct RESTChangeColumnType : public RESTAlteration {
 
 	//! The path of the column.
 	vector<string> column_path;
-	//! The new type, as a DuckDB SQL type name (e.g. `BIGINT`).
-	string column_type;
+	//! The new type.
+	LogicalType column_type;
 	//! The `USING` expression that converts the old values.
 	string expression;
 };

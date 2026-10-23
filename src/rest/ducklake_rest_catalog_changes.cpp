@@ -34,7 +34,7 @@ static unique_ptr<ParsedExpression> ReadExpression(const string &expression) {
 RESTColumnDefinition DuckLakeRESTCatalogChanges::WriteColumn(const ColumnDefinition &column, bool not_null) {
 	RESTColumnDefinition result;
 	result.column_name = column.GetName().GetIdentifierName();
-	result.column_type = column.GetType().ToString();
+	result.column_type = column.GetType();
 	if (column.HasDefaultValue()) {
 		result.default_value = column.DefaultValue().ToString();
 	}
@@ -46,7 +46,7 @@ RESTColumnDefinition DuckLakeRESTCatalogChanges::WriteColumn(const ColumnDefinit
 }
 
 ColumnDefinition DuckLakeRESTCatalogChanges::ReadColumn(ClientContext &context, const RESTColumnDefinition &column) {
-	auto type = TransformStringToLogicalType(column.column_type, context);
+	auto type = column.column_type;
 	ColumnDefinition result(Identifier(column.column_name), std::move(type));
 	if (!column.default_value.empty()) {
 		result.SetDefaultValue(Parser::GetBuiltinParser().ParseSingleExpression(column.default_value));
@@ -116,7 +116,7 @@ unique_ptr<RESTAlteration> DuckLakeRESTCatalogChanges::WriteAlter(const AlterInf
 			auto &change = alter.Cast<ChangeColumnTypeInfo>();
 			auto result = make_uniq<RESTChangeColumnType>();
 			result->column_path = WritePath(change.column_path);
-			result->column_type = change.target_type.ToString();
+			result->column_type = change.target_type;
 			if (change.expression) {
 				result->expression = change.expression->ToString();
 			}
@@ -242,7 +242,7 @@ unique_ptr<AlterInfo> DuckLakeRESTCatalogChanges::ReadAlter(ClientContext &conte
 	}
 	case RESTAlterationType::CHANGE_COLUMN_TYPE: {
 		auto &change = alteration.Cast<RESTChangeColumnType>();
-		auto target_type = TransformStringToLogicalType(change.column_type, context);
+		auto target_type = change.column_type;
 		return make_uniq<ChangeColumnTypeInfo>(entry, ReadPath(change.column_path), std::move(target_type),
 		                                       ReadExpression(change.expression));
 	}
