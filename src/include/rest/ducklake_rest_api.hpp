@@ -1104,8 +1104,6 @@ struct RESTSelectRequest : public RESTSnapshotReference {
 	bool extended = false;
 	//! Filters to prune files with.
 	unique_ptr<RESTScanFilters> filters;
-	//! Also return the inlined rows of the table that are visible in the snapshot.
-	bool include_inlined_data = false;
 	//! The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
 	string time_zone;
 	//! The ids of the column mappings that the client has: the response only has the other column mappings that its
@@ -1119,7 +1117,7 @@ struct RESTSelectResponse {
 	vector<DuckLakeFileListEntry> files;
 	//! The files of the scan, for `extended` scans.
 	vector<DuckLakeFileListExtendedEntry> extended_files;
-	//! The inlined rows of the table, for `include_inlined_data`.
+	//! The inlined rows of the table.
 	unique_ptr<RESTInlinedRows> inlined_data;
 	//! The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files
 	vector<string> page_tokens;
@@ -1140,8 +1138,6 @@ struct RESTTableChangesRequest : public RESTSnapshotReference {
 	string page_token;
 	//! The changes to return. Required, unless the request has a `page_token`.
 	string changes;
-	//! Also return the inlined rows that changed.
-	bool include_inlined_data = false;
 	//! The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
 	string time_zone;
 	//! The ids of the column mappings that the client has: the response only has the other column mappings that its
@@ -1155,7 +1151,7 @@ struct RESTTableChangesResponse {
 	vector<DuckLakeFileListEntry> insertions;
 	//! For `deletions`: the files with deleted rows.
 	vector<DuckLakeDeleteScanEntry> deletions;
-	//! The inlined rows that changed, for `include_inlined_data`.
+	//! The inlined rows that changed.
 	unique_ptr<RESTInlinedRows> inlined_data;
 	//! The tokens of the other pages of the files, see `scan`.
 	vector<string> page_tokens;

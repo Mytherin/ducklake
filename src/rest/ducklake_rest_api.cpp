@@ -3746,7 +3746,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSel
 	if (!RESTIsNull(value.filters)) {
 		result.Add("filters", RESTWriteValue<RESTObjectCodec<RESTScanFilters>>(writer, value.filters));
 	}
-	result.Add("include_inlined_data", RESTWriteValue<RESTBoolCodec>(writer, value.include_inlined_data));
 	if (!RESTIsNull(value.time_zone)) {
 		result.Add("time_zone", RESTWriteValue<RESTStringCodec>(writer, value.time_zone));
 	}
@@ -3801,14 +3800,6 @@ RESTSelectRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("filters");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTObjectCodec<RESTScanFilters>>(entry, result.filters);
-		}
-	}
-	{
-		auto entry = in.TryGet("include_inlined_data");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTBoolCodec>(entry, result.include_inlined_data);
-		} else {
-			result.include_inlined_data = false;
 		}
 	}
 	{
@@ -3916,7 +3907,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTab
 	if (!RESTIsNull(value.changes)) {
 		result.Add("changes", RESTWriteValue<RESTTableChangeTypeCodec>(writer, value.changes));
 	}
-	result.Add("include_inlined_data", RESTWriteValue<RESTBoolCodec>(writer, value.include_inlined_data));
 	if (!RESTIsNull(value.time_zone)) {
 		result.Add("time_zone", RESTWriteValue<RESTStringCodec>(writer, value.time_zone));
 	}
@@ -3969,14 +3959,6 @@ RESTTableChangesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("changes");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTTableChangeTypeCodec>(entry, result.changes);
-		}
-	}
-	{
-		auto entry = in.TryGet("include_inlined_data");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTBoolCodec>(entry, result.include_inlined_data);
-		} else {
-			result.include_inlined_data = false;
 		}
 	}
 	{

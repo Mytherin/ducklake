@@ -287,8 +287,8 @@ Response:
 Plans a scan of a table.
 
 Returns the data files of the table that are visible in a snapshot, together with their delete files and
-inlined deletions, and optionally the rows of the table that are inlined in the catalog. With
-`include_inlined_data`, `inlined_data` holds the visible inlined rows, with the row id, the begin and end snapshot
+inlined deletions, and the rows of the table that are inlined in the catalog. `inlined_data` holds the visible
+inlined rows, with the row id, the begin and end snapshot
 and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. It is
 absent if the table has no inlined rows.
 
@@ -321,7 +321,6 @@ Request:
 | `aggregates` | list of [`Aggregate`](#aggregate) (default `[]`) | Aggregates over the whole table that the server answers from statistics if it can. Not with `filters`. |
 | `extended` | `bool` (default `false`) | Return the extended file list used to plan deletes and updates in `extended_files`, instead of `files`. |
 | `filters` | [`ScanFilters`](#scanfilters) (optional) | Filters to prune files with. |
-| `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows of the table that are visible in the snapshot. |
 | `time_zone` | `string` (optional) | The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The time zone of the server if absent. |
 | `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
 | `columns` | list of `uint64` (optional) | The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
@@ -332,7 +331,7 @@ Response:
 |-------|------|-------------|
 | `files` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of the scan. |
 | `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of the scan, for `extended` scans. |
-| `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows of the table, for `include_inlined_data`. |
+| `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows of the table. |
 | `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files of the response and the files of all its pages. |
 | `aggregate_results` | list of [`AggregateResult`](#aggregateresult) (default `[]`) | The results of the `aggregates` of the request, in their order. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
@@ -341,7 +340,7 @@ Response:
 
 Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 
-With `include_inlined_data`, `inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted
+`inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted
 (`deletions`) in the range, with the row id, the begin and end snapshot and the columns of the table at the last
 snapshot of the range. It is absent if the table has no inlined rows.
 
@@ -366,7 +365,6 @@ Request:
 | `start_snapshot_id` | `uint64` (optional) | The id of the first snapshot of the range. |
 | `page_token` | `string` (optional) | A page token of an earlier response: returns that page of files. The request has no other members then. |
 | `changes` | [`TableChangeType`](#tablechangetype) (optional) | The changes to return. Required, unless the request has a `page_token`. |
-| `include_inlined_data` | `bool` (default `false`) | Also return the inlined rows that changed. |
 | `time_zone` | `string` (optional) | The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The time zone of the server if absent. |
 | `known_column_mappings` | list of `uint64` (default `[]`) | The ids of the column mappings that the client has: the response only has the other column mappings that its files refer to. |
 | `columns` | list of `uint64` (optional) | The columns that the client reads, as the field ids of top-level columns. The inlined rows only have these columns, besides the row id and the begin and end snapshot. All columns of the table if absent. |
@@ -377,7 +375,7 @@ Response:
 |-------|------|-------------|
 | `insertions` | list of [`FileListEntry`](#filelistentry) (default `[]`) | For `insertions`: the files with inserted rows. |
 | `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | For `deletions`: the files with deleted rows. |
-| `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows that changed, for `include_inlined_data`. |
+| `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows that changed. |
 | `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files, see `scan`. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
 

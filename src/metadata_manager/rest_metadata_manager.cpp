@@ -293,9 +293,14 @@ static string GetClientTimeZone(ClientContext &context) {
 	return string();
 }
 
-//! Sets the columns of a request that returns inlined rows, all columns if they are not set
-template <class REQUEST>
-static void SetProjection(REQUEST &request, const RESTInlinedProjection &projection) {
+//! Sets the columns of a request that returns inlined rows: none if the client has the rows already
+template <class REQUEST, class PLAN>
+static void SetProjection(REQUEST &request, const PLAN &plan) {
+	if (!plan.fetch) {
+		request.columns = RESTOptional<vector<idx_t>>(vector<idx_t>());
+		return;
+	}
+	auto &projection = plan.projection;
 	if (projection.all) {
 		return;
 	}
@@ -331,11 +336,10 @@ vector<DuckLakeFileListEntry> RESTMetadataManager::GetFilesForTable(DuckLakeTabl
 	// the inlined rows of an earlier scan at this snapshot can have the columns already
 	RESTInlinedRowsKey inlined_key {RESTInlinedRowsKind::SCAN, 0, snapshot.snapshot_id, table.GetTableId().index};
 	auto plan = PlanInlinedRows(inlined_key, projection);
-	request.include_inlined_data = plan.fetch;
 	if (plan.fetch) {
 		request.time_zone = GetClientTimeZone(*transaction.context.lock());
 	}
-	SetProjection(request, plan.projection);
+	SetProjection(request, plan);
 	if (filter_info) {
 		request.filters = make_uniq<RESTScanFilters>(DuckLakeRESTFilters::Write(*filter_info, table));
 	}
@@ -370,11 +374,10 @@ RESTMetadataManager::GetExtendedFilesForTable(DuckLakeTableEntry &table, DuckLak
 	request.extended = true;
 	RESTInlinedRowsKey inlined_key {RESTInlinedRowsKind::SCAN, 0, snapshot.snapshot_id, table.GetTableId().index};
 	auto plan = PlanInlinedRows(inlined_key, projection);
-	request.include_inlined_data = plan.fetch;
 	if (plan.fetch) {
 		request.time_zone = GetClientTimeZone(*transaction.context.lock());
 	}
-	SetProjection(request, plan.projection);
+	SetProjection(request, plan);
 	if (filter_info) {
 		request.filters = make_uniq<RESTScanFilters>(DuckLakeRESTFilters::Write(*filter_info, table));
 	}
@@ -414,7 +417,6 @@ shared_ptr<RESTInlinedRowsResponse> RESTMetadataManager::FetchInlinedRows(const 
 		RESTSelectRequest request;
 		request.snapshot = snapshot;
 		request.table_id = key.table_id;
-		request.include_inlined_data = true;
 		request.time_zone = GetClientTimeZone(*transaction.context.lock());
 		inlined_data = std::move(GetClient().Select(request).inlined_data);
 	} else {
@@ -423,7 +425,6 @@ shared_ptr<RESTInlinedRowsResponse> RESTMetadataManager::FetchInlinedRows(const 
 		request.start_snapshot = start_snapshot;
 		request.snapshot = snapshot;
 		request.changes = key.kind == RESTInlinedRowsKind::INSERTIONS ? "insertions" : "deletions";
-		request.include_inlined_data = true;
 		request.time_zone = GetClientTimeZone(*transaction.context.lock());
 		inlined_data = std::move(GetClient().TableChanges(request).inlined_data);
 	}
@@ -687,11 +688,10 @@ RESTTableChangesResponse RESTMetadataManager::GetTableChanges(DuckLakeTableEntry
 	auto kind = changes == "insertions" ? RESTInlinedRowsKind::INSERTIONS : RESTInlinedRowsKind::DELETIONS;
 	RESTInlinedRowsKey inlined_key {kind, start_snapshot.snapshot_id, snapshot.snapshot_id, table.GetTableId().index};
 	auto plan = PlanInlinedRows(inlined_key, projection);
-	request.include_inlined_data = plan.fetch;
 	if (plan.fetch) {
 		request.time_zone = GetClientTimeZone(*transaction.context.lock());
 	}
-	SetProjection(request, plan.projection);
+	SetProjection(request, plan);
 	request.known_column_mappings = transaction.GetCatalog().GetLoadedNameMapIds();
 	auto response = GetClient().TableChanges(request);
 	transaction.GetCatalog().AddNameMaps(std::move(response.column_mappings));

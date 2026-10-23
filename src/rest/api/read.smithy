@@ -123,8 +123,8 @@ structure SnapshotData {
 /// Plans a scan of a table.
 ///
 /// Returns the data files of the table that are visible in a snapshot, together with their delete files and
-/// inlined deletions, and optionally the rows of the table that are inlined in the catalog. With
-/// `include_inlined_data`, `inlined_data` holds the visible inlined rows, with the row id, the begin and end snapshot
+/// inlined deletions, and the rows of the table that are inlined in the catalog. `inlined_data` holds the visible
+/// inlined rows, with the row id, the begin and end snapshot
 /// and the columns of the table at the snapshot, whatever the schema of the table was when the rows were written. It is
 /// absent if the table has no inlined rows.
 ///
@@ -159,9 +159,6 @@ operation Select {
         /// Filters to prune files with.
         filters: ScanFilters
 
-        /// Also return the inlined rows of the table that are visible in the snapshot.
-        include_inlined_data: Boolean = false
-
         /// The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
         /// time zone of the server if absent.
         time_zone: String
@@ -184,7 +181,7 @@ operation Select {
         /// The files of the scan, for `extended` scans.
         extended_files: FileListExtendedEntryList
 
-        /// The inlined rows of the table, for `include_inlined_data`.
+        /// The inlined rows of the table.
         inlined_data: InlinedRows
 
         /// The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files
@@ -262,7 +259,7 @@ operation TableSizes {
 
 /// Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 ///
-/// With `include_inlined_data`, `inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted
+/// `inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted
 /// (`deletions`) in the range, with the row id, the begin and end snapshot and the columns of the table at the last
 /// snapshot of the range. It is absent if the table has no inlined rows.
 ///
@@ -289,9 +286,6 @@ operation TableChanges {
         /// The changes to return. Required, unless the request has a `page_token`.
         changes: TableChangeType
 
-        /// Also return the inlined rows that changed.
-        include_inlined_data: Boolean = false
-
         /// The time zone of the client, which the inlined rows use when a column was changed to `TIMESTAMPTZ`. The
         /// time zone of the server if absent.
         time_zone: String
@@ -314,7 +308,7 @@ operation TableChanges {
         /// For `deletions`: the files with deleted rows.
         deletions: DeleteScanEntryList = []
 
-        /// The inlined rows that changed, for `include_inlined_data`.
+        /// The inlined rows that changed.
         inlined_data: InlinedRows
 
         /// The tokens of the other pages of the files, see `scan`.

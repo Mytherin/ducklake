@@ -543,8 +543,8 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	if (!parameters.page_token.empty()) {
 		RequireOnlyPageToken(RESTIsNull(parameters.snapshot) && !parameters.snapshot_id.IsValid() &&
 		                     !parameters.extended && !parameters.filters && parameters.aggregates.empty() &&
-		                     !parameters.include_inlined_data && parameters.time_zone.empty() &&
-		                     parameters.known_column_mappings.empty() && !parameters.columns.has_value);
+		                     parameters.time_zone.empty() && parameters.known_column_mappings.empty() &&
+		                     !parameters.columns.has_value);
 		idx_t page_index = 0;
 		auto plan = GetPlanOfPage(request, parameters.table_id, parameters.page_token, page_index);
 		RESTSelectResponse page;
@@ -585,9 +585,6 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 	AddMappingIds(result.files, mapping_ids);
 	AddMappingIds(result.extended_files, mapping_ids);
 	result.column_mappings = GetColumnMappings(request, std::move(mapping_ids), parameters.known_column_mappings);
-	if (!parameters.include_inlined_data) {
-		return result;
-	}
 	result.inlined_data = ReadInlinedRows(
 	    request, table, snapshot,
 	    [&](const string &inlined_table_name, const vector<string> &columns) {
@@ -627,9 +624,8 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 	if (!parameters.page_token.empty()) {
 		RequireOnlyPageToken(RESTIsNull(parameters.snapshot) && !parameters.snapshot_id.IsValid() &&
 		                     RESTIsNull(parameters.start_snapshot) && !parameters.start_snapshot_id.IsValid() &&
-		                     parameters.changes.empty() && !parameters.include_inlined_data &&
-		                     parameters.time_zone.empty() && parameters.known_column_mappings.empty() &&
-		                     !parameters.columns.has_value);
+		                     parameters.changes.empty() && parameters.time_zone.empty() &&
+		                     parameters.known_column_mappings.empty() && !parameters.columns.has_value);
 		idx_t page_index = 0;
 		auto plan = GetPlanOfPage(request, parameters.table_id, parameters.page_token, page_index);
 		RESTTableChangesResponse page;
@@ -663,19 +659,15 @@ RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest
 	AddMappingIds(result.insertions, mapping_ids);
 	AddMappingIds(result.deletions, mapping_ids);
 	result.column_mappings = GetColumnMappings(request, std::move(mapping_ids), parameters.known_column_mappings);
-	if (parameters.include_inlined_data) {
-		result.inlined_data = ReadInlinedRows(
-		    request, table, snapshot,
-		    [&](const string &inlined_table_name, const vector<string> &columns) {
-			    if (deletions) {
-				    return metadata_manager.ReadInlinedDataDeletions(start_snapshot, snapshot, inlined_table_name,
-				                                                     columns);
-			    }
-			    return metadata_manager.ReadInlinedDataInsertions(start_snapshot, snapshot, inlined_table_name,
-			                                                      columns);
-		    },
-		    parameters.columns, parameters.time_zone);
-	}
+	result.inlined_data = ReadInlinedRows(
+	    request, table, snapshot,
+	    [&](const string &inlined_table_name, const vector<string> &columns) {
+		    if (deletions) {
+			    return metadata_manager.ReadInlinedDataDeletions(start_snapshot, snapshot, inlined_table_name, columns);
+		    }
+		    return metadata_manager.ReadInlinedDataInsertions(start_snapshot, snapshot, inlined_table_name, columns);
+	    },
+	    parameters.columns, parameters.time_zone);
 	return result;
 }
 
