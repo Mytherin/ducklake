@@ -351,12 +351,7 @@ void DuckLakeCatalog::ConnectREST() {
 	if (entry != options.metadata_parameters.end()) {
 		catalog_name = entry->second.ToString();
 	}
-	bool accept_arrow = true;
-	entry = options.metadata_parameters.find("arrow");
-	if (entry != options.metadata_parameters.end()) {
-		accept_arrow = BooleanValue::Get(entry->second.DefaultCastAs(LogicalType::BOOLEAN));
-	}
-	auto client = make_uniq<DuckLakeRESTClient>(GetDatabase(), std::move(url), std::move(token), accept_arrow);
+	auto client = make_uniq<DuckLakeRESTClient>(GetDatabase(), std::move(url), std::move(token));
 	// the server tells the client the prefix of the catalog, and which requests it supports
 	client->Discover(catalog_name);
 	rest_client = std::move(client);

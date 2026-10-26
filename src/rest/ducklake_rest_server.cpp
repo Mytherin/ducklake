@@ -208,7 +208,9 @@ int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, optional_ptr<c
 		DuckLakeRESTRequest request(*served.db, served.catalog_name);
 		request.server = this;
 		request.prefix = served.prefix;
-		request.accepts_arrow = arrow_enabled && accept.find("multipart/mixed") != string::npos;
+		// lists are Arrow, unless the request asks for JSON only
+		request.accepts_arrow =
+		    accept.empty() || accept.find("multipart/mixed") != string::npos || accept.find("*/*") != string::npos;
 		try {
 			response = entry->second(request, request_json);
 			content_type = request.content_type;
@@ -450,7 +452,6 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	auto overrides_val = GetNamedParameter(input, "overrides");
 	auto files_per_page_val = GetNamedParameter(input, "files_per_page");
 	auto page_size_val = GetNamedParameter(input, "page_size");
-	auto arrow_val = GetNamedParameter(input, "arrow");
 
 	auto &registry = DuckLakeRESTServerRegistry::Get();
 	// a server that already listens on this address serves the catalog as well
@@ -495,9 +496,6 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 		}
 		server->SetFilesPerPage(files_per_page);
 	}
-	if (!arrow_val.IsNull()) {
-		server->SetArrowEnabled(BooleanValue::Get(arrow_val));
-	}
 	if (!defaults_val.IsNull() || !overrides_val.IsNull()) {
 		server->SetClientProperties(ToStringMap(defaults_val), ToStringMap(overrides_val));
 	}
@@ -537,13 +535,13 @@ static unique_ptr<FunctionData> DuckLakeRESTRequestBind(ClientContext &context, 
 	}
 	auto token = GetNamedParameter(input, "token");
 	DuckLakeRESTClient client(*context.db, StringValue::Get(input.inputs[0]),
-	                          token.IsNull() ? string() : StringValue::Get(token), false);
+	                          token.IsNull() ? string() : StringValue::Get(token));
 	auto accept = GetNamedParameter(input, "accept");
 	string response;
 	string content_type;
 	auto status = client.SendRaw(StringUtil::Upper(StringValue::Get(input.inputs[1])),
 	                             StringValue::Get(input.inputs[2]), StringValue::Get(input.inputs[3]), response,
-	                             content_type, accept.IsNull() ? string() : StringValue::Get(accept));
+	                             content_type, accept.IsNull() ? "application/json" : StringValue::Get(accept));
 	names.emplace_back("status");
 	return_types.emplace_back(LogicalType::INTEGER);
 	names.emplace_back("response");
@@ -576,7 +574,6 @@ DuckLakeRESTServeFunction::DuckLakeRESTServeFunction()
 		    .Add("prefix", LogicalType::VARCHAR)
 		    .Add("files_per_page", LogicalType::UBIGINT)
 		    .Add("page_size", LogicalType::UBIGINT)
-		    .Add("arrow", LogicalType::BOOLEAN)
 		    .Add("defaults", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))
 		    .Add("overrides", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
 	});

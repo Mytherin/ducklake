@@ -27,7 +27,7 @@ INSERT INTO dl.f SELECT i, 'v' || i FROM range(1000) t(i)
 statement ok
 INSERT INTO dl.f SELECT i, 'w' || i FROM range(10) t(i)
 
-# the response is JSON unless the client accepts multipart responses
+# the request function asks for JSON, unless the request says otherwise
 query II
 SELECT status, content_type FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}')
 ----
@@ -70,6 +70,21 @@ query II
 SELECT status, content_type FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/latest', '', accept := 'multipart/mixed')
 ----
 200	application/json
+
+# types that Arrow does not have are extension types
+statement ok
+CREATE TABLE dl.x(b BOOLEAN, u UUID, h HUGEINT, uh UHUGEINT, tz TIMETZ, j JSON, l INTEGER[], v VARIANT)
+
+statement ok
+INSERT INTO dl.x VALUES
+  (true, '5c8b7b8e-9a2f-4f1a-8b0e-3f5a7e1d2c4b', 170141183460469231731687303715884105727, 340282366920938463463374607431768211455, TIMETZ '12:34:56+02', '{"a": [1, 2]}', [1, 2], 42::VARIANT),
+  (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+
+query IIIIIIII
+SELECT b, u, h, uh, tz, j, l, v::VARCHAR FROM dl.x ORDER BY b NULLS LAST
+----
+true	5c8b7b8e-9a2f-4f1a-8b0e-3f5a7e1d2c4b	170141183460469231731687303715884105727	340282366920938463463374607431768211455	12:34:56+02	{"a": [1, 2]}	[1, 2]	42
+NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 
 statement ok
 DETACH dl

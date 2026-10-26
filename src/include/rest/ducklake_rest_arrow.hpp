@@ -18,9 +18,7 @@ class ClientContext;
 
 //! The tables that the REST API sends as Arrow IPC streams: the rows of the columns of a table
 struct RESTArrow {
-	//! Whether rows with the types can be sent as Arrow
-	static bool Supports(const vector<LogicalType> &types);
-	//! The Arrow IPC stream of rows. Types that Arrow does not have (UUID, HUGEINT, JSON, ...) are sent as strings
+	//! The Arrow IPC stream of rows. Types that Arrow does not have (UUID, HUGEINT, GEOMETRY, ...) are extension types
 	static string Write(ClientContext &context, const vector<string> &names, ColumnDataCollection &rows);
 	//! Reads the rows of an Arrow IPC stream from a region of the data. The columns are cast to the types, if there
 	//! are any

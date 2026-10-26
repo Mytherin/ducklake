@@ -25,7 +25,7 @@ namespace duckdb {
 class DuckLakeRESTClient : public DuckLakeRESTClientAPI {
 public:
 	//! Requests carry the token as a bearer token, if it is set
-	DuckLakeRESTClient(DatabaseInstance &db, string base_url, string token, bool accept_arrow = true);
+	DuckLakeRESTClient(DatabaseInstance &db, string base_url, string token);
 	~DuckLakeRESTClient() override;
 
 	RESTHttpResponse Call(const string &endpoint, const string &json, bool idempotent) override;
@@ -83,8 +83,6 @@ private:
 	string server_url;
 	string prefix;
 	string token;
-	//! Whether the client accepts Arrow rather than JSON for the lists of files and rows
-	bool accept_arrow;
 	//! The context for the conversions of Arrow, which does not run queries
 	Connection arrow_connection;
 	mutex lock;

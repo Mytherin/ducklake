@@ -154,10 +154,6 @@ bool HasArrowRows(const unique_ptr<RESTInlinedRows> &rows) {
 	return rows && rows->rows.rows && rows->rows.rows->Count() > 0;
 }
 
-bool CanSendAsArrow(const unique_ptr<RESTInlinedRows> &rows) {
-	return !HasArrowRows(rows) || RESTArrow::Supports(GetTypes(*rows));
-}
-
 //! Moves the inlined rows to an Arrow stream, and leaves their columns in the JSON document
 string ExtractInlinedRows(ClientContext &context, unique_ptr<RESTInlinedRows> &rows) {
 	vector<string> names;
@@ -186,7 +182,7 @@ void ReadInlinedRows(ClientContext &context, const shared_ptr<const string> &bod
 template <>
 string DuckLakeRESTSerializer::ToResponse<RESTSelectResponse>(DuckLakeRESTRequest &request, RESTSelectResponse &value) {
 	bool has_lists = !value.files.empty() || !value.extended_files.empty() || HasArrowRows(value.inlined_data);
-	if (!request.accepts_arrow || !has_lists || !CanSendAsArrow(value.inlined_data)) {
+	if (!request.accepts_arrow || !has_lists) {
 		return ToJSON(value);
 	}
 	auto &context = *request.connection.context;
@@ -247,7 +243,7 @@ template <>
 string DuckLakeRESTSerializer::ToResponse<RESTTableChangesResponse>(DuckLakeRESTRequest &request,
                                                                     RESTTableChangesResponse &value) {
 	bool has_lists = !value.insertions.empty() || !value.deletions.empty() || HasArrowRows(value.inlined_data);
-	if (!request.accepts_arrow || !has_lists || !CanSendAsArrow(value.inlined_data)) {
+	if (!request.accepts_arrow || !has_lists) {
 		return ToJSON(value);
 	}
 	auto &context = *request.connection.context;

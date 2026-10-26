@@ -10,109 +10,18 @@
 
 namespace duckdb {
 
-//! The type that sends a type as Arrow, invalid if the type cannot be sent
-static LogicalType ToArrowType(const LogicalType &type) {
-	if (type.HasAlias()) {
-		return type.IsJSONType() ? LogicalType::VARCHAR : LogicalType::INVALID;
-	}
-	switch (type.id()) {
-	case LogicalTypeId::UUID:
-	case LogicalTypeId::HUGEINT:
-	case LogicalTypeId::UHUGEINT:
-	case LogicalTypeId::TIME_TZ:
-		return LogicalType::VARCHAR;
-	case LogicalTypeId::LIST: {
-		auto child = ToArrowType(ListType::GetChildType(type));
-		return child.id() == LogicalTypeId::INVALID ? child : LogicalType::LIST(child);
-	}
-	case LogicalTypeId::MAP: {
-		auto key = ToArrowType(MapType::KeyType(type));
-		auto value = ToArrowType(MapType::ValueType(type));
-		if (key.id() == LogicalTypeId::INVALID || value.id() == LogicalTypeId::INVALID) {
-			return LogicalType::INVALID;
-		}
-		return LogicalType::MAP(key, value);
-	}
-	case LogicalTypeId::STRUCT: {
-		child_list_t<LogicalType> children;
-		for (auto &child : StructType::GetChildTypes(type)) {
-			auto child_type = ToArrowType(child.second);
-			if (child_type.id() == LogicalTypeId::INVALID) {
-				return child_type;
-			}
-			children.emplace_back(child.first, std::move(child_type));
-		}
-		return children.empty() ? LogicalType(LogicalTypeId::INVALID) : LogicalType::STRUCT(std::move(children));
-	}
-	case LogicalTypeId::BOOLEAN:
-	case LogicalTypeId::TINYINT:
-	case LogicalTypeId::SMALLINT:
-	case LogicalTypeId::INTEGER:
-	case LogicalTypeId::BIGINT:
-	case LogicalTypeId::UTINYINT:
-	case LogicalTypeId::USMALLINT:
-	case LogicalTypeId::UINTEGER:
-	case LogicalTypeId::UBIGINT:
-	case LogicalTypeId::FLOAT:
-	case LogicalTypeId::DOUBLE:
-	case LogicalTypeId::DECIMAL:
-	case LogicalTypeId::VARCHAR:
-	case LogicalTypeId::BLOB:
-	case LogicalTypeId::DATE:
-	case LogicalTypeId::TIME:
-	case LogicalTypeId::TIME_NS:
-	case LogicalTypeId::TIMESTAMP:
-	case LogicalTypeId::TIMESTAMP_SEC:
-	case LogicalTypeId::TIMESTAMP_MS:
-	case LogicalTypeId::TIMESTAMP_NS:
-	case LogicalTypeId::TIMESTAMP_TZ:
-	case LogicalTypeId::TIMESTAMP_TZ_NS:
-	case LogicalTypeId::INTERVAL:
-	case LogicalTypeId::SQLNULL:
-		return type;
-	default:
-		return LogicalType::INVALID;
-	}
-}
-
-bool RESTArrow::Supports(const vector<LogicalType> &types) {
-	for (auto &type : types) {
-		if (ToArrowType(type).id() == LogicalTypeId::INVALID) {
-			return false;
-		}
-	}
-	return true;
-}
-
 string RESTArrow::Write(ClientContext &context, const vector<string> &names, ColumnDataCollection &rows) {
-	vector<LogicalType> arrow_types;
-	for (auto &type : rows.Types()) {
-		auto arrow_type = ToArrowType(type);
-		if (arrow_type.id() == LogicalTypeId::INVALID) {
-			throw NotImplementedException("Arrow cannot hold the type %s", type.ToString());
-		}
-		arrow_types.push_back(std::move(arrow_type));
-	}
-	ClientProperties options("UTC", ArrowOffsetSize::REGULAR, false, false, false, ArrowFormatVersion::V1_0, &context);
+	auto &arrow_types = rows.Types();
+	// types that Arrow does not have are sent as extension types
+	ClientProperties options("UTC", ArrowOffsetSize::REGULAR, false, false, true, ArrowFormatVersion::V1_0, &context);
 	ArrowSchemaWrapper schema;
 	ArrowConverter::ToArrowSchema(&schema.arrow_schema, arrow_types, names, options);
 	vector<ArrowArrayWrapper> wrappers;
 	vector<ArrowArray> batches;
-	DataChunk converted;
-	converted.Initialize(Allocator::DefaultAllocator(), arrow_types);
-	unordered_map<idx_t, const shared_ptr<ArrowTypeExtensionData>> no_extensions;
+	auto extensions = ArrowTypeExtensionData::GetExtensionTypes(context, arrow_types);
 	for (auto &chunk : rows.Chunks()) {
-		converted.Reset();
-		for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
-			if (chunk.data[col_idx].GetType() == arrow_types[col_idx]) {
-				converted.data[col_idx].Reference(chunk.data[col_idx]);
-			} else {
-				VectorOperations::Cast(context, chunk.data[col_idx], converted.data[col_idx], chunk.size());
-			}
-		}
-		converted.SetChildCardinality(chunk.size());
 		wrappers.emplace_back();
-		ArrowConverter::ToArrowArray(converted, &wrappers.back().arrow_array, options, no_extensions);
+		ArrowConverter::ToArrowArray(chunk, &wrappers.back().arrow_array, options, extensions);
 		batches.push_back(wrappers.back().arrow_array);
 	}
 	return RESTArrowIPC::Write(schema.arrow_schema, batches);

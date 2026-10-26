@@ -7,8 +7,8 @@
 
 namespace duckdb {
 
-DuckLakeRESTClient::DuckLakeRESTClient(DatabaseInstance &db, string base_url_p, string token_p, bool accept_arrow_p)
-    : base_url(std::move(base_url_p)), token(std::move(token_p)), accept_arrow(accept_arrow_p), arrow_connection(db) {
+DuckLakeRESTClient::DuckLakeRESTClient(DatabaseInstance &db, string base_url_p, string token_p)
+    : base_url(std::move(base_url_p)), token(std::move(token_p)), arrow_connection(db) {
 	StringUtil::RTrim(base_url, "/");
 	// the path of the URL is the prefix of the catalog on the server
 	auto scheme_end = base_url.find("://");
@@ -135,7 +135,7 @@ RESTHttpResponse DuckLakeRESTClient::Call(const string &endpoint, const string &
 	RESTHttpResponse result;
 	auto &response = result.body;
 	auto status = Send(route.method, target, body, idempotent, response, result.content_type,
-	                   accept_arrow ? "multipart/mixed, application/json;q=0.9" : "");
+	                   "multipart/mixed, application/json;q=0.9");
 	if (status != 200) {
 		RESTErrorResponse error;
 		try {

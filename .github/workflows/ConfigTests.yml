@@ -128,7 +128,3 @@ jobs:
     - name: Test DuckLake over REST
       run: |
         build/release/test/unittest --test-config test/configs/rest_ducklake.json "~[.]test/sql/*"
-
-    - name: Test DuckLake over REST with JSON
-      run: |
-        build/release/test/unittest --test-config test/configs/rest_ducklake_json.json "~[.]test/sql/*"
