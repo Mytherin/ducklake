@@ -4,6 +4,7 @@ $operationOutputSuffix: "Response"
 
 namespace ducklake.rest
 
+use ducklake.rest.codegen#arrowOnly
 use ducklake.rest.codegen#cppType
 use ducklake.rest.codegen#noPrefix
 
@@ -178,7 +179,8 @@ operation Select {
         /// The files of the scan, for `extended` scans.
         extended_files: FileListExtendedEntryList
 
-        /// The inlined rows of the table.
+        /// The inlined rows of the table, absent if it has no inlined data.
+        @arrowOnly("inlined_data")
         inlined_data: InlinedRows
 
         /// The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files
@@ -301,7 +303,8 @@ operation TableChanges {
         /// For `deletions`: the files with deleted rows.
         deletions: DeleteScanEntryList = []
 
-        /// The inlined rows that changed.
+        /// The inlined rows that changed, absent if the table has no inlined data.
+        @arrowOnly("inlined_data")
         inlined_data: InlinedRows
 
         /// The tokens of the other pages of the files, see `scan`.

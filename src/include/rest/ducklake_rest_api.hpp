@@ -197,6 +197,12 @@ struct RESTInsertRowsRequest;
 struct RESTInsertFilesRequest;
 struct RESTDeleteDataRequest;
 
+//! A part of an HTTP request besides its JSON document, e.g. a table as an Arrow IPC stream
+struct RESTBodyPart {
+	string name;
+	string content;
+};
+
 //! A response of a server
 struct RESTHttpResponse {
 	string body;
@@ -215,6 +221,17 @@ struct DuckLakeRESTSerializer {
 		RESTJsonWriter document;
 		document.SetRoot(Write(document.writer, value));
 		return document.ToString();
+	}
+	//! Reads the request of an endpoint from the body of an HTTP request, which is JSON unless the request has
+	//! parts besides the JSON document
+	template <class T>
+	static T ReadRequest(DuckLakeRESTRequest &request, const string &body) {
+		RESTJsonReader document(body);
+		return Read<T>(document.Root());
+	}
+	//! The parts of the HTTP request of a client besides its JSON document
+	template <class T>
+	static void AddParts(ClientContext &context, const T &value, vector<RESTBodyPart> &parts) {
 	}
 	//! The body of the response to a request: JSON, or another format that the request accepts
 	template <class T>
@@ -831,15 +848,15 @@ struct RESTResultColumn {
 	LogicalType type;
 };
 
-//! The columns and rows of a set of rows.
+//! The columns and rows of a set of rows: the table of an Arrow IPC stream.
 struct RESTRowSet {
-	//! The columns of the rows.
+	//! The columns of the rows, with the names and the types of the columns of the stream.
 	vector<RESTResultColumn> columns;
-	//! The rows, as arrays of values of the types of the columns.
+	//! The rows, which are the batches of the stream.
 	RESTRows rows;
 };
 
-//! A set of rows, e.g. the rows of an inlined data table.
+//! A set of rows, e.g. the rows of an inlined data table, as the table of an Arrow IPC stream. The columns of the table
 struct RESTInlinedRows : public RESTRowSet {};
 
 //! An option of the DuckLake.
@@ -1135,7 +1152,7 @@ struct RESTSelectResponse {
 	vector<DuckLakeFileListEntry> files;
 	//! The files of the scan, for `extended` scans.
 	vector<DuckLakeFileListExtendedEntry> extended_files;
-	//! The inlined rows of the table.
+	//! The inlined rows of the table, absent if it has no inlined data.
 	unique_ptr<RESTInlinedRows> inlined_data;
 	//! The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files
 	vector<string> page_tokens;
@@ -1167,7 +1184,7 @@ struct RESTTableChangesResponse {
 	vector<DuckLakeFileListEntry> insertions;
 	//! For `deletions`: the files with deleted rows.
 	vector<DuckLakeDeleteScanEntry> deletions;
-	//! The inlined rows that changed.
+	//! The inlined rows that changed, absent if the table has no inlined data.
 	unique_ptr<RESTInlinedRows> inlined_data;
 	//! The tokens of the other pages of the files, see `scan`.
 	vector<string> page_tokens;
@@ -1379,9 +1396,7 @@ struct RESTInsertRowsRequest : public RESTCommitRequest {
 
 	//! The table.
 	int64_t table_id = 0;
-	//! The types of the columns of the rows, in the order of the columns of the table.
-	vector<LogicalType> column_types;
-	//! The rows, as arrays of values.
+	//! The rows, as the Arrow IPC stream of a table with the columns of the table, in the part `rows.<n>` of the
 	RESTRows rows;
 	//! The row ids of the rows (for updates that keep the row ids of the updated rows).
 	vector<int64_t> row_ids;
@@ -1565,7 +1580,10 @@ public:
 	//! the endpoint has a more compact format
 	//! Rethrows the error reported by the server
 	//! Requests of idempotent endpoints can be sent again, e.g. if the connection was closed by the server
-	virtual RESTHttpResponse Call(const string &endpoint, const string &body, bool idempotent) = 0;
+	virtual RESTHttpResponse Call(const string &endpoint, const string &body, bool idempotent,
+	                              const vector<RESTBodyPart> &parts) = 0;
+	//! The context for the conversion of the tables of the requests and responses
+	virtual ClientContext &GetContext() = 0;
 };
 
 } // namespace duckdb

@@ -1,4 +1,5 @@
 #include "rest/ducklake_rest_server.hpp"
+#include "rest/ducklake_rest_arrow.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/exception.hpp"
@@ -184,8 +185,8 @@ static string ErrorBody(ExceptionType type, const string &message, int32_t statu
 
 int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, optional_ptr<const string> prefix,
                                           const vector<string> &path_values, const vector<pair<string, string>> &query,
-                                          const string &body, const string &accept, string &response,
-                                          string &content_type) {
+                                          const string &body, const string &request_content_type, const string &accept,
+                                          string &response, string &content_type) {
 	content_type = "application/json";
 	try {
 		// the catalog of a request that finds the prefix is the one that it asks for, if it asks for one
@@ -204,8 +205,16 @@ int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, optional_ptr<c
 		if (entry == endpoints.end()) {
 			throw InternalException("DuckLake REST: the endpoint \"%s\" has no handler", route.endpoint);
 		}
-		auto request_json = route.ServerRequest(path_values, query, body);
 		DuckLakeRESTRequest request(*served.db, served.catalog_name);
+		string json_body = body;
+		if (RESTMultipart::IsMultipart(request_content_type)) {
+			// the JSON document is a part of the request, the other parts are tables
+			request.request_data = make_shared_ptr<const string>(body);
+			request.request_parts = RESTMultipart::Parse(*request.request_data, request_content_type);
+			auto &json_part = RESTMultipart::Find(request.request_parts, "request");
+			json_body = request.request_data->substr(json_part.offset, json_part.size);
+		}
+		auto request_json = route.ServerRequest(path_values, query, json_body);
 		request.server = this;
 		request.prefix = served.prefix;
 		// lists are Arrow, unless the request asks for JSON only
@@ -269,9 +278,9 @@ idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_cou
 					query.emplace_back(param.first, param.second);
 				}
 				string content_type;
-				res.status =
-				    HandleRequest(route, with_prefix ? optional_ptr<const string>(&prefix) : nullptr, path_values,
-				                  query, req.body, req.get_header_value("Accept"), response, content_type);
+				res.status = HandleRequest(route, with_prefix ? optional_ptr<const string>(&prefix) : nullptr,
+				                           path_values, query, req.body, req.get_header_value("Content-Type"),
+				                           req.get_header_value("Accept"), response, content_type);
 				res.set_content(response, content_type);
 			};
 			auto pattern = route.PathPattern(with_prefix);
@@ -589,6 +598,61 @@ DuckLakeRESTRequestFunction::DuckLakeRESTRequestFunction()
                     DuckLakeRESTExecute, DuckLakeRESTRequestBind, DuckLakeRunOnceState::Init) {
 	GetSignature().WithTypedKwargs("options", [&](TypedKwargs &options) {
 		options.Add("token", LogicalType::VARCHAR).Add("accept", LogicalType::VARCHAR);
+	});
+}
+
+static unique_ptr<FunctionData> DuckLakeRESTRowsBind(ClientContext &context, TableFunctionBindInput &input,
+                                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
+	for (auto &value : input.inputs) {
+		if (value.IsNull()) {
+			throw BinderException("ducklake_rest_rows: the arguments cannot be NULL");
+		}
+	}
+	auto token = GetNamedParameter(input, "token");
+	auto part_name = GetNamedParameter(input, "part");
+	DuckLakeRESTClient client(*context.db, StringValue::Get(input.inputs[0]),
+	                          token.IsNull() ? string() : StringValue::Get(token));
+	string response;
+	string content_type;
+	auto status =
+	    client.SendRaw(StringUtil::Upper(StringValue::Get(input.inputs[1])), StringValue::Get(input.inputs[2]),
+	                   StringValue::Get(input.inputs[3]), response, content_type, "multipart/mixed");
+	if (!RESTMultipart::IsMultipart(content_type)) {
+		throw InvalidInputException("ducklake_rest_rows: the response (status %d) has no tables: %s", status,
+		                            response.substr(0, 200));
+	}
+	auto data = make_shared_ptr<const string>(std::move(response));
+	auto parts = RESTMultipart::Parse(*data, content_type);
+	auto &part = RESTMultipart::Find(parts, part_name.IsNull() ? "inlined_data" : StringValue::Get(part_name));
+	vector<string> column_names;
+	auto rows = RESTArrow::Read(context, data, part.offset, part.size, {}, column_names);
+	for (idx_t i = 0; i < column_names.size(); i++) {
+		names.emplace_back(column_names[i]);
+		return_types.push_back(rows->Types()[i]);
+	}
+	auto result = make_uniq<MetadataBindData>();
+	for (auto &chunk : rows->Chunks()) {
+		for (idx_t row_idx = 0; row_idx < chunk.size(); row_idx++) {
+			vector<Value> row;
+			for (idx_t col_idx = 0; col_idx < chunk.ColumnCount(); col_idx++) {
+				row.push_back(chunk.GetValue(col_idx, row_idx));
+			}
+			result->rows.push_back(std::move(row));
+		}
+	}
+	return std::move(result);
+}
+
+DuckLakeRESTRowsFunction::DuckLakeRESTRowsFunction()
+    : TableFunction("ducklake_rest_rows",
+                    FunctionSignature()
+                        .AddPositionalOnly("listen_uri", LogicalType::VARCHAR)
+                        .AddPositionalOnly("method", LogicalType::VARCHAR)
+                        .AddPositionalOnly("path", LogicalType::VARCHAR)
+                        .AddPositionalOnly("body", LogicalType::VARCHAR),
+                    DuckLakeRESTExecute, DuckLakeRESTRowsBind, DuckLakeRunOnceState::Init) {
+	GetSignature().WithTypedKwargs("options", [&](TypedKwargs &options) {
+		options.Add("token", LogicalType::VARCHAR).Add("part", LogicalType::VARCHAR);
 	});
 }
 

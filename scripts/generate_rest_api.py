@@ -174,6 +174,7 @@ class Field:
         self.value_field = spec.get("value_field")
         self.cpp_type = spec.get("cpp_type")
         self.row_types = spec.get("row_types")
+        self.arrow_only = spec.get("arrow_only")
         self.description = description_text(spec)
         known = {
             "name",
@@ -188,6 +189,7 @@ class Field:
             "value_field",
             "cpp_type",
             "row_types",
+            "arrow_only",
         }
         unknown = set(spec.keys()) - known
         if unknown:
@@ -206,7 +208,13 @@ class Field:
             raise SpecError(f'{owner}.{self.name}: map fields need a "key_field"')
         if self.key_field and self.type.kind != "map":
             raise SpecError(f'{owner}.{self.name}: only map fields have a "key_field"')
-        if (self.type.kind == "primitive" and self.type.name == "rows") != (
+        if (
+            self.type.kind == "primitive"
+            and self.type.name == "rows"
+            and self.arrow_only
+        ):
+            pass
+        elif (self.type.kind == "primitive" and self.type.name == "rows") != (
             self.row_types is not None
         ):
             raise SpecError(
@@ -671,6 +679,7 @@ MEMBER_TRAITS = {
     "hasMember": "has_member",
     "nullMember": "null_member",
     "rowTypes": "row_types",
+    "arrowOnly": "arrow_only",
 }
 
 
@@ -1082,6 +1091,8 @@ def topological_order(spec, objects):
 
 
 def write_field(spec, field, lines):
+    if field.arrow_only:
+        return
     member = f"value.{field.member}"
     expr = field.type
     if expr.kind == "map":
@@ -1152,6 +1163,8 @@ def row_types_code(spec, obj, field):
 
 
 def read_field(spec, obj, field, lines):
+    if field.arrow_only:
+        return
     member = f"result.{field.member}"
     expr = field.type
     required = not field.nullable and field.default is None
@@ -1277,6 +1290,14 @@ def generate_header(spec):
         if not obj.is_bound:
             lines.append(f"struct {obj.cpp_name};")
     lines.append("")
+    lines.append(
+        "//! A part of an HTTP request besides its JSON document, e.g. a table as an Arrow IPC stream"
+    )
+    lines.append("struct RESTBodyPart {")
+    lines.append("\tstring name;")
+    lines.append("\tstring content;")
+    lines.append("};")
+    lines.append("")
     lines.append("//! A response of a server")
     lines.append("struct RESTHttpResponse {")
     lines.append("\tstring body;")
@@ -1295,6 +1316,25 @@ def generate_header(spec):
     lines.append("\t\tRESTJsonWriter document;")
     lines.append("\t\tdocument.SetRoot(Write(document.writer, value));")
     lines.append("\t\treturn document.ToString();")
+    lines.append("\t}")
+    lines.append(
+        "\t//! Reads the request of an endpoint from the body of an HTTP request, which is JSON unless the request has"
+    )
+    lines.append("\t//! parts besides the JSON document")
+    lines.append("\ttemplate <class T>")
+    lines.append(
+        "\tstatic T ReadRequest(DuckLakeRESTRequest &request, const string &body) {"
+    )
+    lines.append("\t\tRESTJsonReader document(body);")
+    lines.append("\t\treturn Read<T>(document.Root());")
+    lines.append("\t}")
+    lines.append(
+        "\t//! The parts of the HTTP request of a client besides its JSON document"
+    )
+    lines.append("\ttemplate <class T>")
+    lines.append(
+        "\tstatic void AddParts(ClientContext &context, const T &value, vector<RESTBodyPart> &parts) {"
+    )
     lines.append("\t}")
     lines.append(
         "\t//! The body of the response to a request: JSON, or another format that the request accepts"
@@ -1659,8 +1699,15 @@ def generate_header(spec):
         "\t//! Requests of idempotent endpoints can be sent again, e.g. if the connection was closed by the server"
     )
     lines.append(
-        "\tvirtual RESTHttpResponse Call(const string &endpoint, const string &body, bool idempotent) = 0;"
+        "\tvirtual RESTHttpResponse Call(const string &endpoint, const string &body, bool idempotent,"
     )
+    lines.append(
+        "\t                              const vector<RESTBodyPart> &parts) = 0;"
+    )
+    lines.append(
+        "\t//! The context for the conversion of the tables of the requests and responses"
+    )
+    lines.append("\tvirtual ClientContext &GetContext() = 0;")
     lines.append("};")
     lines.append("")
     lines.append("} // namespace duckdb")
@@ -1941,9 +1988,8 @@ def generate_source(spec):
         lines.append(
             f"static string {endpoint.cpp_name}Endpoint(DuckLakeRESTRequest &request, const string &body) {{"
         )
-        lines.append("\tRESTJsonReader document(body);")
         lines.append(
-            f"\tauto parameters = DuckLakeRESTSerializer::Read<{endpoint.request.cpp_name}>(document.Root());"
+            f"\tauto parameters = DuckLakeRESTSerializer::ReadRequest<{endpoint.request.cpp_name}>(request, body);"
         )
         if endpoint.response:
             lines.append(
@@ -2018,7 +2064,11 @@ def generate_source(spec):
         )
         lines.append("\tRESTPathScope paths(GetPathMapper());")
         idempotent = "true" if endpoint.idempotent else "false"
-        post = f"Call({cpp_string(endpoint.name)}, DuckLakeRESTSerializer::ToJSON(request), {idempotent})"
+        lines.append("\tvector<RESTBodyPart> parts;")
+        lines.append(
+            "\tDuckLakeRESTSerializer::AddParts(GetContext(), request, parts);"
+        )
+        post = f"Call({cpp_string(endpoint.name)}, DuckLakeRESTSerializer::ToJSON(request), {idempotent}, parts)"
         if response:
             lines.append(f"\tauto response = {post};")
             lines.append(
@@ -2054,6 +2104,11 @@ def field_table(spec, obj, skip=()):
         if notes:
             type_doc += f' ({", ".join(notes)})'
         description = field.description
+        if field.arrow_only:
+            description = (
+                f"Sent as the Arrow IPC stream of the part `{field.arrow_only}`, see [Arrow](#arrow). "
+                + description
+            )
         if field.key_field:
             key = f"`{field.key_field}`"
             if field.value_field:

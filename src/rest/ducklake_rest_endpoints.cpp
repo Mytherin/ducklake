@@ -1254,7 +1254,7 @@ void DuckLakeRESTCommit::InsertRows(RESTInsertRowsRequest &parameters) {
 	if (parameters.rows.owned_rows) {
 		new_data->data = std::move(parameters.rows.owned_rows);
 	} else {
-		new_data->data = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), parameters.column_types);
+		new_data->data = make_uniq<ColumnDataCollection>(Allocator::DefaultAllocator(), parameters.rows.rows->Types());
 	}
 	new_data->row_ids = std::move(parameters.row_ids);
 	new_data->column_stats = std::move(parameters.column_stats);

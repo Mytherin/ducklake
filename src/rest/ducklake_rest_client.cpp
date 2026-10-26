@@ -1,4 +1,5 @@
 #include "rest/ducklake_rest_client.hpp"
+#include "rest/ducklake_rest_multipart.hpp"
 
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception.hpp"
@@ -58,7 +59,8 @@ void DuckLakeRESTClient::ReturnConnection(unique_ptr<duckdb_httplib::Client> con
 }
 
 int32_t DuckLakeRESTClient::Send(const string &method, const string &target, const string &body, bool idempotent,
-                                 string &response, string &content_type, const string &accept) {
+                                 string &response, string &content_type, const string &accept,
+                                 const string &request_content_type) {
 	duckdb_httplib::Headers headers;
 	if (!accept.empty()) {
 		headers.emplace("Accept", accept);
@@ -70,7 +72,7 @@ int32_t DuckLakeRESTClient::Send(const string &method, const string &target, con
 		bool reused;
 		auto connection = GetConnection(reused);
 		auto result = method == "GET" ? connection->Get(target, headers)
-		                              : connection->Post(target, headers, body, "application/json");
+		                              : connection->Post(target, headers, body, request_content_type);
 		if (result) {
 			ReturnConnection(std::move(connection));
 			response = std::move(result->body);
@@ -92,7 +94,7 @@ int32_t DuckLakeRESTClient::Send(const string &method, const string &target, con
 
 int32_t DuckLakeRESTClient::SendRaw(const string &method, const string &target, const string &body, string &response,
                                     string &content_type, const string &accept) {
-	return Send(method, target, body, false, response, content_type, accept);
+	return Send(method, target, body, false, response, content_type, accept, "application/json");
 }
 
 void DuckLakeRESTClient::SetPathMapping(string client_path, string server_path) {
@@ -125,7 +127,8 @@ string DuckLakeRESTClient::GetProperty(const string &name, const string &client_
 	return default_entry != defaults.end() ? default_entry->second : string();
 }
 
-RESTHttpResponse DuckLakeRESTClient::Call(const string &endpoint, const string &json, bool idempotent) {
+RESTHttpResponse DuckLakeRESTClient::Call(const string &endpoint, const string &json, bool idempotent,
+                                          const vector<RESTBodyPart> &parts) {
 	auto &route = DuckLakeRESTAPI::GetRoute(endpoint);
 	if (!endpoints.empty() && endpoints.find(route.method + " " + route.path) == endpoints.end()) {
 		throw NotImplementedException("The DuckLake REST server does not support \"%s %s\"", route.method, route.path);
@@ -134,8 +137,18 @@ RESTHttpResponse DuckLakeRESTClient::Call(const string &endpoint, const string &
 	auto target = route.ClientTarget(json, prefix, body);
 	RESTHttpResponse result;
 	auto &response = result.body;
+	string request_content_type = "application/json";
+	if (!parts.empty()) {
+		// the tables of the request are parts besides its JSON document
+		RESTMultipartWriter multipart;
+		multipart.AddPart("request", "application/json", body);
+		for (auto &part : parts) {
+			multipart.AddPart(part.name, REST_ARROW_STREAM, part.content);
+		}
+		body = multipart.Finish(request_content_type);
+	}
 	auto status = Send(route.method, target, body, idempotent, response, result.content_type,
-	                   "multipart/mixed, application/json;q=0.9");
+	                   "multipart/mixed, application/json;q=0.9", request_content_type);
 	if (status != 200) {
 		RESTErrorResponse error;
 		try {

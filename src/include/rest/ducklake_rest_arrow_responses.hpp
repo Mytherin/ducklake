@@ -24,4 +24,14 @@ string DuckLakeRESTSerializer::ToResponse<RESTTableChangesResponse>(DuckLakeREST
 template <>
 RESTTableChangesResponse DuckLakeRESTSerializer::ReadResponse<RESTTableChangesResponse>(RESTHttpResponse &response);
 
+//! The requests with tables: the JSON document of the commit of a transaction and the rows to insert as parts of a
+//! multipart request
+template <>
+void DuckLakeRESTSerializer::AddParts<RESTCommitTransactionRequest>(ClientContext &context,
+                                                                    const RESTCommitTransactionRequest &value,
+                                                                    vector<RESTBodyPart> &parts);
+template <>
+RESTCommitTransactionRequest
+DuckLakeRESTSerializer::ReadRequest<RESTCommitTransactionRequest>(DuckLakeRESTRequest &request, const string &body);
+
 } // namespace duckdb

@@ -13,6 +13,7 @@
 #include "duckdb/main/connection.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "rest/ducklake_rest_api.hpp"
+#include "rest/ducklake_rest_multipart.hpp"
 
 #include <chrono>
 #include <thread>
@@ -47,6 +48,9 @@ public:
 	string prefix;
 	//! Whether the lists of the response are Arrow IPC streams in a multipart response, rather than JSON
 	bool accepts_arrow = false;
+	//! The parts of the request that are tables, if it is a multipart request, and the data they are regions of
+	vector<RESTMultipartPart> request_parts;
+	shared_ptr<const string> request_data;
 	//! The content type of the response, set by the endpoint if it is not JSON
 	string content_type = "application/json";
 };
@@ -136,8 +140,9 @@ public:
 	//! Handles a request for an endpoint of a catalog, returns the HTTP status code. The prefix is only set for URLs
 	//! with a prefix
 	int32_t HandleRequest(const RESTRoute &route, optional_ptr<const string> prefix, const vector<string> &path_values,
-	                      const vector<pair<string, string>> &query, const string &body, const string &accept,
-	                      string &response, string &content_type);
+	                      const vector<pair<string, string>> &query, const string &body,
+	                      const string &request_content_type, const string &accept, string &response,
+	                      string &content_type);
 
 private:
 	struct ServedCatalog {
@@ -181,6 +186,11 @@ private:
 
 struct DuckLakeRESTServeFunction : public TableFunction {
 	DuckLakeRESTServeFunction();
+};
+
+//! Sends a request to a DuckLake REST server and returns the rows of a table in its response
+struct DuckLakeRESTRowsFunction : public TableFunction {
+	DuckLakeRESTRowsFunction();
 };
 
 struct DuckLakeRESTStopFunction : public TableFunction {

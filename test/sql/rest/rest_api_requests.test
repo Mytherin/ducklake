@@ -13,24 +13,25 @@ SELECT response->>'$.entry_ids[0].id' FROM ducklake_rest_request('{rest_server}'
 ----
 1
 
-query I
-SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"insert_rows": {"table_id": 1, "column_types": [{"id": "int32"}, {"id": "varchar"}], "rows": [[1, "one"], [2, null]], "column_stats": []}}]}')
-----
-200
+statement ok
+ATTACH 'ducklake:rest:{rest_server}' AS dl
+
+# the rows to insert are Arrow tables in parts of the request: the client sends them
+statement ok
+INSERT INTO dl.t VALUES (1, 'one'), (2, NULL)
 
 # several requests in one transaction, the created table is referred to with a placeholder
 query II
 SELECT response->>'$.snapshot_id', response->>'$.entry_ids[0].placeholder_id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
 '{"requests": [
   {"create_table": {"placeholder_id": -1, "schema_id": 0, "table_name": "t2", "columns": [{"column_name": "j", "column_type": {"id": "int64"}, "default": "42"}]}},
-  {"insert_rows": {"table_id": -1, "column_types": [{"id": "int64"}], "rows": [[100]], "column_stats": []}}
+  {"alter": {"entry_id": -1, "alter": {"set_comment": {"entry_type": "TABLE_ENTRY", "comment": "created and altered"}}}}
 ]}')
 ----
 3	-1
 
 statement ok
-ATTACH 'ducklake:rest:{rest_server}' AS dl
+INSERT INTO dl.t2 VALUES (100)
 
 query II
 FROM dl.t ORDER BY i
@@ -43,17 +44,23 @@ FROM dl.t2
 ----
 100
 
-# the scan plan returns the inlined rows of the table
-query III
-SELECT status, json_array_length(response->'$.inlined_data.rows'), response->>'$.inlined_data.columns[3].name'
-FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{}')
+# insert_rows requests need their rows in a part of the request
+query II
+SELECT status, response->>'$.error.message' LIKE '%has no part "rows.0"%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
+'{"requests": [{"insert_rows": {"table_id": 1, "column_stats": []}}]}')
 ----
-200	2	i
+400	true
+
+# the scan plan returns the inlined rows of the table
+query II
+SELECT count(*), list(i ORDER BY i) FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan', '{}')
+----
+2	[1, 2]
 
 query I
 SELECT response->>'$.snapshot.snapshot_id' FROM ducklake_rest_request('{rest_server}', 'GET', '/v1/snapshots/latest', '')
 ----
-3
+4
 
 # the snapshot of an AT clause
 query II
@@ -147,41 +154,41 @@ SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transacti
 
 # the client can ask for the columns it reads, by field id
 query I
-SELECT json_array_length(response->'$.inlined_data.columns') FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan',
-'{}')
+SELECT count(*) FROM (DESCRIBE SELECT * FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan', '{}'))
 ----
 5
 
 query II
-SELECT json_array_length(response->'$.inlined_data.columns'), response->>'$.inlined_data.columns[3].name'
-FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": [{"field_id": 1}]}')
+SELECT count(*), max(column_name) FILTER (WHERE column_name = 'i') FROM (DESCRIBE SELECT * FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": [{"field_id": 1}]}'))
 ----
 4	i
 
 query II
-SELECT json_array_length(response->'$.inlined_data.columns'), json_array_length(response->'$.inlined_data.rows[0]')
-FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": [{"field_id": 2}, {"field_id": 1000}]}')
+SELECT (SELECT count(*) FROM (DESCRIBE SELECT * FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": [{"field_id": 2}, {"field_id": 1000}]}'))),
+       (SELECT count(*) FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": [{"field_id": 2}, {"field_id": 1000}]}'))
 ----
-4	4
+4	2
 
 # no columns: only the row id and the snapshots
 query II
-SELECT json_array_length(response->'$.inlined_data.columns'), json_array_length(response->'$.inlined_data.rows')
-FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": []}')
+SELECT (SELECT count(*) FROM (DESCRIBE SELECT * FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": []}'))),
+       (SELECT count(*) FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan', '{"columns": []}'))
 ----
 3	2
 
 # the inlined rows that changed come with the change feed
 query II
-SELECT json_array_length(response->'$.inlined_data.rows'), response->>'$.inlined_data.columns[0].name' LIKE '%row_id'
-FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/changes',
-'{"start_snapshot_id": 0, "changes": "insertions"}')
+SELECT count(*), min(column_name) FROM (DESCRIBE SELECT * FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/changes', '{"start_snapshot_id": 0, "changes": "insertions"}')) WHERE column_name LIKE '%row_id'
 ----
-2	true
+1	_ducklake_row_id
 
 query I
-SELECT json_array_length(response->'$.inlined_data.rows') FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/changes',
-'{"start_snapshot_id": 0, "changes": "deletions"}')
+SELECT count(*) FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/changes', '{"start_snapshot_id": 0, "changes": "insertions"}')
+----
+2
+
+query I
+SELECT count(*) FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/changes', '{"start_snapshot_id": 0, "changes": "deletions"}')
 ----
 0
 

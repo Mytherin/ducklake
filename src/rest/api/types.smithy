@@ -4,6 +4,7 @@ $operationOutputSuffix: "Response"
 
 namespace ducklake.rest
 
+use ducklake.rest.codegen#arrowOnly
 use ducklake.rest.codegen#cppClass
 use ducklake.rest.codegen#cppMap
 use ducklake.rest.codegen#cppMember
@@ -12,7 +13,6 @@ use ducklake.rest.codegen#customSerialization
 use ducklake.rest.codegen#hasMember
 use ducklake.rest.codegen#nullIf
 use ducklake.rest.codegen#nullMember
-use ducklake.rest.codegen#rowTypes
 
 /// A snapshot of the DuckLake, which identifies the state of the catalog to read.
 @cppClass("DuckLakeSnapshot")
@@ -1037,25 +1037,22 @@ structure ResultColumn {
     type: LogicalType
 }
 
-/// The columns and rows of a set of rows.
+/// The columns and rows of a set of rows: the table of an Arrow IPC stream.
 @mixin
 structure RowSet {
-    /// The columns of the rows.
+    /// The columns of the rows, with the names and the types of the columns of the stream.
     @required
+    @arrowOnly("columns")
     columns: ResultColumnList
 
-    /// The rows, as arrays of values of the types of the columns.
+    /// The rows, which are the batches of the stream.
     @required
-    @rowTypes("columns.type")
+    @arrowOnly("rows")
     rows: Rows
 }
 
-/// A set of rows, e.g. the rows of an inlined data table.
-///
-/// ```json
-/// {"columns": [{"name": "row_id", "type": {"id": "int64"}}, {"name": "i", "type": {"id": "int32"}}],
-///  "rows": [[0, 1], [1, 2]]}
-/// ```
+/// A set of rows, e.g. the rows of an inlined data table, as the table of an Arrow IPC stream. The columns of the table
+/// are the row id, the begin and the end snapshot of the rows, and the columns of the table.
 structure InlinedRows with [RowSet] {}
 
 /// A column that a request reads, as the field id of a top-level column, or of a field of a struct.

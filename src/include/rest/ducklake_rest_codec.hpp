@@ -285,11 +285,6 @@ struct RESTJsonCodec : public RESTCodec<RESTJsonCodec> {
 };
 
 //! Rows as arrays of values, whose types are given by another field
-struct RESTRowsCodec {
-	static JSONMutableValue Write(JSONWriter &writer, const RESTRows &value);
-	static void Read(RESTJsonIn in, RESTRows &result, const vector<LogicalType> &types);
-};
-
 template <class CODEC>
 struct RESTListCodec : public RESTCodec<RESTListCodec<CODEC>> {
 	template <class T>

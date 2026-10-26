@@ -10,7 +10,7 @@
 
 namespace duckdb {
 
-string RESTArrow::Write(ClientContext &context, const vector<string> &names, ColumnDataCollection &rows) {
+string RESTArrow::Write(ClientContext &context, const vector<string> &names, const ColumnDataCollection &rows) {
 	auto &arrow_types = rows.Types();
 	// types that Arrow does not have are sent as extension types
 	ClientProperties options("UTC", ArrowOffsetSize::REGULAR, false, false, true, ArrowFormatVersion::V1_0, &context);

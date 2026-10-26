@@ -1002,7 +1002,6 @@ void RESTMetadataManager::AddInserts(const TransactionChangeInformation &transac
 			auto &inlined_data = *changes.new_inlined_data;
 			auto &request = AddRequest<RESTInsertRowsRequest>(requests);
 			request.table_id = table_id;
-			request.column_types = inlined_data.data->Types();
 			request.rows = RESTRows(*inlined_data.data);
 			if (inlined_data.HasPreservedRowIds()) {
 				request.row_ids = inlined_data.row_ids;

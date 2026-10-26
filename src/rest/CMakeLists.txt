@@ -11,6 +11,7 @@ add_library(
   ducklake_rest_endpoints.cpp
   ducklake_rest_filters.cpp
   ducklake_rest_json.cpp
+  ducklake_rest_multipart.cpp
   ducklake_rest_route.cpp
   ducklake_rest_serialization.cpp
   ducklake_rest_server.cpp)

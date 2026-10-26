@@ -28,7 +28,11 @@ public:
 	DuckLakeRESTClient(DatabaseInstance &db, string base_url, string token);
 	~DuckLakeRESTClient() override;
 
-	RESTHttpResponse Call(const string &endpoint, const string &json, bool idempotent) override;
+	RESTHttpResponse Call(const string &endpoint, const string &json, bool idempotent,
+	                      const vector<RESTBodyPart> &parts) override;
+	ClientContext &GetContext() override {
+		return *arrow_connection.context;
+	}
 
 	//! Asks the server how to connect to a catalog: the properties of the server are merged with the properties of the
 	//! client, which finds the prefix of the catalog. The catalog is the one the URL names, if the name is empty
@@ -70,7 +74,7 @@ private:
 	void ReturnConnection(unique_ptr<duckdb_httplib::Client> connection);
 	//! Sends a request, returns the status code and the body of the response
 	int32_t Send(const string &method, const string &target, const string &body, bool idempotent, string &response,
-	             string &content_type, const string &accept);
+	             string &content_type, const string &accept, const string &request_content_type);
 
 private:
 	unique_ptr<RESTPathMapper> path_mapper;

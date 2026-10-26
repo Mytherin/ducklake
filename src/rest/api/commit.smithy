@@ -4,9 +4,9 @@ $operationOutputSuffix: "Response"
 
 namespace ducklake.rest
 
+use ducklake.rest.codegen#arrowOnly
 use ducklake.rest.codegen#cppMap
 use ducklake.rest.codegen#cppType
-use ducklake.rest.codegen#rowTypes
 
 /// Commits a set of changes atomically.
 ///
@@ -223,13 +223,10 @@ structure InsertRowsRequest {
     @required
     table_id: Long
 
-    /// The types of the columns of the rows, in the order of the columns of the table.
+    /// The rows, as the Arrow IPC stream of a table with the columns of the table, in the part `rows.<n>` of the
+    /// message, where `<n>` is the position of the request in `requests`.
     @required
-    column_types: LogicalTypeList
-
-    /// The rows, as arrays of values.
-    @required
-    @rowTypes("column_types")
+    @arrowOnly("rows.<n>")
     rows: Rows
 
     /// The row ids of the rows (for updates that keep the row ids of the updated rows).

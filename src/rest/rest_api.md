@@ -136,29 +136,39 @@ Values without a known type (e.g. tags) are `null`, a JSON string for `varchar` 
 
 ### Arrow
 
-The lists of files and rows are the bulk of the data that the API sends, and they are Arrow rather than JSON. The
-responses of `scan` and `changes` that have files or inlined rows are `multipart/mixed` responses:
+Rows are never JSON: the rows of tables (the inlined rows of a scan or of the changes of a table, and the rows to insert
+in a commit) and the lists of files are the bulk of the data that the API sends, and they are Arrow. A message with
+tables is a `multipart/mixed` message, in a response or in a request:
 
-- the part `response` is the JSON document of the response without the lists: `files`, `extended_files`, `insertions`
-  and `deletions` are empty, and `inlined_data` has its `columns` but no `rows`.
-- the part of each list that is not empty is named after the member (`files`, `extended_files`, `insertions`,
-  `deletions`, `inlined_data`), and is an [Arrow IPC stream](https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format)
-  (`application/vnd.apache.arrow.stream`) of the table described below.
+- the first part is the JSON document of the message. In a response it is named `response`, and its lists of files
+  (`files`, `extended_files`, `insertions` and `deletions`) are empty. In a request it is named `request`.
+- the other parts are the tables, each an [Arrow IPC stream](https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format)
+  (`application/vnd.apache.arrow.stream`). The parts of a response are named after the member of the response: `files`,
+  `extended_files`, `insertions`, `deletions`, and `inlined_data` for the inlined rows. The rows of an `insert_rows`
+  request of a commit are the part `rows.<n>`, where `<n>` is the position of the request in `requests`.
 
-Clients read these responses, and do not read lists in JSON. Responses without lists (e.g. only `aggregate_results` or
-`page_tokens`) are JSON. A request that only accepts JSON (`Accept: application/json`) gets the lists in JSON, which is
-meant for exploring the API.
+Responses without tables (e.g. only `aggregate_results` or `page_tokens`) are JSON. A request that only accepts JSON
+(`Accept: application/json`) gets the lists of files in JSON, and no inlined rows, which is meant for exploring the API.
+`ducklake_rest_rows(listen_uri, method, path, body, part := 'inlined_data')` sends a request and returns the rows of one
+part of the response:
 
-The tables have one row per entry of the list, and a column for each member of the entry, with the name of the member.
-Members that have their default value are `NULL`, and the members of a file (`file`, `delete_file`,
+```sql
+SELECT * FROM ducklake_rest_rows('http://localhost:8181', 'POST', '/v1/tables/1/scan', '{}');
+SELECT * FROM ducklake_rest_rows('http://localhost:8181', 'POST', '/v1/tables/1/scan', '{}', part := 'files');
+```
+
+The tables of files have one row per entry of the list, and a column for each member of the entry, with the name of the
+member. Members that have their default value are `NULL`, and the members of a file (`file`, `delete_file`,
 `previous_delete_file`) are structs with the members `path`, `encryption_key`, `file_size_bytes`, `footer_size` and
 `format`. `column_min_max` is a list of structs with the members `column_id`, `min`, `max` and `contains_nan`, and
 `inlined_file_deletions` of a deletion is a list of structs with the members `row_id` and `snapshot_id`. Lists that are
 empty are `NULL`.
 
-The table of `inlined_data` has the columns of `inlined_data.columns`, with the Arrow types of their DuckLake types.
-Types that Arrow does not have are [extension types](https://arrow.apache.org/docs/format/Columnar.html#extension-types)
-of the Arrow implementation of DuckDB (e.g. `uuid`, `int128`, `timetz`, `geometry`, `variant`).
+The table of `inlined_data` has the row id, the begin and the end snapshot of the rows, and the columns of the table,
+with the Arrow types of their DuckLake types. Types that Arrow does not have are
+[extension types](https://arrow.apache.org/docs/format/Columnar.html#extension-types) of the Arrow implementation of
+DuckDB (e.g. `uuid`, `int128`, `timetz`, `geometry`, `variant`). The table is part of the response if the table has
+inlined data, also if it has no rows. The table of an `insert_rows` request has the columns of the table.
 
 ## Specification
 
@@ -358,7 +368,7 @@ Response:
 |-------|------|-------------|
 | `files` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of the scan. |
 | `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of the scan, for `extended` scans. |
-| `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows of the table. |
+| `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | Sent as the Arrow IPC stream of the part `inlined_data`, see [Arrow](#arrow). The inlined rows of the table, absent if it has no inlined data. |
 | `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files of the response and the files of all its pages. |
 | `aggregate_results` | list of [`AggregateResult`](#aggregateresult) (default `[]`) | The results of the `aggregates` of the request, in their order. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
@@ -401,7 +411,7 @@ Response:
 |-------|------|-------------|
 | `insertions` | list of [`FileListEntry`](#filelistentry) (default `[]`) | For `insertions`: the files with inserted rows. |
 | `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | For `deletions`: the files with deleted rows. |
-| `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | The inlined rows that changed. |
+| `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | Sent as the Arrow IPC stream of the part `inlined_data`, see [Arrow](#arrow). The inlined rows that changed, absent if the table has no inlined data. |
 | `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files, see `scan`. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
 
@@ -637,8 +647,7 @@ Request:
 | Field | Type | Description |
 |-------|------|-------------|
 | `table_id` | `int64` | The table. |
-| `column_types` | list of `logical_type` | The types of the columns of the rows, in the order of the columns of the table. |
-| `rows` | `rows` | The rows, as arrays of values. |
+| `rows` | `rows` | Sent as the Arrow IPC stream of the part `rows.<n>`, see [Arrow](#arrow). The rows, as the Arrow IPC stream of a table with the columns of the table, in the part `rows.<n>` of the message, where `<n>` is the position of the request in `requests`. |
 | `row_ids` | list of `int64` (default `[]`) | The row ids of the rows (for updates that keep the row ids of the updated rows). |
 | `column_stats` | list of [`ColumnStats`](#columnstats) (default `[]`) | Each entry has an additional field `column_id`. The statistics of the rows per column. |
 
@@ -1178,12 +1187,8 @@ A deletion of a row of a data file that is inlined in the catalog.
 
 ### `InlinedRows`
 
-A set of rows, e.g. the rows of an inlined data table.
-
-```json
-{"columns": [{"name": "row_id", "type": {"id": "int64"}}, {"name": "i", "type": {"id": "int32"}}],
- "rows": [[0, 1], [1, 2]]}
-```
+A set of rows, e.g. the rows of an inlined data table, as the table of an Arrow IPC stream. The columns of the table
+are the row id, the begin and the end snapshot of the rows, and the columns of the table.
 
 Has the fields of [`RowSet`](#rowset).
 
@@ -1380,12 +1385,12 @@ How a commit is retried on conflicts.
 
 ### `RowSet`
 
-The columns and rows of a set of rows.
+The columns and rows of a set of rows: the table of an Arrow IPC stream.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `columns` | list of [`ResultColumn`](#resultcolumn) | The columns of the rows. |
-| `rows` | `rows` | The rows, as arrays of values of the types of the columns. |
+| `columns` | list of [`ResultColumn`](#resultcolumn) | Sent as the Arrow IPC stream of the part `columns`, see [Arrow](#arrow). The columns of the rows, with the names and the types of the columns of the stream. |
+| `rows` | `rows` | Sent as the Arrow IPC stream of the part `rows`, see [Arrow](#arrow). The rows, which are the batches of the stream. |
 
 ### `ScanFilters`
 

@@ -55,6 +55,11 @@ structure noPrefix {}
 @trait(selector: "structure")
 structure customSerialization {}
 
+/// The member is not part of the JSON document: it is sent as an Arrow IPC stream in a part of a multipart message that
+/// has the name.
+@trait(selector: "member")
+string arrowOnly
+
 /// The member of the structure that holds the types of the columns of `rows` - a list of types, or a member of a list
 /// of structures (e.g. `columns.type`).
 @trait(selector: "member")
