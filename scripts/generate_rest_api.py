@@ -2095,7 +2095,7 @@ def field_table(spec, obj, skip=()):
         return ["No fields."]
     lines = ["| Field | Type | Description |", "|-------|------|-------------|"]
     for field in fields:
-        type_doc = spec.doc_type(field.type)
+        type_doc = "Arrow table" if field.arrow_only else spec.doc_type(field.type)
         notes = []
         if field.nullable:
             notes.append("optional")
@@ -2126,7 +2126,43 @@ def field_table(spec, obj, skip=()):
     return lines
 
 
+def named_types(expr):
+    """The names of the types that a type refers to"""
+    result = set()
+    if expr.kind == "named":
+        result.add(expr.name)
+    for arg in expr.args:
+        result |= named_types(arg)
+    return result
+
+
+def arrow_only_types(spec):
+    """The types that are only members of Arrow tables, which are not part of any JSON document"""
+    objects = {obj.name: obj for obj in spec.all_objects()}
+    hidden = {
+        name
+        for name, obj in objects.items()
+        if spec.fields_of(obj) and all(f.arrow_only for f in spec.fields_of(obj))
+    }
+    shown = set()
+    for name, obj in objects.items():
+        if name not in hidden:
+            for field in spec.fields_of(obj):
+                if not field.arrow_only:
+                    shown |= named_types(field.type)
+    # types that only the types of Arrow tables refer to
+    for name in list(hidden):
+        for field in spec.fields_of(objects[name]):
+            hidden |= {n for n in named_types(field.type) if n not in shown}
+    for name, obj in objects.items():
+        for field in spec.fields_of(obj):
+            if field.arrow_only and name not in hidden:
+                hidden |= {n for n in named_types(field.type) if n not in shown}
+    return hidden
+
+
 def generate_docs(spec):
+    hidden = arrow_only_types(spec)
     lines = [DOCS_BEGIN, ""]
     for section in spec.sections:
         lines.append(f"## {section.title}")
@@ -2205,6 +2241,8 @@ def generate_docs(spec):
                 )
             lines.append("")
         for entry in section.types:
+            if entry.name in hidden:
+                continue
             lines.append(f"### `{entry.name}`")
             lines.append("")
             if entry.description:

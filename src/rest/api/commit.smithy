@@ -223,8 +223,7 @@ structure InsertRowsRequest {
     @required
     table_id: Long
 
-    /// The rows, as the Arrow IPC stream of a table with the columns of the table, in the part `rows.<n>` of the
-    /// message, where `<n>` is the position of the request in `requests`.
+    /// The rows to insert: a table with the columns of the table. `<n>` is the position of the request in `requests`.
     @required
     @arrowOnly("rows.<n>")
     rows: Rows

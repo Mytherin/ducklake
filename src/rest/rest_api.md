@@ -116,7 +116,9 @@ Types are structured JSON objects. `id` is the name of the type in the
 
 ### Values
 
-Values whose type is known from the context (e.g. the rows of a table) are encoded as follows:
+Values have no type that is known from the context (e.g. tags, defaults of columns and the results of aggregates):
+a value is `null`, a JSON string for `varchar` values, or an object `{"type": <type>, "value": <value>}`. The `value` of
+a type is encoded as follows:
 
 | Type                             | Encoding                                                        |
 |----------------------------------|-----------------------------------------------------------------|
@@ -128,11 +130,8 @@ Values whose type is known from the context (e.g. the rows of a table) are encod
 | `list`                           | JSON array                                                      |
 | `map`                            | JSON array of `{"key": ..., "value": ...}` objects              |
 | `interval`                       | `{"months": 1, "days": 2, "micros": 3}`                         |
-| `variant`                        | the value the variant holds, as a value without a known type (see below) |
+| `variant`                        | the value the variant holds, as a value (see above) |
 | everything else                  | the string representation of the value, e.g. `"2025-01-01"`    |
-
-Values without a known type (e.g. tags) are `null`, a JSON string for `varchar` values, or an object
-`{"type": <type>, "value": <value>}`.
 
 ### Arrow
 
@@ -195,7 +194,6 @@ bind shapes to the C++ classes of DuckLake; they do not change the JSON of the A
 | `timestamp`    | `Timestamp`      | a timestamp with time zone as a string, e.g. `"2025-01-01 00:00:00+00"`      |
 | `value`        | `Value`          | a [value without a known type](#values)                                      |
 | `logical_type` | `LogicalType`    | a [type](#types)                                                             |
-| `rows`         | `Rows`           | an array of rows, each an array of [values](#values) of the types of the columns |
 | `json`         | `Document`       | any JSON value, specified by the description                                 |
 | `list of T`    | `list`           | an array                                                                     |
 | `object of T`  | `map`            | an object with arbitrary keys                                                |
@@ -368,7 +366,7 @@ Response:
 |-------|------|-------------|
 | `files` | list of [`FileListEntry`](#filelistentry) (default `[]`) | The files of the scan. |
 | `extended_files` | list of [`FileListExtendedEntry`](#filelistextendedentry) (optional) | The files of the scan, for `extended` scans. |
-| `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | Sent as the Arrow IPC stream of the part `inlined_data`, see [Arrow](#arrow). The inlined rows of the table, absent if it has no inlined data. |
+| `inlined_data` | Arrow table (optional) | Sent as the Arrow IPC stream of the part `inlined_data`, see [Arrow](#arrow). The inlined rows of the table, absent if it has no inlined data. |
 | `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files of the scan, if there are many. The files of the scan are the files of the response and the files of all its pages. |
 | `aggregate_results` | list of [`AggregateResult`](#aggregateresult) (default `[]`) | The results of the `aggregates` of the request, in their order. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
@@ -411,7 +409,7 @@ Response:
 |-------|------|-------------|
 | `insertions` | list of [`FileListEntry`](#filelistentry) (default `[]`) | For `insertions`: the files with inserted rows. |
 | `deletions` | list of [`DeleteScanEntry`](#deletescanentry) (default `[]`) | For `deletions`: the files with deleted rows. |
-| `inlined_data` | [`InlinedRows`](#inlinedrows) (optional) | Sent as the Arrow IPC stream of the part `inlined_data`, see [Arrow](#arrow). The inlined rows that changed, absent if the table has no inlined data. |
+| `inlined_data` | Arrow table (optional) | Sent as the Arrow IPC stream of the part `inlined_data`, see [Arrow](#arrow). The inlined rows that changed, absent if the table has no inlined data. |
 | `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files, see `scan`. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
 
@@ -647,7 +645,7 @@ Request:
 | Field | Type | Description |
 |-------|------|-------------|
 | `table_id` | `int64` | The table. |
-| `rows` | `rows` | Sent as the Arrow IPC stream of the part `rows.<n>`, see [Arrow](#arrow). The rows, as the Arrow IPC stream of a table with the columns of the table, in the part `rows.<n>` of the message, where `<n>` is the position of the request in `requests`. |
+| `rows` | Arrow table | Sent as the Arrow IPC stream of the part `rows.<n>`, see [Arrow](#arrow). The rows to insert: a table with the columns of the table. `<n>` is the position of the request in `requests`. |
 | `row_ids` | list of `int64` (default `[]`) | The row ids of the rows (for updates that keep the row ids of the updated rows). |
 | `column_stats` | list of [`ColumnStats`](#columnstats) (default `[]`) | Each entry has an additional field `column_id`. The statistics of the rows per column. |
 
@@ -1185,13 +1183,6 @@ A deletion of a row of a data file that is inlined in the catalog.
 | `delete_file` | [`FileData`](#filedata) (optional) | The current delete file. |
 | `delete_file_begin_snapshot` | `uint64` (default `0`) | The snapshot that added the current delete file. |
 
-### `InlinedRows`
-
-A set of rows, e.g. the rows of an inlined data table, as the table of an Arrow IPC stream. The columns of the table
-are the row id, the begin and the end snapshot of the rows, and the columns of the table.
-
-Has the fields of [`RowSet`](#rowset).
-
 ### `MacroImplementation`
 
 An implementation (overload) of a macro.
@@ -1364,15 +1355,6 @@ The partitioning of a table.
 |-------|------|-------------|
 | `options` | list of `string` (default `[]`) | The options to reset. |
 
-### `ResultColumn`
-
-A column of a set of rows.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | `string` | The name of the column. |
-| `type` | `logical_type` | The type of the column. |
-
 ### `RetryConfig`
 
 How a commit is retried on conflicts.
@@ -1382,15 +1364,6 @@ How a commit is retried on conflicts.
 | `max_retry_count` | `uint64` | The number of retries. |
 | `retry_wait_ms` | `uint64` | The wait before the first retry. |
 | `retry_backoff` | `double` | The factor the wait grows with on every retry. |
-
-### `RowSet`
-
-The columns and rows of a set of rows: the table of an Arrow IPC stream.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `columns` | list of [`ResultColumn`](#resultcolumn) | Sent as the Arrow IPC stream of the part `columns`, see [Arrow](#arrow). The columns of the rows, with the names and the types of the columns of the stream. |
-| `rows` | `rows` | Sent as the Arrow IPC stream of the part `rows`, see [Arrow](#arrow). The rows, which are the batches of the stream. |
 
 ### `ScanFilters`
 

@@ -1396,7 +1396,7 @@ struct RESTInsertRowsRequest : public RESTCommitRequest {
 
 	//! The table.
 	int64_t table_id = 0;
-	//! The rows, as the Arrow IPC stream of a table with the columns of the table, in the part `rows.<n>` of the
+	//! The rows to insert: a table with the columns of the table. `<n>` is the position of the request in `requests`.
 	RESTRows rows;
 	//! The row ids of the rows (for updates that keep the row ids of the updated rows).
 	vector<int64_t> row_ids;
