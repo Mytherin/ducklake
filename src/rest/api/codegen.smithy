@@ -70,7 +70,7 @@ string rowTypes
 enum wireType {
     UINT64 = "uint64"
     TIMESTAMP = "timestamp"
-    VALUE = "value"
+    TEXT = "text"
     LOGICAL_TYPE = "logical_type"
     ROWS = "rows"
     PATH = "path"

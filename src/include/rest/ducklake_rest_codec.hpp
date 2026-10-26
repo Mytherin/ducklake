@@ -256,13 +256,14 @@ struct RESTTimestampCodec : public RESTCodec<RESTTimestampCodec> {
 	static void Read(RESTJsonIn in, string &result);
 };
 
-//! Values without a known type
-struct RESTValueCodec : public RESTCodec<RESTValueCodec> {
+//! Values as text, which are strings (VARCHAR values) in the API
+struct RESTTextCodec : public RESTCodec<RESTTextCodec> {
 	static JSONMutableValue Write(JSONWriter &writer, const Value &value) {
-		return RESTJson::ValueToJson(writer, value);
+		return writer.CreateString(value.type().id() == LogicalTypeId::VARCHAR ? StringValue::Get(value)
+		                                                                       : value.ToString());
 	}
 	static void Read(RESTJsonIn in, Value &result) {
-		result = RESTJson::ValueFromJson(in);
+		result = Value(in.Str());
 	}
 };
 

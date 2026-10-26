@@ -172,45 +172,9 @@ optional_idx RESTJsonIn::Opt(const string &key) const {
 	return entry.IsNull() ? optional_idx() : optional_idx(entry.UInt());
 }
 
-Value RESTJsonIn::GetValue(const string &key) const {
-	return RESTJson::ValueFromJson(TryGet(key));
-}
-
 //===--------------------------------------------------------------------===//
 // Values and types
 //===--------------------------------------------------------------------===//
-JSONMutableValue RESTJson::ValueToJson(JSONWriter &writer, const Value &value) {
-	if (value.IsNull()) {
-		return writer.CreateNull();
-	}
-	if (value.type().id() == LogicalTypeId::VARCHAR) {
-		return writer.CreateString(StringValue::Get(value));
-	}
-	auto result = writer.CreateObject();
-	result.Add("type", TypeToJson(writer, value.type()));
-	result.Add("value", TypedValueToJson(writer, value));
-	return result;
-}
-
-Value RESTJson::ValueFromJson(RESTJsonIn json) {
-	if (json.IsNull()) {
-		return Value();
-	}
-	switch (json.val.GetType()) {
-	case JSONValueType::STRING:
-		return Value(json.Str());
-	case JSONValueType::OBJECT:
-		return TypedValueFromJson(json.Get("value"), TypeFromJson(json.Get("type")));
-	case JSONValueType::BOOLEAN:
-		return Value::BOOLEAN(json.Bool());
-	case JSONValueType::SIGNED_INTEGER:
-	case JSONValueType::UNSIGNED_INTEGER:
-		return Value::BIGINT(json.Int());
-	default:
-		return Value::DOUBLE(json.Double());
-	}
-}
-
 JSONMutableValue RESTJson::TypeToJson(JSONWriter &writer, const LogicalType &type) {
 	auto result = writer.CreateObject();
 	// arrays are stored as lists
@@ -277,86 +241,6 @@ LogicalType RESTJson::TypeFromJson(RESTJsonIn json) {
 	}
 }
 
-JSONMutableValue RESTJson::TypedValueToJson(JSONWriter &writer, const Value &value) {
-	if (value.IsNull()) {
-		return writer.CreateNull();
-	}
-	auto &type = value.type();
-	switch (type.id()) {
-	case LogicalTypeId::BOOLEAN:
-		return writer.CreateBoolean(BooleanValue::Get(value));
-	case LogicalTypeId::TINYINT:
-	case LogicalTypeId::SMALLINT:
-	case LogicalTypeId::INTEGER:
-	case LogicalTypeId::BIGINT:
-		return writer.CreateSignedInteger(value.GetValue<int64_t>());
-	case LogicalTypeId::UTINYINT:
-	case LogicalTypeId::USMALLINT:
-	case LogicalTypeId::UINTEGER:
-	case LogicalTypeId::UBIGINT:
-		return writer.CreateUnsignedInteger(value.GetValue<uint64_t>());
-	case LogicalTypeId::FLOAT:
-	case LogicalTypeId::DOUBLE: {
-		auto dbl = value.GetValue<double>();
-		if (std::isfinite(dbl)) {
-			return writer.CreateDouble(dbl);
-		}
-		break;
-	}
-	case LogicalTypeId::VARCHAR:
-		return writer.CreateString(StringValue::Get(value));
-	case LogicalTypeId::INTERVAL: {
-		auto interval = IntervalValue::Get(value);
-		auto result = writer.CreateObject();
-		result.Add("months", writer.CreateSignedInteger(interval.months));
-		result.Add("days", writer.CreateSignedInteger(interval.days));
-		result.Add("micros", writer.CreateSignedInteger(interval.micros));
-		return result;
-	}
-	case LogicalTypeId::VARIANT: {
-		// the value the variant holds, with its type
-		Vector variant_vector(value, count_t(1));
-		RecursiveUnifiedVectorFormat format;
-		Vector::RecursiveToUnifiedFormat(variant_vector, format);
-		UnifiedVariantVectorData variant_data(format);
-		return ValueToJson(writer, VariantUtils::ConvertVariantToValue(variant_data, 0, 0));
-	}
-	case LogicalTypeId::STRUCT: {
-		auto result = writer.CreateObject();
-		auto &child_types = StructType::GetChildTypes(type);
-		auto &children = StructValue::GetChildren(value);
-		for (idx_t i = 0; i < children.size(); i++) {
-			result.Add(child_types[i].first.GetIdentifierName(), TypedValueToJson(writer, children[i]));
-		}
-		return result;
-	}
-	case LogicalTypeId::LIST:
-	case LogicalTypeId::ARRAY: {
-		auto result = writer.CreateArray();
-		auto &children =
-		    type.id() == LogicalTypeId::LIST ? ListValue::GetChildren(value) : ArrayValue::GetChildren(value);
-		for (auto &child : children) {
-			result.Append(TypedValueToJson(writer, child));
-		}
-		return result;
-	}
-	case LogicalTypeId::MAP: {
-		auto result = writer.CreateArray();
-		for (auto &entry : MapValue::GetChildren(value)) {
-			auto &kv = StructValue::GetChildren(entry);
-			auto obj = writer.CreateObject();
-			obj.Add("key", TypedValueToJson(writer, kv[0]));
-			obj.Add("value", TypedValueToJson(writer, kv[1]));
-			result.Append(obj);
-		}
-		return result;
-	}
-	default:
-		break;
-	}
-	return writer.CreateString(value.ToString());
-}
-
 //! Variants keep the types of the values they hold, also of nested values
 static Value VariantFromValue(const Value &value) {
 	if (value.IsNull()) {
@@ -381,89 +265,6 @@ static Value VariantFromValue(const Value &value) {
 	default:
 		return value.DefaultCastAs(LogicalType::VARIANT());
 	}
-}
-
-Value RESTJson::TypedValueFromJson(RESTJsonIn json, const LogicalType &type) {
-	if (json.IsNull()) {
-		return Value(type);
-	}
-	switch (type.id()) {
-	case LogicalTypeId::INTERVAL: {
-		if (!json.IsObject()) {
-			break;
-		}
-		interval_t interval;
-		interval.months = NumericCast<int32_t>(json.Int("months"));
-		interval.days = NumericCast<int32_t>(json.Int("days"));
-		interval.micros = json.Int("micros");
-		return Value::INTERVAL(interval);
-	}
-	case LogicalTypeId::VARIANT:
-		return VariantFromValue(ValueFromJson(json));
-	case LogicalTypeId::STRUCT: {
-		if (!json.IsObject()) {
-			break;
-		}
-		vector<Value> children;
-		for (auto &child : StructType::GetChildTypes(type)) {
-			children.push_back(TypedValueFromJson(json.TryGet(child.first.GetIdentifierName()), child.second));
-		}
-		return Value::STRUCT(type, std::move(children));
-	}
-	case LogicalTypeId::LIST:
-	case LogicalTypeId::ARRAY: {
-		if (!json.IsArray()) {
-			break;
-		}
-		auto is_list = type.id() == LogicalTypeId::LIST;
-		auto &child_type = is_list ? ListType::GetChildType(type) : ArrayType::GetChildType(type);
-		vector<Value> children;
-		for (auto &child : json.Items()) {
-			children.push_back(TypedValueFromJson(child, child_type));
-		}
-		return is_list ? Value::LIST(child_type, std::move(children)) : Value::ARRAY(child_type, std::move(children));
-	}
-	case LogicalTypeId::MAP: {
-		if (!json.IsArray()) {
-			break;
-		}
-		auto &key_type = MapType::KeyType(type);
-		auto &value_type = MapType::ValueType(type);
-		vector<Value> keys;
-		vector<Value> values;
-		for (auto &entry : json.Items()) {
-			keys.push_back(TypedValueFromJson(entry.Get("key"), key_type));
-			values.push_back(TypedValueFromJson(entry.TryGet("value"), value_type));
-		}
-		return Value::MAP(key_type, value_type, std::move(keys), std::move(values));
-	}
-	default:
-		break;
-	}
-	Value result;
-	switch (json.val.GetType()) {
-	case JSONValueType::STRING:
-		result = Value(json.Str());
-		break;
-	case JSONValueType::BOOLEAN:
-		result = Value::BOOLEAN(json.Bool());
-		break;
-	case JSONValueType::UNSIGNED_INTEGER:
-		result = Value::UBIGINT(json.val.GetUnsignedInteger());
-		break;
-	case JSONValueType::SIGNED_INTEGER:
-		result = Value::BIGINT(json.val.GetSignedInteger());
-		break;
-	case JSONValueType::DOUBLE:
-		result = Value::DOUBLE(json.val.GetDouble());
-		break;
-	default:
-		throw InvalidInputException("DuckLake REST: cannot convert JSON value to type %s", type.ToString());
-	}
-	if (result.type() == type) {
-		return result;
-	}
-	return result.DefaultCastAs(type);
 }
 
 } // namespace duckdb

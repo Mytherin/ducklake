@@ -538,7 +538,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTAgg
 	auto result = writer.CreateObject();
 	result.Add("answered", RESTWriteValue<RESTBoolCodec>(writer, value.answered));
 	if (!RESTIsNull(value.value)) {
-		result.Add("value", RESTWriteValue<RESTValueCodec>(writer, value.value));
+		result.Add("value", RESTWriteValue<RESTTextCodec>(writer, value.value));
 	}
 	return result;
 }
@@ -553,7 +553,7 @@ RESTAggregateResult DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("value");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.value);
+			RESTReadValue<RESTTextCodec>(entry, result.value);
 		}
 	}
 	return result;
@@ -720,10 +720,10 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	result.Add("column_name", RESTWriteValue<RESTStringCodec>(writer, value.name));
 	result.Add("column_type", RESTWriteValue<RESTStringCodec>(writer, value.type));
 	if (!RESTIsNull(value.initial_default)) {
-		result.Add("initial_default", RESTWriteValue<RESTValueCodec>(writer, value.initial_default));
+		result.Add("initial_default", RESTWriteValue<RESTTextCodec>(writer, value.initial_default));
 	}
 	if (!RESTIsNull(value.default_value)) {
-		result.Add("default_value", RESTWriteValue<RESTValueCodec>(writer, value.default_value));
+		result.Add("default_value", RESTWriteValue<RESTTextCodec>(writer, value.default_value));
 	}
 	result.Add("default_value_type", RESTWriteValue<RESTStringCodec>(writer, value.default_value_type));
 	result.Add("nulls_allowed", RESTWriteValue<RESTBoolCodec>(writer, value.nulls_allowed));
@@ -749,13 +749,13 @@ DuckLakeColumnInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("initial_default");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.initial_default);
+			RESTReadValue<RESTTextCodec>(entry, result.initial_default);
 		}
 	}
 	{
 		auto entry = in.TryGet("default_value");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.default_value);
+			RESTReadValue<RESTTextCodec>(entry, result.default_value);
 		}
 	}
 	{
@@ -792,13 +792,13 @@ DuckLakeColumnInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeSnapshotCommit &value) {
 	auto result = writer.CreateObject();
 	if (!RESTIsNull(value.author)) {
-		result.Add("author", RESTWriteValue<RESTValueCodec>(writer, value.author));
+		result.Add("author", RESTWriteValue<RESTTextCodec>(writer, value.author));
 	}
 	if (!RESTIsNull(value.commit_message)) {
-		result.Add("commit_message", RESTWriteValue<RESTValueCodec>(writer, value.commit_message));
+		result.Add("commit_message", RESTWriteValue<RESTTextCodec>(writer, value.commit_message));
 	}
 	if (!RESTIsNull(value.commit_extra_info)) {
-		result.Add("commit_extra_info", RESTWriteValue<RESTValueCodec>(writer, value.commit_extra_info));
+		result.Add("commit_extra_info", RESTWriteValue<RESTTextCodec>(writer, value.commit_extra_info));
 	}
 	result.Add("is_commit_info_set", RESTWriteValue<RESTBoolCodec>(writer, value.is_commit_info_set));
 	return result;
@@ -813,19 +813,19 @@ DuckLakeSnapshotCommit DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("author");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.author);
+			RESTReadValue<RESTTextCodec>(entry, result.author);
 		}
 	}
 	{
 		auto entry = in.TryGet("commit_message");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.commit_message);
+			RESTReadValue<RESTTextCodec>(entry, result.commit_message);
 		}
 	}
 	{
 		auto entry = in.TryGet("commit_extra_info");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.commit_extra_info);
+			RESTReadValue<RESTTextCodec>(entry, result.commit_extra_info);
 		}
 	}
 	{
@@ -1736,7 +1736,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	auto result = writer.CreateObject();
 	result.Add("partition_key_index", RESTWriteValue<RESTUInt64Codec>(writer, value.partition_column_idx));
 	if (!RESTIsNull(value.partition_value)) {
-		result.Add("partition_value", RESTWriteValue<RESTValueCodec>(writer, value.partition_value));
+		result.Add("partition_value", RESTWriteValue<RESTTextCodec>(writer, value.partition_value));
 	}
 	return result;
 }
@@ -1751,7 +1751,7 @@ DuckLakeFilePartition DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("partition_value");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.partition_value);
+			RESTReadValue<RESTTextCodec>(entry, result.partition_value);
 		}
 	}
 	return result;
@@ -2080,7 +2080,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	result.Add("parameter_name", RESTWriteValue<RESTStringCodec>(writer, value.parameter_name));
 	result.Add("parameter_type", RESTWriteValue<RESTStringCodec>(writer, value.parameter_type));
 	if (!RESTIsNull(value.default_value)) {
-		result.Add("default_value", RESTWriteValue<RESTValueCodec>(writer, value.default_value));
+		result.Add("default_value", RESTWriteValue<RESTTextCodec>(writer, value.default_value));
 	}
 	result.Add("default_value_type", RESTWriteValue<RESTStringCodec>(writer, value.default_value_type));
 	return result;
@@ -2104,7 +2104,7 @@ DuckLakeMacroParameters DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("default_value");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.default_value);
+			RESTReadValue<RESTTextCodec>(entry, result.default_value);
 		}
 	}
 	{
@@ -2703,7 +2703,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSet
 	result.Add("entry_type", RESTWriteValue<RESTCatalogEntryTypeCodec>(writer, value.entry_type));
 	result.Add("column_name", RESTWriteValue<RESTStringCodec>(writer, value.column_name));
 	if (!RESTIsNull(value.comment)) {
-		result.Add("comment", RESTWriteValue<RESTValueCodec>(writer, value.comment));
+		result.Add("comment", RESTWriteValue<RESTTextCodec>(writer, value.comment));
 	}
 	return result;
 }
@@ -2719,7 +2719,7 @@ RESTSetColumnComment DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("comment");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.comment);
+			RESTReadValue<RESTTextCodec>(entry, result.comment);
 		}
 	}
 	return result;
@@ -2729,7 +2729,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTSet
 	auto result = writer.CreateObject();
 	result.Add("entry_type", RESTWriteValue<RESTCatalogEntryTypeCodec>(writer, value.entry_type));
 	if (!RESTIsNull(value.comment)) {
-		result.Add("comment", RESTWriteValue<RESTValueCodec>(writer, value.comment));
+		result.Add("comment", RESTWriteValue<RESTTextCodec>(writer, value.comment));
 	}
 	return result;
 }
@@ -2744,7 +2744,7 @@ RESTSetComment DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("comment");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.comment);
+			RESTReadValue<RESTTextCodec>(entry, result.comment);
 		}
 	}
 	return result;
@@ -2969,13 +2969,13 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	result.Add("next_file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.next_file_id));
 	result.Add("changes_made", RESTWriteValue<RESTStringCodec>(writer, value.change_info.changes_made));
 	if (!RESTIsNull(value.author)) {
-		result.Add("author", RESTWriteValue<RESTValueCodec>(writer, value.author));
+		result.Add("author", RESTWriteValue<RESTTextCodec>(writer, value.author));
 	}
 	if (!RESTIsNull(value.commit_message)) {
-		result.Add("commit_message", RESTWriteValue<RESTValueCodec>(writer, value.commit_message));
+		result.Add("commit_message", RESTWriteValue<RESTTextCodec>(writer, value.commit_message));
 	}
 	if (!RESTIsNull(value.commit_extra_info)) {
-		result.Add("commit_extra_info", RESTWriteValue<RESTValueCodec>(writer, value.commit_extra_info));
+		result.Add("commit_extra_info", RESTWriteValue<RESTTextCodec>(writer, value.commit_extra_info));
 	}
 	return result;
 }
@@ -3001,19 +3001,19 @@ DuckLakeSnapshotInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("author");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.author);
+			RESTReadValue<RESTTextCodec>(entry, result.author);
 		}
 	}
 	{
 		auto entry = in.TryGet("commit_message");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.commit_message);
+			RESTReadValue<RESTTextCodec>(entry, result.commit_message);
 		}
 	}
 	{
 		auto entry = in.TryGet("commit_extra_info");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.commit_extra_info);
+			RESTReadValue<RESTTextCodec>(entry, result.commit_extra_info);
 		}
 	}
 	return result;
@@ -3339,7 +3339,7 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	result.Add("column_name", RESTWriteValue<RESTStringCodec>(writer, value.column_name));
 	result.Add("key", RESTWriteValue<RESTStringCodec>(writer, value.key));
 	if (!RESTIsNull(value.value)) {
-		result.Add("value", RESTWriteValue<RESTValueCodec>(writer, value.value));
+		result.Add("value", RESTWriteValue<RESTTextCodec>(writer, value.value));
 	}
 	return result;
 }
@@ -3355,7 +3355,7 @@ DuckLakeViewColumnTag DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("value");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTValueCodec>(entry, result.value);
+			RESTReadValue<RESTTextCodec>(entry, result.value);
 		}
 	}
 	return result;

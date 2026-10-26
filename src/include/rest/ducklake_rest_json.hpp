@@ -65,7 +65,6 @@ public:
 	int64_t Int(const string &key) const;
 	bool Bool(const string &key, bool default_value = false) const;
 	optional_idx Opt(const string &key) const;
-	Value GetValue(const string &key) const;
 
 	JSONValue val;
 };
@@ -83,17 +82,9 @@ public:
 };
 
 struct RESTJson {
-	//! Values without a known type: NULL as null, VARCHAR as string, otherwise {"type": .., "value": ..}
-	static JSONMutableValue ValueToJson(JSONWriter &writer, const Value &value);
-	static Value ValueFromJson(RESTJsonIn json);
-
 	//! Logical types as structured JSON
 	static JSONMutableValue TypeToJson(JSONWriter &writer, const LogicalType &type);
 	static LogicalType TypeFromJson(RESTJsonIn json);
-
-	//! Values of a known type: nested types as JSON objects / arrays, leaves as JSON scalars or strings
-	static JSONMutableValue TypedValueToJson(JSONWriter &writer, const Value &value);
-	static Value TypedValueFromJson(RESTJsonIn json, const LogicalType &type);
 };
 
 } // namespace duckdb

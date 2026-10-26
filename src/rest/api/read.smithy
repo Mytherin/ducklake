@@ -410,7 +410,7 @@ structure AggregateResult {
     answered: Boolean
 
     /// The result, `null` if the aggregate is NULL (e.g. the `min` of a column without values) or not answered.
-    value: Value
+    value: Text
 }
 
 list AggregateList {

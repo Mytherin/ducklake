@@ -154,10 +154,10 @@ structure ColumnInfo {
     column_type: String
 
     /// The value of the column for rows that were written before the column was added.
-    initial_default: Value
+    initial_default: Text
 
     /// The default value of the column.
-    default_value: Value
+    default_value: Text
 
     /// Whether the default is a `literal` or an `expression`.
     default_value_type: String = ""
@@ -217,7 +217,7 @@ structure ViewColumnTag {
     key: String
 
     /// The value of the tag.
-    value: Value
+    value: Text
 }
 
 /// A view of the catalog.
@@ -276,7 +276,7 @@ structure MacroParameter {
     parameter_type: String = ""
 
     /// The default value of the parameter.
-    default_value: Value
+    default_value: Text
 
     /// Whether the default is a `literal` or an `expression`.
     default_value_type: String = ""
@@ -756,7 +756,7 @@ structure FilePartitionValue {
     partition_key_index: UInt64
 
     /// The value.
-    partition_value: Value
+    partition_value: Text
 }
 
 /// A Parquet file written by a client. The file includes the statistics of its columns, so the server does not need to
@@ -1001,26 +1001,26 @@ structure SnapshotInfo {
     changes_made: String = ""
 
     /// The author of the commit.
-    author: Value
+    author: Text
 
     /// The commit message.
-    commit_message: Value
+    commit_message: Text
 
     /// Extra information of the commit.
-    commit_extra_info: Value
+    commit_extra_info: Text
 }
 
 /// The commit information of a transaction.
 @cppClass("DuckLakeSnapshotCommit")
 structure CommitInfo {
     /// The author of the commit.
-    author: Value
+    author: Text
 
     /// The commit message.
-    commit_message: Value
+    commit_message: Text
 
     /// Extra information of the commit.
-    commit_extra_info: Value
+    commit_extra_info: Text
 
     /// Whether the commit information was set.
     is_commit_info_set: Boolean = false
@@ -1277,7 +1277,7 @@ list UInt64List {
 }
 
 list ValueList {
-    member: Value
+    member: Text
 }
 
 list ViewColumnTagList {

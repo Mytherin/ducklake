@@ -107,9 +107,9 @@ long UInt64
 @wireType("timestamp")
 string Timestamp
 
-/// A value without a known type: `null`, a string for `VARCHAR` values, or `{"type": <type>, "value": <value>}`.
-@wireType("value")
-document Value
+/// A value as text, which is the text of the value of a column of DuckLake. It is absent if the value is `NULL`.
+@wireType("text")
+string Text
 
 /// A DuckLake type, e.g. `{"id": "decimal", "width": 18, "scale": 3}`.
 @wireType("logical_type")

@@ -214,7 +214,7 @@ structure SetComment {
     entry_type: CatalogEntryType
 
     /// The comment, absent to drop the comment.
-    comment: Value
+    comment: Text
 }
 
 structure SetColumnComment {
@@ -227,5 +227,5 @@ structure SetColumnComment {
     column_name: String
 
     /// The comment, absent to drop the comment.
-    comment: Value
+    comment: Text
 }

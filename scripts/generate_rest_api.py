@@ -49,7 +49,7 @@ PRIMITIVES = {
         "RESTOptional<timestamp_tz_t>",
         "timestamp",
     ),
-    "value": ("RESTValueCodec", "Value", "Value", "value"),
+    "text": ("RESTTextCodec", "Value", "Value", "text"),
     "logical_type": ("RESTLogicalTypeCodec", "LogicalType", "LogicalType", "type"),
     "json": ("RESTJsonCodec", "RESTJsonValue", "RESTJsonValue", "JSON"),
     "rows": ("RESTRowsCodec", "RESTRows", "RESTRows", "rows"),

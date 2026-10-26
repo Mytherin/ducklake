@@ -553,7 +553,7 @@ optional_idx RESTMetadataManager::GetNetRowCount(DuckLakeTableEntry &table, Duck
 	if (!result.answered) {
 		return optional_idx();
 	}
-	return NumericCast<idx_t>(result.value.GetValue<int64_t>());
+	return NumericCast<idx_t>(result.value.DefaultCastAs(LogicalType::BIGINT).GetValue<int64_t>());
 }
 
 vector<DuckLakeInlinedTableInfo> RESTMetadataManager::GetInlinedDataTables(const DuckLakeTableEntry &table,

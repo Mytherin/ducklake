@@ -114,25 +114,6 @@ Types are structured JSON objects. `id` is the name of the type in the
 {"id": "json"}
 ```
 
-### Values
-
-Values have no type that is known from the context (e.g. tags, defaults of columns and the results of aggregates):
-a value is `null`, a JSON string for `varchar` values, or an object `{"type": <type>, "value": <value>}`. The `value` of
-a type is encoded as follows:
-
-| Type                             | Encoding                                                        |
-|----------------------------------|-----------------------------------------------------------------|
-| `null`                           | `null`                                                          |
-| `boolean`                        | JSON boolean                                                    |
-| integers up to 64 bits           | JSON number                                                     |
-| `float32`, `float64`             | JSON number, or a string (`"nan"`, `"inf"`, `"-inf"`)          |
-| `struct`                         | JSON object with a field per child                              |
-| `list`                           | JSON array                                                      |
-| `map`                            | JSON array of `{"key": ..., "value": ...}` objects              |
-| `interval`                       | `{"months": 1, "days": 2, "micros": 3}`                         |
-| `variant`                        | the value the variant holds, as a value (see above) |
-| everything else                  | the string representation of the value, e.g. `"2025-01-01"`    |
-
 ### Arrow
 
 Rows are never JSON: the rows of tables (the inlined rows of a scan or of the changes of a table, and the rows to insert
@@ -192,7 +173,7 @@ bind shapes to the C++ classes of DuckLake; they do not change the JSON of the A
 | `double`       | `Double`         | a number                                                                     |
 | `path`         | `DataPath`       | a path of a file or directory, which clients map between their data path and the data path of the server |
 | `timestamp`    | `Timestamp`      | a timestamp with time zone as a string, e.g. `"2025-01-01 00:00:00+00"`      |
-| `value`        | `Value`          | a [value without a known type](#values)                                      |
+| `text`         | `Text`           | a value as a string, with the text of a value of DuckLake; the member is absent for `NULL` |
 | `logical_type` | `LogicalType`    | a [type](#types)                                                             |
 | `json`         | `Document`       | any JSON value, specified by the description                                 |
 | `list of T`    | `list`           | an array                                                                     |
@@ -729,7 +710,7 @@ The result of an aggregate of a scan.
 | Field | Type | Description |
 |-------|------|-------------|
 | `answered` | `bool` | Whether the server answered the aggregate. If not, the files of the scan have to be read to answer it. |
-| `value` | `value` (optional) | The result, `null` if the aggregate is NULL (e.g. the `min` of a column without values) or not answered. |
+| `value` | `text` (optional) | The result, `null` if the aggregate is NULL (e.g. the `min` of a column without values) or not answered. |
 
 ### `Alteration`
 
@@ -833,8 +814,8 @@ A column of a table, as stored in `ducklake_column`.
 | `column_id` | `uint64` (optional) | The field id of the column. |
 | `column_name` | `string` | The name of the column. |
 | `column_type` | `string` | The type of the column, as a type name of the DuckLake specification (e.g. `int32`, `varchar`). |
-| `initial_default` | `value` (optional) | The value of the column for rows that were written before the column was added. |
-| `default_value` | `value` (optional) | The default value of the column. |
+| `initial_default` | `text` (optional) | The value of the column for rows that were written before the column was added. |
+| `default_value` | `text` (optional) | The default value of the column. |
 | `default_value_type` | `string` (default `""`) | Whether the default is a `literal` or an `expression`. |
 | `nulls_allowed` | `bool` (default `true`) | Whether the column can hold `NULL`. |
 | `tags` | list of [`Tag`](#tag) (default `[]`) | The tags of the column. |
@@ -870,9 +851,9 @@ The commit information of a transaction.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `author` | `value` (optional) | The author of the commit. |
-| `commit_message` | `value` (optional) | The commit message. |
-| `commit_extra_info` | `value` (optional) | Extra information of the commit. |
+| `author` | `text` (optional) | The author of the commit. |
+| `commit_message` | `text` (optional) | The commit message. |
+| `commit_extra_info` | `text` (optional) | Extra information of the commit. |
 | `is_commit_info_set` | `bool` (default `false`) | Whether the commit information was set. |
 
 ### `CompactionResult`
@@ -1130,7 +1111,7 @@ The value of a partition key for the rows of a file.
 | Field | Type | Description |
 |-------|------|-------------|
 | `partition_key_index` | `uint64` | The partition key. |
-| `partition_value` | `value` (optional) | The value. |
+| `partition_value` | `text` (optional) | The value. |
 
 ### `FileRowDeletes`
 
@@ -1213,7 +1194,7 @@ A parameter of a macro.
 |-------|------|-------------|
 | `parameter_name` | `string` | The name of the parameter. |
 | `parameter_type` | `string` (default `""`) | The type of the parameter, `unknown` if it has none. |
-| `default_value` | `value` (optional) | The default value of the parameter. |
+| `default_value` | `text` (optional) | The default value of the parameter. |
 | `default_value_type` | `string` (default `""`) | Whether the default is a `literal` or an `expression`. |
 
 ### `MacroType`
@@ -1421,14 +1402,14 @@ An option of the DuckLake that is set for a schema.
 |-------|------|-------------|
 | `entry_type` | [`CatalogEntryType`](#catalogentrytype) | Whether the column is of a table or a view. |
 | `column_name` | `string` | The name of the column. |
-| `comment` | `value` (optional) | The comment, absent to drop the comment. |
+| `comment` | `text` (optional) | The comment, absent to drop the comment. |
 
 ### `SetComment`
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `entry_type` | [`CatalogEntryType`](#catalogentrytype) | Whether the comment is of a table or a view. |
-| `comment` | `value` (optional) | The comment, absent to drop the comment. |
+| `comment` | `text` (optional) | The comment, absent to drop the comment. |
 
 ### `SetDefault`
 
@@ -1513,9 +1494,9 @@ A snapshot, with its commit information.
 | `schema_version` | `uint64` | The schema version of the snapshot. |
 | `next_file_id` | `uint64` | The next free file id of the snapshot. |
 | `changes_made` | `string` (default `""`) | The changes of the snapshot, as in `ducklake_snapshot_changes`. |
-| `author` | `value` (optional) | The author of the commit. |
-| `commit_message` | `value` (optional) | The commit message. |
-| `commit_extra_info` | `value` (optional) | Extra information of the commit. |
+| `author` | `text` (optional) | The author of the commit. |
+| `commit_message` | `text` (optional) | The commit message. |
+| `commit_extra_info` | `text` (optional) | Extra information of the commit. |
 
 ### `SnapshotReference`
 
@@ -1625,7 +1606,7 @@ A tag of a column of a view.
 |-------|------|-------------|
 | `column_name` | `string` | The column. |
 | `key` | `string` | The key of the tag. |
-| `value` | `value` (optional) | The value of the tag. |
+| `value` | `text` (optional) | The value of the tag. |
 
 ### `ViewInfo`
 

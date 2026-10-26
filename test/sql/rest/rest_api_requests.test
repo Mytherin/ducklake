@@ -193,7 +193,7 @@ SELECT count(*) FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/c
 0
 
 query II
-SELECT status, response->>'$.aggregate_results[0].value.value' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan',
+SELECT status, response->>'$.aggregate_results[0].value' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan',
 '{"aggregates": [{"function": "count_star"}]}')
 ----
 200	2

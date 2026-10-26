@@ -20,8 +20,8 @@ INSERT INTO dl.t VALUES (9, 'z', -1.5, 8, {'a': 3}), (4, 'm', 0.0, NULL, {'a': 4
 
 # the server answers the aggregates and has no files to scan then
 query IIIIIIII
-SELECT status, response->>'$.aggregate_results[0].value.value', response->>'$.aggregate_results[1].value.value',
-       response->>'$.aggregate_results[2].value.value', response->>'$.aggregate_results[3].value.value',
+SELECT status, response->>'$.aggregate_results[0].value', response->>'$.aggregate_results[1].value',
+       response->>'$.aggregate_results[2].value', response->>'$.aggregate_results[3].value',
        response->>'$.aggregate_results[4].value', response->>'$.aggregate_results[5].value',
        json_array_length(response->'$.files') = 0
 FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"aggregates": [
@@ -78,7 +78,7 @@ statement ok
 DELETE FROM dl.t WHERE i = 9
 
 query IIIII
-SELECT status, response->>'$.aggregate_results[0].value.value', response->>'$.aggregate_results[1].answered',
+SELECT status, response->>'$.aggregate_results[0].value', response->>'$.aggregate_results[1].answered',
        response->>'$.aggregate_results[2].answered', json_array_length(response->'$.files') > 0
 FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/1/scan', '{"aggregates": [
   {"function": "count_star"}, {"function": "max", "column_id": 1}, {"function": "count", "column_id": 4}]}')
@@ -101,7 +101,7 @@ statement ok
 INSERT INTO dl.u VALUES (1), (2), (3)
 
 query II
-SELECT status, response->>'$.aggregate_results[0].value.value' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/2/scan', '{"aggregates": [{"function": "count_star"}]}')
+SELECT status, response->>'$.aggregate_results[0].value' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/tables/2/scan', '{"aggregates": [{"function": "count_star"}]}')
 ----
 200	3
 
