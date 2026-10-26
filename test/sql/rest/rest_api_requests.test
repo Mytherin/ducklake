@@ -8,8 +8,8 @@ include test/template/rest_setup.test_template
 
 # a commit request can be sent on its own
 query I
-SELECT response->>'$.table_ids[0].table_id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_table": {"schema_id": 0, "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}, {"column_name": "s", "column_type": {"id": "varchar"}}]}}]}')
+SELECT response->>'$.entry_ids[0].id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
+'{"requests": [{"create_table": {"placeholder_id": -1, "schema_id": 0, "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}, {"column_name": "s", "column_type": {"id": "varchar"}}]}}]}')
 ----
 1
 
@@ -21,7 +21,7 @@ SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transacti
 
 # several requests in one transaction, the created table is referred to with a placeholder
 query II
-SELECT response->>'$.snapshot_id', response->>'$.table_ids[0].placeholder' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
+SELECT response->>'$.snapshot_id', response->>'$.entry_ids[0].placeholder_id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
 '{"requests": [
   {"create_table": {"placeholder_id": -1, "schema_id": 0, "table_name": "t2", "columns": [{"column_name": "j", "column_type": {"id": "int64"}, "default": "42"}]}},
   {"insert_rows": {"table_id": -1, "column_types": [{"id": "int64"}], "rows": [[100]], "column_stats": []}}
@@ -103,12 +103,30 @@ SELECT status, (response->'$.catalog') IS NOT NULL FROM ducklake_rest_request('{
 ----
 200	false
 
-# a created entry is returned with its id under the reference of its request
+# a created entry is returned with its id under the placeholder id of its request
 query II
-SELECT response->>'$.entry_ids[0].entry_reference', response->>'$.entry_ids[0].type'
-FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit', '{"requests": [{"create_schema": {"schema_name": "s", "entry_reference": 1234}}]}')
+SELECT response->>'$.entry_ids[0].placeholder_id', response->>'$.entry_ids[0].type'
+FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit', '{"requests": [{"create_schema": {"placeholder_id": -7, "schema_name": "s"}}]}')
 ----
-1234	SCHEMA_ENTRY
+-7	SCHEMA_ENTRY
+
+# every kind of entry is returned
+query I
+SELECT string_agg(response_entry->>'$.placeholder_id' || ':' || (response_entry->>'$.type'), ',' ORDER BY response_entry->>'$.placeholder_id')
+FROM (SELECT unnest(from_json(response->'$.entry_ids', '["JSON"]')) AS response_entry
+  FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit', '{"requests": [
+    {"create_schema": {"placeholder_id": -1, "schema_name": "kinds"}},
+    {"create_table": {"placeholder_id": -2, "schema_id": -1, "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}]}},
+    {"create_view": {"placeholder_id": -3, "schema_id": -1, "view_name": "v", "sql": "SELECT 1"}}]}'))
+----
+-1:SCHEMA_ENTRY,-2:TABLE_ENTRY,-3:VIEW_ENTRY
+
+# a placeholder id is required
+query II
+SELECT status, response->>'$.error.message' LIKE '%missing required field "placeholder_id"%'
+FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit', '{"requests": [{"create_schema": {"schema_name": "s9"}}]}')
+----
+400	true
 
 # errors
 query III
@@ -123,7 +141,7 @@ SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_serve
 
 query I
 SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_table": {"schema_id": 0, "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}]}}]}')
+'{"requests": [{"create_table": {"placeholder_id": -1, "schema_id": 0, "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}]}}]}')
 ----
 404
 
@@ -265,7 +283,7 @@ SELECT status, response->>'$.error.message' LIKE '%Unsupported request "create_e
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%exactly one member%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_schema": {"schema_name": "s2"}, "drop_schema": {"entry_id": 1}}]}')
+'{"requests": [{"create_schema": {"placeholder_id": -1, "schema_name": "s2"}, "drop_schema": {"entry_id": 1}}]}')
 ----
 400	true
 

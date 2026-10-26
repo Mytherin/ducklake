@@ -482,8 +482,7 @@ Response:
 |-------|------|-------------|
 | `snapshot_id` | `uint64` (optional) | The committed snapshot, absent if the requests did not create a snapshot (e.g. if they only set options). |
 | `schema_version` | `uint64` (optional) | The schema version of the committed snapshot. |
-| `table_ids` | list of [`CreatedTable`](#createdtable) (default `[]`) | The ids of the tables the transaction created. |
-| `entry_ids` | list of [`CreatedEntry`](#createdentry) (default `[]`) | The ids of the created entries whose requests had an `entry_reference`. |
+| `entry_ids` | list of [`CreatedEntry`](#createdentry) (default `[]`) | The entries the transaction created, with the ids the commit gave them. |
 | `table_options` | list of [`OptionSetting`](#optionsetting) (default `[]`) | The options of the tables the transaction created or altered, with the ids the commit gave the tables. |
 
 ### `create_schema`
@@ -494,8 +493,7 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `placeholder_id` | `int64` (optional) | The placeholder id of the schema: a negative number that later requests of the transaction refer to the schema with. Entries are numbered in the order of the client, e.g. `-1` for the first entry created in the transaction. |
-| `entry_reference` | `uint64` (optional) | A number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can use it to keep track of the entries it created, e.g. to keep their oids stable. |
+| `placeholder_id` | `int64` | The placeholder id of the schema: a negative number, e.g. `-1` for the first entry created in the transaction. Later requests of the transaction refer to the schema with it, and `entry_ids` returns the id that the commit gave the schema with it. |
 | `parent_schema_id` | `int64` (optional) | The schema that holds the new schema, absent for a schema at the top level. A negative id is the placeholder id of a schema created in the transaction. |
 | `schema_name` | `string` | The name of the schema. |
 | `schema_uuid` | `string` (optional) | The uuid of the schema. |
@@ -515,8 +513,7 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `placeholder_id` | `int64` (optional) | The placeholder id of the table, which `insert_rows`, `insert_files` and `delete_data` refer to the table with. See `create_schema`. |
-| `entry_reference` | `uint64` (optional) | See `create_schema`. |
+| `placeholder_id` | `int64` | The placeholder id of the table, which `insert_rows`, `insert_files` and `delete_data` refer to the table with. See `create_schema`. |
 | `schema_id` | `int64` | The schema of the table. A negative id is the placeholder id of a schema created in the transaction. |
 | `table_name` | `string` | The name of the table. |
 | `table_uuid` | `string` (optional) | The uuid of the table. |
@@ -538,8 +535,7 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `placeholder_id` | `int64` (optional) | See `create_schema`. |
-| `entry_reference` | `uint64` (optional) | See `create_schema`. |
+| `placeholder_id` | `int64` | See `create_schema`. |
 | `schema_id` | `int64` | The schema of the view, see `create_table`. |
 | `view_name` | `string` | The name of the view. |
 | `view_uuid` | `string` (optional) | The uuid of the view. |
@@ -559,8 +555,7 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `placeholder_id` | `int64` (optional) | See `create_schema`. |
-| `entry_reference` | `uint64` (optional) | See `create_schema`. |
+| `placeholder_id` | `int64` | See `create_schema`. |
 | `schema_id` | `int64` | The schema of the macro, see `create_table`. |
 | `macro` | [`MacroInfo`](#macroinfo) | The macro (its ids are ignored). |
 
@@ -874,18 +869,9 @@ An entry that a commit created.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `entry_reference` | `uint64` | The `entry_reference` of the request that created the entry. |
+| `placeholder_id` | `int64` | The placeholder id of the request that created the entry. |
 | `type` | `string` | The type of the entry, e.g. `TABLE_ENTRY`. |
 | `id` | `uint64` | The id the commit gave the entry. |
-
-### `CreatedTable`
-
-A table that a commit created.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `placeholder` | `int64` (optional) | The placeholder id of the table in the request. |
-| `table_id` | `uint64` | The id the commit gave the table. |
 
 ### `DataFile`
 

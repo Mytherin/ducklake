@@ -222,7 +222,6 @@ public:
 	//! The snapshot written by the commit of this transaction, invalid if it did not write one
 	DuckLakeSnapshot GetCommittedSnapshot() const;
 	//! The ids that the commit gave the tables and views the transaction created, by their transaction-local id
-	const map<TableIndex, TableIndex> &GetCommittedTableIds() const;
 	const ducklake_entry_oids_t &GetCommittedEntryOids() const;
 	//! The options that the commit gave the tables the transaction created or altered
 	const vector<DuckLakeConfigOption> &GetCommittedTableOptions() const;

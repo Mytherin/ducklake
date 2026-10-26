@@ -139,7 +139,6 @@ struct RESTColumnDefinition;
 struct RESTColumnIdentifier;
 struct RESTCompactionResult;
 struct RESTCreatedEntry;
-struct RESTCreatedTable;
 struct RESTDropNotNull;
 struct RESTDroppedFile;
 struct RESTDynamicFilter;
@@ -222,7 +221,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSnapshotCommit &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCompactionResult &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCreatedEntry &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTCreatedTable &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeDataFile &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeDeleteFile &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeDeleteScanEntry &value);
@@ -338,8 +336,6 @@ template <>
 RESTCompactionResult DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTCreatedEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTCreatedTable DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeDataFile DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -743,20 +739,12 @@ struct RESTCompactionResult {
 
 //! An entry that a commit created.
 struct RESTCreatedEntry {
-	//! The `entry_reference` of the request that created the entry.
-	idx_t entry_reference = 0;
+	//! The placeholder id of the request that created the entry.
+	int64_t placeholder_id = 0;
 	//! The type of the entry, e.g. `TABLE_ENTRY`.
 	string type;
 	//! The id the commit gave the entry.
 	idx_t id = 0;
-};
-
-//! A table that a commit created.
-struct RESTCreatedTable {
-	//! The placeholder id of the table in the request.
-	RESTOptional<int64_t> placeholder;
-	//! The id the commit gave the table.
-	idx_t table_id = 0;
 };
 
 struct RESTDropNotNull : public RESTAlteration {
@@ -1221,9 +1209,7 @@ struct RESTCommitTransactionResponse {
 	optional_idx snapshot_id;
 	//! The schema version of the committed snapshot.
 	optional_idx schema_version;
-	//! The ids of the tables the transaction created.
-	vector<RESTCreatedTable> table_ids;
-	//! The ids of the created entries whose requests had an `entry_reference`.
+	//! The entries the transaction created, with the ids the commit gave them.
 	vector<RESTCreatedEntry> entry_ids;
 	//! The options of the tables the transaction created or altered, with the ids the commit gave the tables.
 	vector<RESTOptionSetting> table_options;
@@ -1236,10 +1222,8 @@ struct RESTCreateSchemaRequest : public RESTCommitRequest {
 	RESTCreateSchemaRequest() : RESTCommitRequest(TYPE) {
 	}
 
-	//! The placeholder id of the schema: a negative number that later requests of the transaction refer to the schema
-	RESTOptional<int64_t> placeholder_id;
-	//! A number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can
-	optional_idx entry_reference;
+	//! The placeholder id of the schema: a negative number, e.g. `-1` for the first entry created in the transaction.
+	int64_t placeholder_id = 0;
 	//! The schema that holds the new schema, absent for a schema at the top level. A negative id is the placeholder id
 	RESTOptional<int64_t> parent_schema_id;
 	//! The name of the schema.
@@ -1260,9 +1244,7 @@ struct RESTCreateTableRequest : public RESTCommitRequest {
 	}
 
 	//! The placeholder id of the table, which `insert_rows`, `insert_files` and `delete_data` refer to the table with.
-	RESTOptional<int64_t> placeholder_id;
-	//! See `create_schema`.
-	optional_idx entry_reference;
+	int64_t placeholder_id = 0;
 	//! The schema of the table. A negative id is the placeholder id of a schema created in the transaction.
 	int64_t schema_id = 0;
 	//! The name of the table.
@@ -1293,9 +1275,7 @@ struct RESTCreateViewRequest : public RESTCommitRequest {
 	}
 
 	//! See `create_schema`.
-	RESTOptional<int64_t> placeholder_id;
-	//! See `create_schema`.
-	optional_idx entry_reference;
+	int64_t placeholder_id = 0;
 	//! The schema of the view, see `create_table`.
 	int64_t schema_id = 0;
 	//! The name of the view.
@@ -1322,9 +1302,7 @@ struct RESTCreateMacroRequest : public RESTCommitRequest {
 	}
 
 	//! See `create_schema`.
-	RESTOptional<int64_t> placeholder_id;
-	//! See `create_schema`.
-	optional_idx entry_reference;
+	int64_t placeholder_id = 0;
 	//! The schema of the macro, see `create_table`.
 	int64_t schema_id = 0;
 	//! The macro (its ids are ignored).

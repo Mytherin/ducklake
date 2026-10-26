@@ -151,6 +151,8 @@ private:
 private:
 	//! The catalog changes of the transaction, in the order in which they were made
 	vector<unique_ptr<RESTCommitRequest>> catalog_requests;
+	//! The oids of the entries that the transaction created, by their placeholder ids
+	map<int64_t, idx_t> created_oids;
 	//! The placeholder ids of the macros that the transaction created
 	reference_map_t<CatalogEntry, int64_t> local_macros;
 	mutex cache_lock;

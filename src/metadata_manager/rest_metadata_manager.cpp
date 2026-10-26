@@ -736,7 +736,7 @@ void RESTMetadataManager::RemoveFilesScheduledForCleanup(const vector<DuckLakeFi
 void RESTMetadataManager::OnCreateSchema(DuckLakeSchemaEntry &schema) {
 	auto &request = AddCommitRequest<RESTCreateSchemaRequest>();
 	request.placeholder_id = ToRequestId(schema.GetSchemaId().index);
-	request.entry_reference = schema.oid;
+	created_oids[request.placeholder_id] = schema.oid;
 	auto parent = schema.ParentDuckLakeSchema();
 	if (parent) {
 		request.parent_schema_id = ToRequestId(parent->GetSchemaId().index);
@@ -750,7 +750,7 @@ void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const Creat
                                         const DuckLakeTableEntry &table) {
 	auto &request = AddCommitRequest<RESTCreateTableRequest>();
 	request.placeholder_id = ToRequestId(table.GetTableId().index);
-	request.entry_reference = table.oid;
+	created_oids[request.placeholder_id] = table.oid;
 	request.schema_id = ToRequestId(schema.GetSchemaId().index);
 	request.table_name = info.GetTableName().GetIdentifierName();
 	request.table_uuid = table.GetTableUUID();
@@ -781,7 +781,7 @@ void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const Creat
 void RESTMetadataManager::OnCreateView(DuckLakeViewEntry &view) {
 	auto &request = AddCommitRequest<RESTCreateViewRequest>();
 	request.placeholder_id = ToRequestId(view.GetViewId().index);
-	request.entry_reference = view.oid;
+	created_oids[request.placeholder_id] = view.oid;
 	request.schema_id = ToRequestId(view.ParentSchema().Cast<DuckLakeSchemaEntry>().GetSchemaId().index);
 	request.view_name = view.name.GetIdentifierName();
 	request.view_uuid = view.GetViewUUID();
@@ -807,7 +807,7 @@ void RESTMetadataManager::OnCreateMacro(MacroCatalogEntry &macro) {
 	auto placeholder_id = ToRequestId(transaction.GetLocalCatalogId());
 	local_macros[macro] = placeholder_id;
 	request.placeholder_id = placeholder_id;
-	request.entry_reference = macro.oid;
+	created_oids[request.placeholder_id] = macro.oid;
 	request.schema_id = ToRequestId(macro.schema.Cast<DuckLakeSchemaEntry>().GetSchemaId().index);
 	request.macro = DuckLakeTransactionState::GetMacroInfo(macro);
 }
@@ -1062,7 +1062,10 @@ void RESTMetadataManager::FlushChangesServerSide(DuckLakeTransaction &flush_tran
 	ducklake_entry_oids_t entry_oids;
 	for (auto &entry : response.entry_ids) {
 		auto type = EnumUtil::FromString<CatalogType>(entry.type);
-		entry_oids.emplace(make_pair(type, entry.id), entry.entry_reference);
+		auto oid = created_oids.find(entry.placeholder_id);
+		if (oid != created_oids.end()) {
+			entry_oids.emplace(make_pair(type, entry.id), oid->second);
+		}
 	}
 	catalog.SetEntryOids(entry_oids);
 	for (auto &setting : response.table_options) {

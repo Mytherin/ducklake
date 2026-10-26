@@ -1759,10 +1759,6 @@ DuckLakeSnapshot DuckLakeTransaction::GetCommittedSnapshot() const {
 	return committed_snapshot;
 }
 
-const map<TableIndex, TableIndex> &DuckLakeTransaction::GetCommittedTableIds() const {
-	return state->committed_tables;
-}
-
 const ducklake_entry_oids_t &DuckLakeTransaction::GetCommittedEntryOids() const {
 	return state->committed_entry_oids;
 }

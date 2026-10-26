@@ -34,10 +34,7 @@ operation CommitTransaction {
         /// The schema version of the committed snapshot.
         schema_version: UInt64
 
-        /// The ids of the tables the transaction created.
-        table_ids: CreatedTableList = []
-
-        /// The ids of the created entries whose requests had an `entry_reference`.
+        /// The entries the transaction created, with the ids the commit gave them.
         entry_ids: CreatedEntryList = []
 
         /// The options of the tables the transaction created or altered, with the ids the commit gave the tables.
@@ -47,13 +44,11 @@ operation CommitTransaction {
 
 /// Creates a schema.
 structure CreateSchemaRequest {
-    /// The placeholder id of the schema: a negative number that later requests of the transaction refer to the schema
-    /// with. Entries are numbered in the order of the client, e.g. `-1` for the first entry created in the transaction.
+    /// The placeholder id of the schema: a negative number, e.g. `-1` for the first entry created in the transaction.
+    /// Later requests of the transaction refer to the schema with it, and `entry_ids` returns the id that the commit
+    /// gave the schema with it.
+    @required
     placeholder_id: Long
-
-    /// A number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can
-    /// use it to keep track of the entries it created, e.g. to keep their oids stable.
-    entry_reference: UInt64
 
     /// The schema that holds the new schema, absent for a schema at the top level. A negative id is the placeholder id
     /// of a schema created in the transaction.
@@ -80,10 +75,8 @@ structure CreateSchemaRequest {
 structure CreateTableRequest {
     /// The placeholder id of the table, which `insert_rows`, `insert_files` and `delete_data` refer to the table with.
     /// See `create_schema`.
+    @required
     placeholder_id: Long
-
-    /// See `create_schema`.
-    entry_reference: UInt64
 
     /// The schema of the table. A negative id is the placeholder id of a schema created in the transaction.
     @required
@@ -124,10 +117,8 @@ structure CreateTableRequest {
 /// Creates a view.
 structure CreateViewRequest {
     /// See `create_schema`.
+    @required
     placeholder_id: Long
-
-    /// See `create_schema`.
-    entry_reference: UInt64
 
     /// The schema of the view, see `create_table`.
     @required
@@ -161,10 +152,8 @@ structure CreateViewRequest {
 /// Creates a macro.
 structure CreateMacroRequest {
     /// See `create_schema`.
+    @required
     placeholder_id: Long
-
-    /// See `create_schema`.
-    entry_reference: UInt64
 
     /// The schema of the macro, see `create_table`.
     @required
@@ -306,21 +295,11 @@ structure RetryConfig {
     retry_backoff: Double
 }
 
-/// A table that a commit created.
-structure CreatedTable {
-    /// The placeholder id of the table in the request.
-    placeholder: Long
-
-    /// The id the commit gave the table.
-    @required
-    table_id: UInt64
-}
-
 /// An entry that a commit created.
 structure CreatedEntry {
-    /// The `entry_reference` of the request that created the entry.
+    /// The placeholder id of the request that created the entry.
     @required
-    entry_reference: UInt64
+    placeholder_id: Long
 
     /// The type of the entry, e.g. `TABLE_ENTRY`.
     @required

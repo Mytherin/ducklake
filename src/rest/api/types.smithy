@@ -1135,10 +1135,6 @@ list CreatedEntryList {
     member: CreatedEntry
 }
 
-list CreatedTableList {
-    member: CreatedTable
-}
-
 list DataFileList {
     member: DataFile
 }

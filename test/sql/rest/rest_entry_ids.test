@@ -120,7 +120,7 @@ SELECT status, response->>'$.error.message' LIKE '%is not a view%' FROM ducklake
 
 query II
 SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_table": {"schema_id": 100000, "table_name": "x", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}]}}]}')
+'{"requests": [{"create_table": {"placeholder_id": -1, "schema_id": 100000, "table_name": "x", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}]}}]}')
 ----
 404	Catalog
 
@@ -133,7 +133,7 @@ SELECT status, response->>'$.error.message' LIKE '%placeholder id is negative%' 
 
 query II
 SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_table": {"schema_id": -7, "table_name": "x", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}]}}]}')
+'{"requests": [{"create_table": {"placeholder_id": -1, "schema_id": -7, "table_name": "x", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}]}}]}')
 ----
 400	Invalid Input
 

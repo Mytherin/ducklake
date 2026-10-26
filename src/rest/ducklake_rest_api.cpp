@@ -885,7 +885,7 @@ RESTCompactionResult DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCreatedEntry &value) {
 	auto result = writer.CreateObject();
-	result.Add("entry_reference", RESTWriteValue<RESTUInt64Codec>(writer, value.entry_reference));
+	result.Add("placeholder_id", RESTWriteValue<RESTInt64Codec>(writer, value.placeholder_id));
 	result.Add("type", RESTWriteValue<RESTStringCodec>(writer, value.type));
 	result.Add("id", RESTWriteValue<RESTUInt64Codec>(writer, value.id));
 	return result;
@@ -897,34 +897,9 @@ RESTCreatedEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for CreatedEntry");
 	}
 	RESTCreatedEntry result;
-	RESTReadValue<RESTUInt64Codec>(in.Get("entry_reference"), result.entry_reference);
+	RESTReadValue<RESTInt64Codec>(in.Get("placeholder_id"), result.placeholder_id);
 	RESTReadValue<RESTStringCodec>(in.Get("type"), result.type);
 	RESTReadValue<RESTUInt64Codec>(in.Get("id"), result.id);
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCreatedTable &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.placeholder)) {
-		result.Add("placeholder", RESTWriteValue<RESTInt64Codec>(writer, value.placeholder));
-	}
-	result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
-	return result;
-}
-
-template <>
-RESTCreatedTable DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for CreatedTable");
-	}
-	RESTCreatedTable result;
-	{
-		auto entry = in.TryGet("placeholder");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTInt64Codec>(entry, result.placeholder);
-		}
-	}
-	RESTReadValue<RESTUInt64Codec>(in.Get("table_id"), result.table_id);
 	return result;
 }
 
@@ -4298,7 +4273,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCom
 	if (!RESTIsNull(value.schema_version)) {
 		result.Add("schema_version", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_version));
 	}
-	result.Add("table_ids", RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTCreatedTable>>>(writer, value.table_ids));
 	result.Add("entry_ids", RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTCreatedEntry>>>(writer, value.entry_ids));
 	result.Add("table_options",
 	           RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTOptionSetting>>>(writer, value.table_options));
@@ -4324,12 +4298,6 @@ RESTCommitTransactionResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		}
 	}
 	{
-		auto entry = in.TryGet("table_ids");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTCreatedTable>>>(entry, result.table_ids);
-		}
-	}
-	{
 		auto entry = in.TryGet("entry_ids");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTCreatedEntry>>>(entry, result.entry_ids);
@@ -4346,12 +4314,7 @@ RESTCommitTransactionResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCreateSchemaRequest &value) {
 	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.placeholder_id)) {
-		result.Add("placeholder_id", RESTWriteValue<RESTInt64Codec>(writer, value.placeholder_id));
-	}
-	if (!RESTIsNull(value.entry_reference)) {
-		result.Add("entry_reference", RESTWriteValue<RESTUInt64Codec>(writer, value.entry_reference));
-	}
+	result.Add("placeholder_id", RESTWriteValue<RESTInt64Codec>(writer, value.placeholder_id));
 	if (!RESTIsNull(value.parent_schema_id)) {
 		result.Add("parent_schema_id", RESTWriteValue<RESTInt64Codec>(writer, value.parent_schema_id));
 	}
@@ -4372,18 +4335,7 @@ RESTCreateSchemaRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for CreateSchemaRequest");
 	}
 	RESTCreateSchemaRequest result;
-	{
-		auto entry = in.TryGet("placeholder_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTInt64Codec>(entry, result.placeholder_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("entry_reference");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.entry_reference);
-		}
-	}
+	RESTReadValue<RESTInt64Codec>(in.Get("placeholder_id"), result.placeholder_id);
 	{
 		auto entry = in.TryGet("parent_schema_id");
 		if (!entry.IsNull()) {
@@ -4416,12 +4368,7 @@ RESTCreateSchemaRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCreateTableRequest &value) {
 	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.placeholder_id)) {
-		result.Add("placeholder_id", RESTWriteValue<RESTInt64Codec>(writer, value.placeholder_id));
-	}
-	if (!RESTIsNull(value.entry_reference)) {
-		result.Add("entry_reference", RESTWriteValue<RESTUInt64Codec>(writer, value.entry_reference));
-	}
+	result.Add("placeholder_id", RESTWriteValue<RESTInt64Codec>(writer, value.placeholder_id));
 	result.Add("schema_id", RESTWriteValue<RESTInt64Codec>(writer, value.schema_id));
 	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
 	if (!RESTIsNull(value.table_uuid)) {
@@ -4449,18 +4396,7 @@ RESTCreateTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for CreateTableRequest");
 	}
 	RESTCreateTableRequest result;
-	{
-		auto entry = in.TryGet("placeholder_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTInt64Codec>(entry, result.placeholder_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("entry_reference");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.entry_reference);
-		}
-	}
+	RESTReadValue<RESTInt64Codec>(in.Get("placeholder_id"), result.placeholder_id);
 	RESTReadValue<RESTInt64Codec>(in.Get("schema_id"), result.schema_id);
 	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
 	{
@@ -4511,12 +4447,7 @@ RESTCreateTableRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCreateViewRequest &value) {
 	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.placeholder_id)) {
-		result.Add("placeholder_id", RESTWriteValue<RESTInt64Codec>(writer, value.placeholder_id));
-	}
-	if (!RESTIsNull(value.entry_reference)) {
-		result.Add("entry_reference", RESTWriteValue<RESTUInt64Codec>(writer, value.entry_reference));
-	}
+	result.Add("placeholder_id", RESTWriteValue<RESTInt64Codec>(writer, value.placeholder_id));
 	result.Add("schema_id", RESTWriteValue<RESTInt64Codec>(writer, value.schema_id));
 	result.Add("view_name", RESTWriteValue<RESTStringCodec>(writer, value.view_name));
 	if (!RESTIsNull(value.view_uuid)) {
@@ -4538,18 +4469,7 @@ RESTCreateViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for CreateViewRequest");
 	}
 	RESTCreateViewRequest result;
-	{
-		auto entry = in.TryGet("placeholder_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTInt64Codec>(entry, result.placeholder_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("entry_reference");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.entry_reference);
-		}
-	}
+	RESTReadValue<RESTInt64Codec>(in.Get("placeholder_id"), result.placeholder_id);
 	RESTReadValue<RESTInt64Codec>(in.Get("schema_id"), result.schema_id);
 	RESTReadValue<RESTStringCodec>(in.Get("view_name"), result.view_name);
 	{
@@ -4590,12 +4510,7 @@ RESTCreateViewRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTCreateMacroRequest &value) {
 	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.placeholder_id)) {
-		result.Add("placeholder_id", RESTWriteValue<RESTInt64Codec>(writer, value.placeholder_id));
-	}
-	if (!RESTIsNull(value.entry_reference)) {
-		result.Add("entry_reference", RESTWriteValue<RESTUInt64Codec>(writer, value.entry_reference));
-	}
+	result.Add("placeholder_id", RESTWriteValue<RESTInt64Codec>(writer, value.placeholder_id));
 	result.Add("schema_id", RESTWriteValue<RESTInt64Codec>(writer, value.schema_id));
 	result.Add("macro", RESTWriteValue<RESTObjectCodec<DuckLakeMacroInfo>>(writer, value.macro));
 	return result;
@@ -4607,18 +4522,7 @@ RESTCreateMacroRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		throw InvalidInputException("DuckLake REST: expected a JSON object for CreateMacroRequest");
 	}
 	RESTCreateMacroRequest result;
-	{
-		auto entry = in.TryGet("placeholder_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTInt64Codec>(entry, result.placeholder_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("entry_reference");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.entry_reference);
-		}
-	}
+	RESTReadValue<RESTInt64Codec>(in.Get("placeholder_id"), result.placeholder_id);
 	RESTReadValue<RESTInt64Codec>(in.Get("schema_id"), result.schema_id);
 	RESTReadValue<RESTObjectCodec<DuckLakeMacroInfo>>(in.Get("macro"), result.macro);
 	return result;
