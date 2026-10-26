@@ -267,6 +267,9 @@ public:
 	//! The committed table at the snapshot, without the changes of the transaction
 	optional_ptr<CatalogEntry> GetEntryById(DuckLakeTransaction &transaction, DuckLakeSnapshot snapshot,
 	                                        TableIndex table_id);
+	//! The committed macro at the snapshot
+	optional_ptr<CatalogEntry> GetEntryById(DuckLakeTransaction &transaction, DuckLakeSnapshot snapshot,
+	                                        MacroIndex macro_id);
 	string GeneratePathFromName(const string &uuid, const string &name);
 
 	bool InMemory() override;

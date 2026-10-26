@@ -21,7 +21,7 @@ decimal(18,3)
 # types of requests are structured, with the same names
 query I
 SELECT response->>'$.table_ids[0].table_id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_table": {"schema_path": ["main"], "table_name": "u", "columns": [
+'{"requests": [{"create_table": {"schema_id": 0, "table_name": "u", "columns": [
   {"column_name": "a", "column_type": {"id": "decimal", "width": 18, "scale": 3}},
   {"column_name": "b", "column_type": {"id": "list", "child": {"id": "int32"}}},
   {"column_name": "c", "column_type": {"id": "map", "key": {"id": "varchar"}, "value": {"id": "int64"}}},
@@ -44,7 +44,7 @@ HUGEINT
 
 query I
 SELECT response->>'$.error.type' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_table": {"schema_path": ["main"], "table_name": "v", "columns": [{"column_name": "a", "column_type": {"id": "INTEGER"}}]}}]}')
+'{"requests": [{"create_table": {"schema_id": 0, "table_name": "v", "columns": [{"column_name": "a", "column_type": {"id": "INTEGER"}}]}}]}')
 ----
 Invalid Input
 

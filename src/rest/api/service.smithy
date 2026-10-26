@@ -45,15 +45,14 @@ use ducklake.rest.codegen#wireType
             A client records the changes of a transaction and sends them to `commit_transaction` when it commits. The changes
             are a list of requests that are applied in order; later requests can refer to entries created by earlier requests
             through negative placeholder ids: `-1` is the first entry (schema, table, view, ...) created in the transaction,
-            `-2` the second one, etc.
+            `-2` the second one, etc. A request that creates an entry sets its `placeholder_id`.
 
             Clients send the deletes of committed data first, then the catalog changes in the order in which they were made,
             and then the inserted data in the format of the tables at the end of the transaction. This order matters: e.g. a
             `SET NOT NULL` that follows a delete of the `NULL` rows only succeeds after the delete.
 
-            Requests that refer to existing entries identify them by `schema_path` and `name`. They are applied in order, so a
-            name always refers to the entry as it is at that point of the transaction. An empty `schema_path` refers to the
-            default schema.
+            Requests refer to existing entries by their ids, so they act on the entry that the client saw, whatever other
+            transactions did to its name since.
             """
     }
     {

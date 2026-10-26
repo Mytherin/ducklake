@@ -348,13 +348,51 @@ void ApplySetColumnCommentToView(DuckLakeTransaction &transaction, CatalogTransa
 	transaction.AlterEntry(view, std::move(new_view));
 }
 
+//! The table or view that an alter changes, null if there is none
+optional_ptr<CatalogEntry> GetAlterTarget(DuckLakeSchemaEntry &schema, CatalogTransaction catalog_transaction,
+                                          const AlterInfo &info) {
+	CatalogType type = CatalogType::INVALID;
+	switch (info.type) {
+	case AlterType::ALTER_TABLE:
+		type = CatalogType::TABLE_ENTRY;
+		break;
+	case AlterType::ALTER_VIEW:
+		type = CatalogType::VIEW_ENTRY;
+		break;
+	case AlterType::SET_COMMENT:
+		type = info.Cast<SetCommentInfo>().entry_catalog_type;
+		break;
+	case AlterType::SET_COLUMN_COMMENT:
+		type = info.Cast<SetColumnCommentInfo>().catalog_entry_type;
+		break;
+	default:
+		return nullptr;
+	}
+	if (type == CatalogType::TABLE_ENTRY || type == CatalogType::INVALID) {
+		auto table = TryGetAlterEntry<DuckLakeTableEntry>(schema, catalog_transaction, info);
+		if (table) {
+			return table.get();
+		}
+		if (type == CatalogType::TABLE_ENTRY) {
+			return nullptr;
+		}
+	}
+	if (type == CatalogType::VIEW_ENTRY || type == CatalogType::INVALID) {
+		return TryGetAlterEntry<DuckLakeViewEntry>(schema, catalog_transaction, info).get();
+	}
+	return nullptr;
+}
+
 } // namespace
 
 void DuckLakeSchemaEntry::Alter(CatalogTransaction catalog_transaction, AlterInfo &info) {
 	auto &context = catalog_transaction.GetContext();
 	auto &transaction = DuckLakeTransaction::Get(context, catalog);
 	// recorded before the alter is applied, applying it can move expressions out of the info
-	transaction.GetMetadataManager().OnAlterEntry(*this, info);
+	auto alter_target = GetAlterTarget(*this, catalog_transaction, info);
+	if (alter_target) {
+		transaction.GetMetadataManager().OnAlterEntry(*alter_target, info);
+	}
 	switch (info.type) {
 	case AlterType::ALTER_TABLE: {
 		auto &alter = info.Cast<AlterTableInfo>();

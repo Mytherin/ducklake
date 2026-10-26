@@ -246,7 +246,7 @@ public:
 	}
 	virtual void OnCreateMacro(MacroCatalogEntry &macro) {
 	}
-	virtual void OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) {
+	virtual void OnAlterEntry(CatalogEntry &entry, const AlterInfo &info) {
 	}
 	virtual void OnDropEntry(CatalogEntry &entry) {
 	}

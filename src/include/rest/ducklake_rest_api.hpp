@@ -1236,10 +1236,14 @@ struct RESTCreateSchemaRequest : public RESTCommitRequest {
 	RESTCreateSchemaRequest() : RESTCommitRequest(TYPE) {
 	}
 
+	//! The placeholder id of the schema: a negative number that later requests of the transaction refer to the schema
+	RESTOptional<int64_t> placeholder_id;
 	//! A number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can
 	optional_idx entry_reference;
-	//! The path of the schema, e.g. `["parent", "child"]`.
-	vector<string> schema_path;
+	//! The schema that holds the new schema, absent for a schema at the top level. A negative id is the placeholder id
+	RESTOptional<int64_t> parent_schema_id;
+	//! The name of the schema.
+	string schema_name;
 	//! The uuid of the schema.
 	string schema_uuid;
 	//! The data path of the schema.
@@ -1255,12 +1259,12 @@ struct RESTCreateTableRequest : public RESTCommitRequest {
 	RESTCreateTableRequest() : RESTCommitRequest(TYPE) {
 	}
 
-	//! The placeholder id of the table.
-	RESTOptional<int64_t> table_id;
+	//! The placeholder id of the table, which `insert_rows`, `insert_files` and `delete_data` refer to the table with.
+	RESTOptional<int64_t> placeholder_id;
 	//! See `create_schema`.
 	optional_idx entry_reference;
-	//! The schema of the table, e.g. `["main"]`.
-	vector<string> schema_path;
+	//! The schema of the table. A negative id is the placeholder id of a schema created in the transaction.
+	int64_t schema_id = 0;
 	//! The name of the table.
 	string table_name;
 	//! The uuid of the table.
@@ -1289,9 +1293,11 @@ struct RESTCreateViewRequest : public RESTCommitRequest {
 	}
 
 	//! See `create_schema`.
+	RESTOptional<int64_t> placeholder_id;
+	//! See `create_schema`.
 	optional_idx entry_reference;
-	//! The schema of the view.
-	vector<string> schema_path;
+	//! The schema of the view, see `create_table`.
+	int64_t schema_id = 0;
 	//! The name of the view.
 	string view_name;
 	//! The uuid of the view.
@@ -1316,9 +1322,11 @@ struct RESTCreateMacroRequest : public RESTCommitRequest {
 	}
 
 	//! See `create_schema`.
+	RESTOptional<int64_t> placeholder_id;
+	//! See `create_schema`.
 	optional_idx entry_reference;
-	//! The schema of the macro.
-	vector<string> schema_path;
+	//! The schema of the macro, see `create_table`.
+	int64_t schema_id = 0;
 	//! The macro (its ids are ignored).
 	DuckLakeMacroInfo macro;
 };
@@ -1330,10 +1338,8 @@ struct RESTAlterRequest : public RESTCommitRequest {
 	RESTAlterRequest() : RESTCommitRequest(TYPE) {
 	}
 
-	//! The schema of the table or view.
-	vector<string> schema_path;
-	//! The name of the table or view.
-	string name;
+	//! The table or view. A negative id is the placeholder id of an entry created in the transaction.
+	int64_t entry_id = 0;
 	//! The change.
 	unique_ptr<RESTAlteration> alter;
 	//! For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`).
@@ -1349,10 +1355,8 @@ struct RESTDropRequest : public RESTCommitRequest {
 
 	//! The type of the entry.
 	string entry_type;
-	//! The schema of the entry. For a schema: the path of the schema.
-	vector<string> schema_path;
-	//! The name of the entry. Not for a schema.
-	string name;
+	//! The entry. A negative id is the placeholder id of an entry created in the transaction.
+	int64_t entry_id = 0;
 };
 
 //! The `set_option` request of a commit.

@@ -784,6 +784,13 @@ RESTCompactResponse DuckLakeRESTEndpoints::Compact(DuckLakeRESTRequest &request,
 // Commit
 //===--------------------------------------------------------------------===//
 //! Replays the operations of a client transaction in the transaction of the request
+//! The name of an entry in a schema
+struct RESTEntryName {
+	CatalogType type;
+	vector<string> schema_path;
+	string name;
+};
+
 class DuckLakeRESTCommit : public DuckLakeRESTCommitHandler {
 public:
 	explicit DuckLakeRESTCommit(DuckLakeRESTRequest &request)
@@ -806,9 +813,6 @@ protected:
 	void DeleteData(RESTDeleteDataRequest &parameters) override;
 
 private:
-	void Alter(const vector<string> &schema_path, const string &name, const RESTAlteration &alter,
-	           optional_idx partition_id);
-	void Drop(CatalogType type, const vector<string> &schema_path, const string &name);
 	void RemapNameMap(DuckLakeDataFile &file);
 	//! Deletes inlined rows, which are in the inlined data of any schema version of the table
 	void AddInlinedDeletes(DuckLakeTableEntry &table, const set<idx_t> &row_ids);
@@ -818,8 +822,15 @@ private:
 	void RemapPartition(DuckLakeTableEntry &table, DuckLakeDataFile &file);
 
 	DuckLakeSchemaEntry &GetSchema(const vector<string> &schema_path);
+	//! The path of a schema of the request: the id of a committed schema, or the placeholder id of a created one
+	vector<string> GetSchemaPath(int64_t schema_id);
+	//! The name of an entry of the request, as it is at this point of the transaction
+	RESTEntryName &GetEntryName(int64_t entry_id);
+	//! Registers the placeholder id of a created entry
+	void AddPlaceholder(const RESTOptional<int64_t> &placeholder_id, CatalogType type,
+	                    const vector<string> &schema_path, const string &name);
 	//! The qualified name of an entry in a schema of the catalog
-	QualifiedName GetEntryName(const vector<string> &schema_path, const string &name);
+	QualifiedName GetEntryQualifiedName(const vector<string> &schema_path, const string &name);
 	//! The qualified name of a schema
 	QualifiedName GetSchemaName(const vector<string> &schema_path);
 	//! Resolves an id of the request, negative ids refer to entries created by earlier requests
@@ -833,6 +844,10 @@ private:
 	DuckLakeCatalog &catalog;
 	ClientContext &context;
 	map<int64_t, TableIndex> placeholder_ids;
+	//! The paths of the schemas created by the requests, by their placeholder ids
+	map<int64_t, vector<string>> schema_paths;
+	//! The names of the entries that the requests refer to, by their ids
+	map<int64_t, RESTEntryName> entry_names;
 	//! The schemas of the tables created by the transaction
 	map<TableIndex, SchemaIndex> local_table_schemas;
 	//! The tables created by the requests with their placeholder ids, in the order they were created
@@ -863,7 +878,7 @@ DuckLakeSchemaEntry &DuckLakeRESTCommit::GetSchema(const vector<string> &schema_
 	return schema->Cast<DuckLakeSchemaEntry>();
 }
 
-QualifiedName DuckLakeRESTCommit::GetEntryName(const vector<string> &schema_path, const string &name) {
+QualifiedName DuckLakeRESTCommit::GetEntryQualifiedName(const vector<string> &schema_path, const string &name) {
 	vector<Identifier> path;
 	path.push_back(catalog.GetName());
 	for (auto &schema_name : schema_path) {
@@ -882,6 +897,74 @@ QualifiedName DuckLakeRESTCommit::GetSchemaName(const vector<string> &schema_pat
 		path.emplace_back(name);
 	}
 	return QualifiedName(std::move(path), Identifier());
+}
+
+static vector<string> GetPathOfSchema(DuckLakeSchemaEntry &schema) {
+	vector<string> path;
+	for (optional_ptr<DuckLakeSchemaEntry> entry = &schema; entry; entry = entry->ParentDuckLakeSchema()) {
+		path.push_back(entry->name.GetIdentifierName());
+	}
+	std::reverse(path.begin(), path.end());
+	return path;
+}
+
+static void CheckPlaceholderId(const RESTOptional<int64_t> &placeholder_id) {
+	if (placeholder_id.has_value && placeholder_id.value >= 0) {
+		throw InvalidInputException("A placeholder id is negative, not %lld", placeholder_id.value);
+	}
+}
+
+vector<string> DuckLakeRESTCommit::GetSchemaPath(int64_t schema_id) {
+	if (schema_id < 0) {
+		auto entry = schema_paths.find(schema_id);
+		if (entry == schema_paths.end()) {
+			throw InvalidInputException("Placeholder id %lld does not refer to a schema created in this transaction",
+			                            schema_id);
+		}
+		return entry->second;
+	}
+	auto entry =
+	    catalog.GetEntryById(transaction, transaction.GetSnapshot(), SchemaIndex(NumericCast<idx_t>(schema_id)));
+	if (!entry || entry->type != CatalogType::SCHEMA_ENTRY) {
+		throw CatalogException("Schema with id %lld does not exist", schema_id);
+	}
+	return GetPathOfSchema(entry->Cast<DuckLakeSchemaEntry>());
+}
+
+RESTEntryName &DuckLakeRESTCommit::GetEntryName(int64_t entry_id) {
+	auto known = entry_names.find(entry_id);
+	if (known != entry_names.end()) {
+		return known->second;
+	}
+	if (entry_id < 0) {
+		throw InvalidInputException("Placeholder id %lld does not refer to an entry created in this transaction",
+		                            entry_id);
+	}
+	auto snapshot = transaction.GetSnapshot();
+	auto table = catalog.GetEntryById(transaction, snapshot, TableIndex(NumericCast<idx_t>(entry_id)));
+	optional_ptr<CatalogEntry> entry = table;
+	optional_ptr<SchemaCatalogEntry> schema;
+	if (entry) {
+		schema = entry->ParentSchema();
+	} else {
+		entry = catalog.GetEntryById(transaction, snapshot, MacroIndex(NumericCast<idx_t>(entry_id)));
+		if (entry) {
+			schema = entry->Cast<MacroCatalogEntry>().schema;
+		}
+	}
+	if (!entry) {
+		throw CatalogException("Entry with id %lld does not exist", entry_id);
+	}
+	RESTEntryName result {entry->type, GetPathOfSchema(schema->Cast<DuckLakeSchemaEntry>()),
+	                      entry->name.GetIdentifierName()};
+	return entry_names.emplace(entry_id, std::move(result)).first->second;
+}
+
+void DuckLakeRESTCommit::AddPlaceholder(const RESTOptional<int64_t> &placeholder_id, CatalogType type,
+                                        const vector<string> &schema_path, const string &name) {
+	if (placeholder_id.has_value) {
+		entry_names[placeholder_id.value] = RESTEntryName {type, schema_path, name};
+	}
 }
 
 TableIndex DuckLakeRESTCommit::GetTableId(int64_t table_id) {
@@ -922,18 +1005,29 @@ DuckLakeTableEntry &DuckLakeRESTCommit::GetTable(TableIndex table_id) {
 }
 
 void DuckLakeRESTCommit::CreateSchema(RESTCreateSchemaRequest &parameters) {
-	if (parameters.schema_path.empty()) {
-		throw InvalidInputException("create_schema requires a non-empty schema_path");
+	CheckPlaceholderId(parameters.placeholder_id);
+	if (parameters.schema_name.empty()) {
+		throw InvalidInputException("create_schema requires a schema_name");
 	}
+	vector<string> path;
+	if (parameters.parent_schema_id.has_value) {
+		path = GetSchemaPath(parameters.parent_schema_id.value);
+	}
+	path.push_back(parameters.schema_name);
 	auto info = make_uniq<CreateSchemaInfo>();
-	info->SetQualifiedName(GetSchemaName(parameters.schema_path));
+	info->SetQualifiedName(GetSchemaName(path));
 	info->on_conflict =
 	    parameters.if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
 	AddEntryReference(catalog.CreateSchema(catalog.GetCatalogTransaction(context), *info), parameters.entry_reference);
+	if (parameters.placeholder_id.has_value) {
+		schema_paths[parameters.placeholder_id.value] = std::move(path);
+	}
 }
 
 void DuckLakeRESTCommit::CreateTable(RESTCreateTableRequest &parameters) {
-	auto &schema = GetSchema(parameters.schema_path);
+	CheckPlaceholderId(parameters.placeholder_id);
+	auto schema_path = GetSchemaPath(parameters.schema_id);
+	auto &schema = GetSchema(schema_path);
 	auto info = make_uniq<CreateTableInfo>(schema, Identifier(parameters.table_name));
 	for (auto &column : parameters.columns) {
 		auto logical_index = LogicalIndex(info->columns.LogicalColumnCount());
@@ -970,14 +1064,17 @@ void DuckLakeRESTCommit::CreateTable(RESTCreateTableRequest &parameters) {
 	auto table_id = table.GetTableId();
 	local_table_schemas[table_id] = schema.GetSchemaId();
 	RegisterPartition(table, parameters.partition_id);
-	if (parameters.table_id.has_value) {
-		placeholder_ids[parameters.table_id.value] = table_id;
+	if (parameters.placeholder_id.has_value) {
+		placeholder_ids[parameters.placeholder_id.value] = table_id;
 	}
-	created_tables.emplace_back(parameters.table_id, table_id);
+	AddPlaceholder(parameters.placeholder_id, CatalogType::TABLE_ENTRY, schema_path, parameters.table_name);
+	created_tables.emplace_back(parameters.placeholder_id, table_id);
 }
 
 void DuckLakeRESTCommit::CreateView(RESTCreateViewRequest &parameters) {
-	auto &schema = GetSchema(parameters.schema_path);
+	CheckPlaceholderId(parameters.placeholder_id);
+	auto schema_path = GetSchemaPath(parameters.schema_id);
+	auto &schema = GetSchema(schema_path);
 	if (parameters.dialect != "duckdb") {
 		throw NotImplementedException("Unsupported view dialect \"%s\"", parameters.dialect);
 	}
@@ -994,22 +1091,38 @@ void DuckLakeRESTCommit::CreateView(RESTCreateViewRequest &parameters) {
 		info->column_comments_map[Identifier(entry.first)] = Value(entry.second);
 	}
 	AddEntryReference(schema.CreateView(catalog.GetCatalogTransaction(context), *info), parameters.entry_reference);
+	AddPlaceholder(parameters.placeholder_id, CatalogType::VIEW_ENTRY, schema_path, parameters.view_name);
 }
 
 void DuckLakeRESTCommit::CreateMacro(RESTCreateMacroRequest &parameters) {
-	auto &schema = GetSchema(parameters.schema_path);
+	CheckPlaceholderId(parameters.placeholder_id);
+	auto schema_path = GetSchemaPath(parameters.schema_id);
+	auto &schema = GetSchema(schema_path);
 	auto info = CreateMacroInfoFromDucklake(context, parameters.macro, schema.name.GetIdentifierName());
-	AddEntryReference(schema.CreateFunction(catalog.GetCatalogTransaction(context), *info), parameters.entry_reference);
+	auto entry = schema.CreateFunction(catalog.GetCatalogTransaction(context), *info);
+	AddEntryReference(entry, parameters.entry_reference);
+	if (entry) {
+		AddPlaceholder(parameters.placeholder_id, entry->type, schema_path, entry->name.GetIdentifierName());
+	}
 }
 
 void DuckLakeRESTCommit::Alter(RESTAlterRequest &parameters) {
-	AlterEntryData entry(GetEntryName(parameters.schema_path, parameters.name), OnEntryNotFound::THROW_EXCEPTION);
+	auto &name = GetEntryName(parameters.entry_id);
+	if (name.type != CatalogType::TABLE_ENTRY && name.type != CatalogType::VIEW_ENTRY) {
+		throw InvalidInputException("Entry %lld is not a table or a view", parameters.entry_id);
+	}
+	AlterEntryData entry(GetEntryQualifiedName(name.schema_path, name.name), OnEntryNotFound::THROW_EXCEPTION);
 	auto info = DuckLakeRESTCatalogChanges::ReadAlter(context, *parameters.alter, entry);
 	catalog.Alter(context, *info);
+	if (parameters.alter->type == RESTAlterationType::RENAME_TABLE) {
+		name.name = parameters.alter->Cast<RESTRenameTable>().new_name;
+	} else if (parameters.alter->type == RESTAlterationType::RENAME_VIEW) {
+		name.name = parameters.alter->Cast<RESTRenameView>().new_name;
+	}
 	if (parameters.partition_id.IsValid()) {
-		auto &schema = GetSchema(parameters.schema_path);
-		auto table = schema.GetEntry(catalog.GetCatalogTransaction(context), CatalogType::TABLE_ENTRY,
-		                             info->GetQualifiedName().Name());
+		auto &schema = GetSchema(name.schema_path);
+		auto table =
+		    schema.GetEntry(catalog.GetCatalogTransaction(context), CatalogType::TABLE_ENTRY, Identifier(name.name));
 		if (table) {
 			RegisterPartition(table->Cast<DuckLakeTableEntry>(), parameters.partition_id);
 		}
@@ -1019,15 +1132,9 @@ void DuckLakeRESTCommit::Alter(RESTAlterRequest &parameters) {
 void DuckLakeRESTCommit::Drop(RESTDropRequest &parameters) {
 	DropInfo info;
 	if (parameters.entry_type == "schema") {
-		if (!parameters.name.empty()) {
-			throw InvalidInputException("A schema is dropped by its schema_path, without a name");
-		}
 		info.type = CatalogType::SCHEMA_ENTRY;
-		info.SetQualifiedName(GetSchemaName(parameters.schema_path));
+		info.SetQualifiedName(GetSchemaName(GetSchemaPath(parameters.entry_id)));
 	} else {
-		if (parameters.name.empty()) {
-			throw InvalidInputException("Dropping a %s needs a name", parameters.entry_type);
-		}
 		if (parameters.entry_type == "table") {
 			info.type = CatalogType::TABLE_ENTRY;
 		} else if (parameters.entry_type == "view") {
@@ -1037,7 +1144,12 @@ void DuckLakeRESTCommit::Drop(RESTDropRequest &parameters) {
 		} else {
 			info.type = CatalogType::MACRO_ENTRY;
 		}
-		info.SetQualifiedName(GetEntryName(parameters.schema_path, parameters.name));
+		auto &name = GetEntryName(parameters.entry_id);
+		if (name.type != info.type) {
+			throw InvalidInputException("Entry %lld is not a %s", parameters.entry_id, parameters.entry_type);
+		}
+		info.SetQualifiedName(GetEntryQualifiedName(name.schema_path, name.name));
+		entry_names.erase(parameters.entry_id);
 	}
 	catalog.DropEntry(context, info);
 }

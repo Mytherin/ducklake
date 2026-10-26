@@ -733,19 +733,15 @@ void RESTMetadataManager::RemoveFilesScheduledForCleanup(const vector<DuckLakeFi
 //===--------------------------------------------------------------------===//
 // Catalog Changes
 //===--------------------------------------------------------------------===//
-static vector<string> GetSchemaPath(DuckLakeSchemaEntry &schema) {
-	vector<string> path;
-	for (optional_ptr<DuckLakeSchemaEntry> entry = &schema; entry; entry = entry->ParentDuckLakeSchema()) {
-		path.push_back(entry->name.GetIdentifierName());
-	}
-	std::reverse(path.begin(), path.end());
-	return path;
-}
-
 void RESTMetadataManager::OnCreateSchema(DuckLakeSchemaEntry &schema) {
 	auto &request = AddCommitRequest<RESTCreateSchemaRequest>();
+	request.placeholder_id = ToRequestId(schema.GetSchemaId().index);
 	request.entry_reference = schema.oid;
-	request.schema_path = GetSchemaPath(schema);
+	auto parent = schema.ParentDuckLakeSchema();
+	if (parent) {
+		request.parent_schema_id = ToRequestId(parent->GetSchemaId().index);
+	}
+	request.schema_name = schema.name.GetIdentifierName();
 	request.schema_uuid = schema.GetSchemaUUID();
 	request.path = schema.DataPath();
 }
@@ -753,9 +749,9 @@ void RESTMetadataManager::OnCreateSchema(DuckLakeSchemaEntry &schema) {
 void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const CreateTableInfo &info,
                                         const DuckLakeTableEntry &table) {
 	auto &request = AddCommitRequest<RESTCreateTableRequest>();
-	request.table_id = ToRequestId(table.GetTableId().index);
+	request.placeholder_id = ToRequestId(table.GetTableId().index);
 	request.entry_reference = table.oid;
-	request.schema_path = GetSchemaPath(schema);
+	request.schema_id = ToRequestId(schema.GetSchemaId().index);
 	request.table_name = info.GetTableName().GetIdentifierName();
 	request.table_uuid = table.GetTableUUID();
 	request.path = table.DataPath();
@@ -784,8 +780,9 @@ void RESTMetadataManager::OnCreateTable(DuckLakeSchemaEntry &schema, const Creat
 
 void RESTMetadataManager::OnCreateView(DuckLakeViewEntry &view) {
 	auto &request = AddCommitRequest<RESTCreateViewRequest>();
+	request.placeholder_id = ToRequestId(view.GetViewId().index);
 	request.entry_reference = view.oid;
-	request.schema_path = GetSchemaPath(view.ParentSchema().Cast<DuckLakeSchemaEntry>());
+	request.schema_id = ToRequestId(view.ParentSchema().Cast<DuckLakeSchemaEntry>().GetSchemaId().index);
 	request.view_name = view.name.GetIdentifierName();
 	request.view_uuid = view.GetViewUUID();
 	request.dialect = "duckdb";
@@ -806,8 +803,12 @@ void RESTMetadataManager::OnCreateView(DuckLakeViewEntry &view) {
 
 void RESTMetadataManager::OnCreateMacro(MacroCatalogEntry &macro) {
 	auto &request = AddCommitRequest<RESTCreateMacroRequest>();
+	// macros have no id before the commit: the placeholder id is a local id
+	auto placeholder_id = ToRequestId(transaction.GetLocalCatalogId());
+	local_macros[macro] = placeholder_id;
+	request.placeholder_id = placeholder_id;
 	request.entry_reference = macro.oid;
-	request.schema_path = GetSchemaPath(macro.schema.Cast<DuckLakeSchemaEntry>());
+	request.schema_id = ToRequestId(macro.schema.Cast<DuckLakeSchemaEntry>().GetSchemaId().index);
 	request.macro = DuckLakeTransactionState::GetMacroInfo(macro);
 }
 
@@ -829,15 +830,18 @@ static LogicalType GetAlteredType(const AlterInfo &info) {
 	}
 }
 
-void RESTMetadataManager::OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) {
+void RESTMetadataManager::OnAlterEntry(CatalogEntry &entry, const AlterInfo &info) {
 	auto altered_type = GetAlteredType(info);
 	if (altered_type.id() != LogicalTypeId::INVALID) {
 		DuckLakeTypes::ToString(altered_type);
 		DuckLakeTypes::CheckSupportedType(altered_type, transaction.GetCatalog().GetDuckLakeVersion());
 	}
 	auto &request = AddCommitRequest<RESTAlterRequest>();
-	request.schema_path = GetSchemaPath(schema);
-	request.name = info.GetQualifiedName().Name().GetIdentifierName();
+	if (entry.type == CatalogType::TABLE_ENTRY) {
+		request.entry_id = ToRequestId(entry.Cast<DuckLakeTableEntry>().GetTableId().index);
+	} else {
+		request.entry_id = ToRequestId(entry.Cast<DuckLakeViewEntry>().GetViewId().index);
+	}
 	request.alter = DuckLakeRESTCatalogChanges::WriteAlter(info);
 }
 
@@ -846,25 +850,33 @@ void RESTMetadataManager::OnDropEntry(CatalogEntry &entry) {
 	switch (entry.type) {
 	case CatalogType::SCHEMA_ENTRY:
 		request.entry_type = "schema";
-		request.schema_path = GetSchemaPath(entry.Cast<DuckLakeSchemaEntry>());
+		request.entry_id = ToRequestId(entry.Cast<DuckLakeSchemaEntry>().GetSchemaId().index);
 		return;
 	case CatalogType::TABLE_ENTRY:
 		request.entry_type = "table";
-		break;
+		request.entry_id = ToRequestId(entry.Cast<DuckLakeTableEntry>().GetTableId().index);
+		return;
 	case CatalogType::VIEW_ENTRY:
 		request.entry_type = "view";
-		break;
+		request.entry_id = ToRequestId(entry.Cast<DuckLakeViewEntry>().GetViewId().index);
+		return;
 	case CatalogType::MACRO_ENTRY:
-		request.entry_type = "scalar_macro";
-		break;
-	case CatalogType::TABLE_MACRO_ENTRY:
-		request.entry_type = "table_macro";
-		break;
+	case CatalogType::TABLE_MACRO_ENTRY: {
+		bool scalar = entry.type == CatalogType::MACRO_ENTRY;
+		request.entry_type = scalar ? "scalar_macro" : "table_macro";
+		auto local_macro = local_macros.find(entry);
+		if (local_macro != local_macros.end()) {
+			request.entry_id = local_macro->second;
+		} else if (scalar) {
+			request.entry_id = ToRequestId(entry.Cast<DuckLakeScalarMacroEntry>().GetIndex().index);
+		} else {
+			request.entry_id = ToRequestId(entry.Cast<DuckLakeTableMacroEntry>().GetIndex().index);
+		}
+		return;
+	}
 	default:
 		throw InternalException("Unsupported catalog entry type for DROP");
 	}
-	request.schema_path = GetSchemaPath(entry.ParentSchema().Cast<DuckLakeSchemaEntry>());
-	request.name = entry.name.GetIdentifierName();
 }
 
 void RESTMetadataManager::OnEntryChanged(CatalogEntry &entry) {

@@ -108,7 +108,7 @@ public:
 	                   const DuckLakeTableEntry &table) override;
 	void OnCreateView(DuckLakeViewEntry &view) override;
 	void OnCreateMacro(MacroCatalogEntry &macro) override;
-	void OnAlterEntry(DuckLakeSchemaEntry &schema, const AlterInfo &info) override;
+	void OnAlterEntry(CatalogEntry &entry, const AlterInfo &info) override;
 	void OnDropEntry(CatalogEntry &entry) override;
 	void OnEntryChanged(CatalogEntry &entry) override;
 	void OnDropFile(TableIndex table_id, DataFileIndex data_file_id, const string &path, idx_t row_count,
@@ -151,6 +151,8 @@ private:
 private:
 	//! The catalog changes of the transaction, in the order in which they were made
 	vector<unique_ptr<RESTCommitRequest>> catalog_requests;
+	//! The placeholder ids of the macros that the transaction created
+	reference_map_t<CatalogEntry, int64_t> local_macros;
 	mutex cache_lock;
 	//! The catalog of a snapshot that the transaction loaded, which came along with the snapshot
 	unique_ptr<DuckLakeCatalogInfo> prefetched_catalog;

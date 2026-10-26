@@ -47,13 +47,21 @@ operation CommitTransaction {
 
 /// Creates a schema.
 structure CreateSchemaRequest {
+    /// The placeholder id of the schema: a negative number that later requests of the transaction refer to the schema
+    /// with. Entries are numbered in the order of the client, e.g. `-1` for the first entry created in the transaction.
+    placeholder_id: Long
+
     /// A number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can
     /// use it to keep track of the entries it created, e.g. to keep their oids stable.
     entry_reference: UInt64
 
-    /// The path of the schema, e.g. `["parent", "child"]`.
+    /// The schema that holds the new schema, absent for a schema at the top level. A negative id is the placeholder id
+    /// of a schema created in the transaction.
+    parent_schema_id: Long
+
+    /// The name of the schema.
     @required
-    schema_path: StringList
+    schema_name: String
 
     /// The uuid of the schema.
     schema_uuid: String
@@ -70,14 +78,16 @@ structure CreateSchemaRequest {
 /// Columns get the field ids `1..n` in the order of the columns (nested fields are numbered depth-first), as in `CREATE
 /// TABLE`.
 structure CreateTableRequest {
-    /// The placeholder id of the table.
-    table_id: Long
+    /// The placeholder id of the table, which `insert_rows`, `insert_files` and `delete_data` refer to the table with.
+    /// See `create_schema`.
+    placeholder_id: Long
 
     /// See `create_schema`.
     entry_reference: UInt64
 
-    /// The schema of the table, e.g. `["main"]`.
-    schema_path: StringList = []
+    /// The schema of the table. A negative id is the placeholder id of a schema created in the transaction.
+    @required
+    schema_id: Long
 
     /// The name of the table.
     @required
@@ -114,10 +124,14 @@ structure CreateTableRequest {
 /// Creates a view.
 structure CreateViewRequest {
     /// See `create_schema`.
+    placeholder_id: Long
+
+    /// See `create_schema`.
     entry_reference: UInt64
 
-    /// The schema of the view.
-    schema_path: StringList = []
+    /// The schema of the view, see `create_table`.
+    @required
+    schema_id: Long
 
     /// The name of the view.
     @required
@@ -147,10 +161,14 @@ structure CreateViewRequest {
 /// Creates a macro.
 structure CreateMacroRequest {
     /// See `create_schema`.
+    placeholder_id: Long
+
+    /// See `create_schema`.
     entry_reference: UInt64
 
-    /// The schema of the macro.
-    schema_path: StringList = []
+    /// The schema of the macro, see `create_table`.
+    @required
+    schema_id: Long
 
     /// The macro (its ids are ignored).
     @required
@@ -159,12 +177,9 @@ structure CreateMacroRequest {
 
 /// Alters a table or a view.
 structure AlterRequest {
-    /// The schema of the table or view.
-    schema_path: StringList = []
-
-    /// The name of the table or view.
+    /// The table or view. A negative id is the placeholder id of an entry created in the transaction.
     @required
-    name: String
+    entry_id: Long
 
     /// The change.
     @required
@@ -180,11 +195,9 @@ structure DropRequest {
     @required
     entry_type: DropEntryType
 
-    /// The schema of the entry. For a schema: the path of the schema.
-    schema_path: StringList = []
-
-    /// The name of the entry. Not for a schema.
-    name: String
+    /// The entry. A negative id is the placeholder id of an entry created in the transaction.
+    @required
+    entry_id: Long
 }
 
 /// The type of an entry that `drop` drops.

@@ -446,15 +446,14 @@ Response:
 A client records the changes of a transaction and sends them to `commit_transaction` when it commits. The changes
 are a list of requests that are applied in order; later requests can refer to entries created by earlier requests
 through negative placeholder ids: `-1` is the first entry (schema, table, view, ...) created in the transaction,
-`-2` the second one, etc.
+`-2` the second one, etc. A request that creates an entry sets its `placeholder_id`.
 
 Clients send the deletes of committed data first, then the catalog changes in the order in which they were made,
 and then the inserted data in the format of the tables at the end of the transaction. This order matters: e.g. a
 `SET NOT NULL` that follows a delete of the `NULL` rows only succeeds after the delete.
 
-Requests that refer to existing entries identify them by `schema_path` and `name`. They are applied in order, so a
-name always refers to the entry as it is at that point of the transaction. An empty `schema_path` refers to the
-default schema.
+Requests refer to existing entries by their ids, so they act on the entry that the client saw, whatever other
+transactions did to its name since.
 
 ### `commit_transaction`
 
@@ -495,8 +494,10 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `placeholder_id` | `int64` (optional) | The placeholder id of the schema: a negative number that later requests of the transaction refer to the schema with. Entries are numbered in the order of the client, e.g. `-1` for the first entry created in the transaction. |
 | `entry_reference` | `uint64` (optional) | A number of the client's choosing, which `entry_ids` returns with the id the commit gave the entry. A client can use it to keep track of the entries it created, e.g. to keep their oids stable. |
-| `schema_path` | list of `string` | The path of the schema, e.g. `["parent", "child"]`. |
+| `parent_schema_id` | `int64` (optional) | The schema that holds the new schema, absent for a schema at the top level. A negative id is the placeholder id of a schema created in the transaction. |
+| `schema_name` | `string` | The name of the schema. |
 | `schema_uuid` | `string` (optional) | The uuid of the schema. |
 | `path` | `path` (optional) | The data path of the schema. |
 | `if_not_exists` | `bool` (default `false`) | Do nothing if the schema exists. |
@@ -514,9 +515,9 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `table_id` | `int64` (optional) | The placeholder id of the table. |
+| `placeholder_id` | `int64` (optional) | The placeholder id of the table, which `insert_rows`, `insert_files` and `delete_data` refer to the table with. See `create_schema`. |
 | `entry_reference` | `uint64` (optional) | See `create_schema`. |
-| `schema_path` | list of `string` (default `[]`) | The schema of the table, e.g. `["main"]`. |
+| `schema_id` | `int64` | The schema of the table. A negative id is the placeholder id of a schema created in the transaction. |
 | `table_name` | `string` | The name of the table. |
 | `table_uuid` | `string` (optional) | The uuid of the table. |
 | `path` | `path` (optional) | The data path of the table. |
@@ -537,8 +538,9 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `placeholder_id` | `int64` (optional) | See `create_schema`. |
 | `entry_reference` | `uint64` (optional) | See `create_schema`. |
-| `schema_path` | list of `string` (default `[]`) | The schema of the view. |
+| `schema_id` | `int64` | The schema of the view, see `create_table`. |
 | `view_name` | `string` | The name of the view. |
 | `view_uuid` | `string` (optional) | The uuid of the view. |
 | `dialect` | `string` (default `"duckdb"`) | The SQL dialect of the view, only `duckdb` for now. |
@@ -557,8 +559,9 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `placeholder_id` | `int64` (optional) | See `create_schema`. |
 | `entry_reference` | `uint64` (optional) | See `create_schema`. |
-| `schema_path` | list of `string` (default `[]`) | The schema of the macro. |
+| `schema_id` | `int64` | The schema of the macro, see `create_table`. |
 | `macro` | [`MacroInfo`](#macroinfo) | The macro (its ids are ignored). |
 
 Response: as for [`commit_transaction`](#commit_transaction).
@@ -571,8 +574,7 @@ Request:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `schema_path` | list of `string` (default `[]`) | The schema of the table or view. |
-| `name` | `string` | The name of the table or view. |
+| `entry_id` | `int64` | The table or view. A negative id is the placeholder id of an entry created in the transaction. |
 | `alter` | [`Alteration`](#alteration) | The change. |
 | `partition_id` | `uint64` (optional) | For `set_partitioned_by`: an id of the client for the new partitioning (as for `create_table`). |
 
@@ -587,8 +589,7 @@ Request:
 | Field | Type | Description |
 |-------|------|-------------|
 | `entry_type` | [`DropEntryType`](#dropentrytype) | The type of the entry. |
-| `schema_path` | list of `string` (default `[]`) | The schema of the entry. For a schema: the path of the schema. |
-| `name` | `string` (optional) | The name of the entry. Not for a schema. |
+| `entry_id` | `int64` | The entry. A negative id is the placeholder id of an entry created in the transaction. |
 
 Response: as for [`commit_transaction`](#commit_transaction).
 

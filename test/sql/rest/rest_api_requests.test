@@ -9,7 +9,7 @@ include test/template/rest_setup.test_template
 # a commit request can be sent on its own
 query I
 SELECT response->>'$.table_ids[0].table_id' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_table": {"schema_path": ["main"], "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}, {"column_name": "s", "column_type": {"id": "varchar"}}]}}]}')
+'{"requests": [{"create_table": {"schema_id": 0, "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}, {"column_name": "s", "column_type": {"id": "varchar"}}]}}]}')
 ----
 1
 
@@ -23,7 +23,7 @@ SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transacti
 query II
 SELECT response->>'$.snapshot_id', response->>'$.table_ids[0].placeholder' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
 '{"requests": [
-  {"create_table": {"table_id": -1, "schema_path": ["main"], "table_name": "t2", "columns": [{"column_name": "j", "column_type": {"id": "int64"}, "default": "42"}]}},
+  {"create_table": {"placeholder_id": -1, "schema_id": 0, "table_name": "t2", "columns": [{"column_name": "j", "column_type": {"id": "int64"}, "default": "42"}]}},
   {"insert_rows": {"table_id": -1, "column_types": [{"id": "int64"}], "rows": [[100]], "column_stats": []}}
 ]}')
 ----
@@ -106,7 +106,7 @@ SELECT status, (response->'$.catalog') IS NOT NULL FROM ducklake_rest_request('{
 # a created entry is returned with its id under the reference of its request
 query II
 SELECT response->>'$.entry_ids[0].entry_reference', response->>'$.entry_ids[0].type'
-FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit', '{"requests": [{"create_schema": {"schema_path": ["s"], "entry_reference": 1234}}]}')
+FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit', '{"requests": [{"create_schema": {"schema_name": "s", "entry_reference": 1234}}]}')
 ----
 1234	SCHEMA_ENTRY
 
@@ -123,7 +123,7 @@ SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{rest_serve
 
 query I
 SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_table": {"schema_path": ["main"], "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}]}}]}')
+'{"requests": [{"create_table": {"schema_id": 0, "table_name": "t", "columns": [{"column_name": "i", "column_type": {"id": "int32"}}]}}]}')
 ----
 404
 
@@ -265,39 +265,39 @@ SELECT status, response->>'$.error.message' LIKE '%Unsupported request "create_e
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%exactly one member%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_schema": {"schema_path": ["s2"]}, "drop_schema": {"schema_path": ["s2"]}}]}')
+'{"requests": [{"create_schema": {"schema_name": "s2"}, "drop_schema": {"entry_id": 1}}]}')
 ----
 400	true
 
 # entries are dropped by their type
 query I
 SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"create_schema": {"schema_path": ["s3"]}}, {"drop": {"entry_type": "schema", "schema_path": ["s3"]}}]}')
+'{"requests": [{"create_schema": {"placeholder_id": -1, "schema_name": "s3"}}, {"drop": {"entry_type": "schema", "entry_id": -1}}]}')
 ----
 200
 
 query II
-SELECT status, response->>'$.error.message' LIKE '%dropped by its schema_path, without a name%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"drop": {"entry_type": "schema", "schema_path": ["main"], "name": "t"}}]}')
+SELECT status, response->>'$.error.message' LIKE '%Placeholder id -5 does not refer to a schema%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
+'{"requests": [{"drop": {"entry_type": "schema", "entry_id": -5}}]}')
 ----
 400	true
 
 query II
-SELECT status, response->>'$.error.message' LIKE '%Dropping a table needs a name%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"drop": {"entry_type": "table", "schema_path": ["main"]}}]}')
+SELECT status, response->>'$.error.message' LIKE '%missing required field "entry_id"%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
+'{"requests": [{"drop": {"entry_type": "table"}}]}')
 ----
 400	true
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%"function" is not a valid DropEntryType%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"drop": {"entry_type": "function", "name": "f"}}]}')
+'{"requests": [{"drop": {"entry_type": "function", "entry_id": 1}}]}')
 ----
 400	true
 
 # alterations are unions: an object with exactly one member, the name of the change
 query I
 SELECT status FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"alter": {"schema_path": ["main"], "name": "t", "alter": {"rename_column": {"old_name": "s", "new_name": "str"}}}}]}')
+'{"requests": [{"alter": {"entry_id": 1, "alter": {"rename_column": {"old_name": "s", "new_name": "str"}}}}]}')
 ----
 200
 
@@ -308,25 +308,25 @@ i,str
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%"bogus" is not a valid Alteration%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"alter": {"name": "t", "alter": {"bogus": {}}}}]}')
+'{"requests": [{"alter": {"entry_id": 1, "alter": {"bogus": {}}}}]}')
 ----
 400	true
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%exactly one%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"alter": {"name": "t", "alter": {"type": "rename_column", "old_name": "i", "new_name": "j"}}}]}')
+'{"requests": [{"alter": {"entry_id": 1, "alter": {"type": "rename_column", "old_name": "i", "new_name": "j"}}}]}')
 ----
 400	true
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%missing required field "new_name"%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"alter": {"name": "t", "alter": {"rename_table": {}}}}]}')
+'{"requests": [{"alter": {"entry_id": 1, "alter": {"rename_table": {}}}}]}')
 ----
 400	true
 
 query II
 SELECT status, response->>'$.error.message' LIKE '%not a valid CatalogEntryType%' FROM ducklake_rest_request('{rest_server}', 'POST', '/v1/transactions/commit',
-'{"requests": [{"alter": {"name": "t", "alter": {"set_comment": {"entry_type": "SCHEMA_ENTRY", "comment": "c"}}}}]}')
+'{"requests": [{"alter": {"entry_id": 1, "alter": {"set_comment": {"entry_type": "SCHEMA_ENTRY", "comment": "c"}}}}]}')
 ----
 400	true
 
