@@ -16,6 +16,7 @@
 #include "duckdb/common/enums/catalog_type.hpp"
 
 namespace duckdb {
+class ClientContext;
 class DuckLakeRESTRequest;
 struct RESTCommitRequest;
 struct RESTAlteration;
@@ -196,6 +197,14 @@ struct RESTInsertRowsRequest;
 struct RESTInsertFilesRequest;
 struct RESTDeleteDataRequest;
 
+//! A response of a server
+struct RESTHttpResponse {
+	string body;
+	string content_type;
+	//! The context for the conversions of the body
+	optional_ptr<ClientContext> context;
+};
+
 //! Conversion of the structures of the REST API to and from JSON
 struct DuckLakeRESTSerializer {
 	template <class T>
@@ -206,6 +215,17 @@ struct DuckLakeRESTSerializer {
 		RESTJsonWriter document;
 		document.SetRoot(Write(document.writer, value));
 		return document.ToString();
+	}
+	//! The body of the response to a request: JSON, or another format that the request accepts
+	template <class T>
+	static string ToResponse(DuckLakeRESTRequest &request, T &value) {
+		return ToJSON(value);
+	}
+	//! Reads the body of a response of a content type
+	template <class T>
+	static T ReadResponse(RESTHttpResponse &response) {
+		RESTJsonReader document(response.body);
+		return Read<T>(document.Root());
 	}
 
 	static JSONMutableValue Write(JSONWriter &writer, const RESTAddColumn &value);
@@ -1541,10 +1561,11 @@ public:
 		return nullptr;
 	}
 
-	//! Sends the JSON body of a request to an endpoint, returns the JSON body of the response
+	//! Sends the JSON body of a request to an endpoint, returns the body of the response, which is JSON unless
+	//! the endpoint has a more compact format
 	//! Rethrows the error reported by the server
 	//! Requests of idempotent endpoints can be sent again, e.g. if the connection was closed by the server
-	virtual string Call(const string &endpoint, const string &body, bool idempotent) = 0;
+	virtual RESTHttpResponse Call(const string &endpoint, const string &body, bool idempotent) = 0;
 };
 
 } // namespace duckdb

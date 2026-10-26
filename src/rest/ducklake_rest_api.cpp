@@ -2,6 +2,7 @@
 
 #include "rest/ducklake_rest_api.hpp"
 #include "rest/ducklake_rest_server.hpp"
+#include "rest/ducklake_rest_arrow_responses.hpp"
 
 namespace duckdb {
 
@@ -5060,70 +5061,70 @@ static string ConfigEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTConfigRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::Config(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
+	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
 static string GetLatestSnapshotEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTGetLatestSnapshotRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::GetLatestSnapshot(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
+	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
 static string GetMetadataEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTGetMetadataRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::GetMetadata(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
+	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
 static string GetSnapshotAtEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTGetSnapshotAtRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::GetSnapshotAt(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
+	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
 static string ListSnapshotsEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTListSnapshotsRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::ListSnapshots(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
+	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
 static string SelectEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTSelectRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::Select(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
+	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
 static string TableChangesEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTTableChangesRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::TableChanges(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
+	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
 static string TableSizesEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTTableSizesRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::TableSizes(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
+	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
 static string CompactEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTCompactRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::Compact(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
+	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
 static string CommitTransactionEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	RESTJsonReader document(body);
 	auto parameters = DuckLakeRESTSerializer::Read<RESTCommitTransactionRequest>(document.Root());
 	auto result = DuckLakeRESTEndpoints::CommitTransaction(request, parameters);
-	return DuckLakeRESTSerializer::ToJSON(result);
+	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
 const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
@@ -5199,62 +5200,62 @@ const RESTRoute &DuckLakeRESTAPI::GetRoute(const string &endpoint) {
 //===--------------------------------------------------------------------===//
 RESTConfigResponse DuckLakeRESTClientAPI::Config(const RESTConfigRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("config", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTConfigResponse>(document.Root());
+	auto response = Call("config", DuckLakeRESTSerializer::ToJSON(request), true);
+	return DuckLakeRESTSerializer::ReadResponse<RESTConfigResponse>(response);
 }
 
 RESTSnapshotData DuckLakeRESTClientAPI::GetLatestSnapshot(const RESTGetLatestSnapshotRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("get_latest_snapshot", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTSnapshotData>(document.Root());
+	auto response = Call("get_latest_snapshot", DuckLakeRESTSerializer::ToJSON(request), true);
+	return DuckLakeRESTSerializer::ReadResponse<RESTSnapshotData>(response);
 }
 
 DuckLakeMetadata DuckLakeRESTClientAPI::GetMetadata(const RESTGetMetadataRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("get_metadata", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<DuckLakeMetadata>(document.Root());
+	auto response = Call("get_metadata", DuckLakeRESTSerializer::ToJSON(request), true);
+	return DuckLakeRESTSerializer::ReadResponse<DuckLakeMetadata>(response);
 }
 
 RESTSnapshotData DuckLakeRESTClientAPI::GetSnapshotAt(const RESTGetSnapshotAtRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("get_snapshot_at", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTSnapshotData>(document.Root());
+	auto response = Call("get_snapshot_at", DuckLakeRESTSerializer::ToJSON(request), true);
+	return DuckLakeRESTSerializer::ReadResponse<RESTSnapshotData>(response);
 }
 
 RESTListSnapshotsResponse DuckLakeRESTClientAPI::ListSnapshots(const RESTListSnapshotsRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("list_snapshots", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTListSnapshotsResponse>(document.Root());
+	auto response = Call("list_snapshots", DuckLakeRESTSerializer::ToJSON(request), true);
+	return DuckLakeRESTSerializer::ReadResponse<RESTListSnapshotsResponse>(response);
 }
 
 RESTSelectResponse DuckLakeRESTClientAPI::Select(const RESTSelectRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("select", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTSelectResponse>(document.Root());
+	auto response = Call("select", DuckLakeRESTSerializer::ToJSON(request), true);
+	return DuckLakeRESTSerializer::ReadResponse<RESTSelectResponse>(response);
 }
 
 RESTTableChangesResponse DuckLakeRESTClientAPI::TableChanges(const RESTTableChangesRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("table_changes", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTTableChangesResponse>(document.Root());
+	auto response = Call("table_changes", DuckLakeRESTSerializer::ToJSON(request), true);
+	return DuckLakeRESTSerializer::ReadResponse<RESTTableChangesResponse>(response);
 }
 
 RESTTableSizesResponse DuckLakeRESTClientAPI::TableSizes(const RESTTableSizesRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("table_sizes", DuckLakeRESTSerializer::ToJSON(request), true));
-	return DuckLakeRESTSerializer::Read<RESTTableSizesResponse>(document.Root());
+	auto response = Call("table_sizes", DuckLakeRESTSerializer::ToJSON(request), true);
+	return DuckLakeRESTSerializer::ReadResponse<RESTTableSizesResponse>(response);
 }
 
 RESTCompactResponse DuckLakeRESTClientAPI::Compact(const RESTCompactRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("compact", DuckLakeRESTSerializer::ToJSON(request), false));
-	return DuckLakeRESTSerializer::Read<RESTCompactResponse>(document.Root());
+	auto response = Call("compact", DuckLakeRESTSerializer::ToJSON(request), false);
+	return DuckLakeRESTSerializer::ReadResponse<RESTCompactResponse>(response);
 }
 
 RESTCommitTransactionResponse DuckLakeRESTClientAPI::CommitTransaction(const RESTCommitTransactionRequest &request) {
 	RESTPathScope paths(GetPathMapper());
-	RESTJsonReader document(Call("commit_transaction", DuckLakeRESTSerializer::ToJSON(request), false));
-	return DuckLakeRESTSerializer::Read<RESTCommitTransactionResponse>(document.Root());
+	auto response = Call("commit_transaction", DuckLakeRESTSerializer::ToJSON(request), false);
+	return DuckLakeRESTSerializer::ReadResponse<RESTCommitTransactionResponse>(response);
 }
 
 } // namespace duckdb

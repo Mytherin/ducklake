@@ -184,7 +184,9 @@ static string ErrorBody(ExceptionType type, const string &message, int32_t statu
 
 int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, optional_ptr<const string> prefix,
                                           const vector<string> &path_values, const vector<pair<string, string>> &query,
-                                          const string &body, string &response) {
+                                          const string &body, const string &accept, string &response,
+                                          string &content_type) {
+	content_type = "application/json";
 	try {
 		// the catalog of a request that finds the prefix is the one that it asks for, if it asks for one
 		string requested_catalog;
@@ -206,8 +208,10 @@ int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, optional_ptr<c
 		DuckLakeRESTRequest request(*served.db, served.catalog_name);
 		request.server = this;
 		request.prefix = served.prefix;
+		request.accepts_arrow = arrow_enabled && accept.find("multipart/mixed") != string::npos;
 		try {
 			response = entry->second(request, request_json);
+			content_type = request.content_type;
 			if (request.connection.HasActiveTransaction()) {
 				request.connection.Commit();
 			}
@@ -262,9 +266,11 @@ idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_cou
 				for (auto &param : req.params) {
 					query.emplace_back(param.first, param.second);
 				}
-				res.status = HandleRequest(route, with_prefix ? optional_ptr<const string>(&prefix) : nullptr,
-				                           path_values, query, req.body, response);
-				res.set_content(response, "application/json");
+				string content_type;
+				res.status =
+				    HandleRequest(route, with_prefix ? optional_ptr<const string>(&prefix) : nullptr, path_values,
+				                  query, req.body, req.get_header_value("Accept"), response, content_type);
+				res.set_content(response, content_type);
 			};
 			auto pattern = route.PathPattern(with_prefix);
 			if (route.method == "GET") {
@@ -444,6 +450,7 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 	auto overrides_val = GetNamedParameter(input, "overrides");
 	auto files_per_page_val = GetNamedParameter(input, "files_per_page");
 	auto page_size_val = GetNamedParameter(input, "page_size");
+	auto arrow_val = GetNamedParameter(input, "arrow");
 
 	auto &registry = DuckLakeRESTServerRegistry::Get();
 	// a server that already listens on this address serves the catalog as well
@@ -488,6 +495,9 @@ static unique_ptr<FunctionData> DuckLakeRESTServeBind(ClientContext &context, Ta
 		}
 		server->SetFilesPerPage(files_per_page);
 	}
+	if (!arrow_val.IsNull()) {
+		server->SetArrowEnabled(BooleanValue::Get(arrow_val));
+	}
 	if (!defaults_val.IsNull() || !overrides_val.IsNull()) {
 		server->SetClientProperties(ToStringMap(defaults_val), ToStringMap(overrides_val));
 	}
@@ -526,16 +536,25 @@ static unique_ptr<FunctionData> DuckLakeRESTRequestBind(ClientContext &context, 
 		}
 	}
 	auto token = GetNamedParameter(input, "token");
-	DuckLakeRESTClient client(StringValue::Get(input.inputs[0]), token.IsNull() ? string() : StringValue::Get(token));
+	DuckLakeRESTClient client(*context.db, StringValue::Get(input.inputs[0]),
+	                          token.IsNull() ? string() : StringValue::Get(token), false);
+	auto accept = GetNamedParameter(input, "accept");
 	string response;
+	string content_type;
 	auto status = client.SendRaw(StringUtil::Upper(StringValue::Get(input.inputs[1])),
-	                             StringValue::Get(input.inputs[2]), StringValue::Get(input.inputs[3]), response);
+	                             StringValue::Get(input.inputs[2]), StringValue::Get(input.inputs[3]), response,
+	                             content_type, accept.IsNull() ? string() : StringValue::Get(accept));
 	names.emplace_back("status");
 	return_types.emplace_back(LogicalType::INTEGER);
 	names.emplace_back("response");
-	return_types.emplace_back(LogicalType::JSON());
+	// multipart responses hold binary data
+	bool binary = StringUtil::StartsWith(content_type, "multipart/");
+	return_types.emplace_back(binary ? LogicalType::BLOB : LogicalType::JSON());
+	names.emplace_back("content_type");
+	return_types.emplace_back(LogicalType::VARCHAR);
 	auto result = make_uniq<MetadataBindData>();
-	result->rows.push_back({Value::INTEGER(status), Value(response)});
+	result->rows.push_back(
+	    {Value::INTEGER(status), binary ? Value::BLOB_RAW(response) : Value(response), Value(content_type)});
 	return std::move(result);
 }
 
@@ -557,6 +576,7 @@ DuckLakeRESTServeFunction::DuckLakeRESTServeFunction()
 		    .Add("prefix", LogicalType::VARCHAR)
 		    .Add("files_per_page", LogicalType::UBIGINT)
 		    .Add("page_size", LogicalType::UBIGINT)
+		    .Add("arrow", LogicalType::BOOLEAN)
 		    .Add("defaults", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))
 		    .Add("overrides", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
 	});
@@ -570,8 +590,9 @@ DuckLakeRESTRequestFunction::DuckLakeRESTRequestFunction()
                         .AddPositionalOnly("path", LogicalType::VARCHAR)
                         .AddPositionalOnly("body", LogicalType::VARCHAR),
                     DuckLakeRESTExecute, DuckLakeRESTRequestBind, DuckLakeRunOnceState::Init) {
-	GetSignature().WithTypedKwargs("options",
-	                               [&](TypedKwargs &options) { options.Add("token", LogicalType::VARCHAR); });
+	GetSignature().WithTypedKwargs("options", [&](TypedKwargs &options) {
+		options.Add("token", LogicalType::VARCHAR).Add("accept", LogicalType::VARCHAR);
+	});
 }
 
 DuckLakeRESTStopFunction::DuckLakeRESTStopFunction()

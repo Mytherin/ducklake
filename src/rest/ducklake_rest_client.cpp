@@ -7,8 +7,8 @@
 
 namespace duckdb {
 
-DuckLakeRESTClient::DuckLakeRESTClient(string base_url_p, string token_p)
-    : base_url(std::move(base_url_p)), token(std::move(token_p)) {
+DuckLakeRESTClient::DuckLakeRESTClient(DatabaseInstance &db, string base_url_p, string token_p, bool accept_arrow_p)
+    : base_url(std::move(base_url_p)), token(std::move(token_p)), accept_arrow(accept_arrow_p), arrow_connection(db) {
 	StringUtil::RTrim(base_url, "/");
 	// the path of the URL is the prefix of the catalog on the server
 	auto scheme_end = base_url.find("://");
@@ -58,8 +58,11 @@ void DuckLakeRESTClient::ReturnConnection(unique_ptr<duckdb_httplib::Client> con
 }
 
 int32_t DuckLakeRESTClient::Send(const string &method, const string &target, const string &body, bool idempotent,
-                                 string &response) {
+                                 string &response, string &content_type, const string &accept) {
 	duckdb_httplib::Headers headers;
+	if (!accept.empty()) {
+		headers.emplace("Accept", accept);
+	}
 	if (!token.empty()) {
 		headers.emplace("Authorization", "Bearer " + token);
 	}
@@ -70,7 +73,8 @@ int32_t DuckLakeRESTClient::Send(const string &method, const string &target, con
 		                              : connection->Post(target, headers, body, "application/json");
 		if (result) {
 			ReturnConnection(std::move(connection));
-			response = result->body;
+			response = std::move(result->body);
+			content_type = result->get_header_value("Content-Type");
 			return result->status;
 		}
 		auto error = result.error();
@@ -86,8 +90,9 @@ int32_t DuckLakeRESTClient::Send(const string &method, const string &target, con
 	}
 }
 
-int32_t DuckLakeRESTClient::SendRaw(const string &method, const string &target, const string &body, string &response) {
-	return Send(method, target, body, false, response);
+int32_t DuckLakeRESTClient::SendRaw(const string &method, const string &target, const string &body, string &response,
+                                    string &content_type, const string &accept) {
+	return Send(method, target, body, false, response, content_type, accept);
 }
 
 void DuckLakeRESTClient::SetPathMapping(string client_path, string server_path) {
@@ -120,15 +125,17 @@ string DuckLakeRESTClient::GetProperty(const string &name, const string &client_
 	return default_entry != defaults.end() ? default_entry->second : string();
 }
 
-string DuckLakeRESTClient::Call(const string &endpoint, const string &json, bool idempotent) {
+RESTHttpResponse DuckLakeRESTClient::Call(const string &endpoint, const string &json, bool idempotent) {
 	auto &route = DuckLakeRESTAPI::GetRoute(endpoint);
 	if (!endpoints.empty() && endpoints.find(route.method + " " + route.path) == endpoints.end()) {
 		throw NotImplementedException("The DuckLake REST server does not support \"%s %s\"", route.method, route.path);
 	}
 	string body;
 	auto target = route.ClientTarget(json, prefix, body);
-	string response;
-	auto status = Send(route.method, target, body, idempotent, response);
+	RESTHttpResponse result;
+	auto &response = result.body;
+	auto status = Send(route.method, target, body, idempotent, response, result.content_type,
+	                   accept_arrow ? "multipart/mixed, application/json;q=0.9" : "");
 	if (status != 200) {
 		RESTErrorResponse error;
 		try {
@@ -140,7 +147,8 @@ string DuckLakeRESTClient::Call(const string &endpoint, const string &json, bool
 		auto type = Exception::StringToExceptionType(error.error.type);
 		ErrorData(type, error.error.message).Throw();
 	}
-	return response;
+	result.context = arrow_connection.context.get();
+	return result;
 }
 
 } // namespace duckdb

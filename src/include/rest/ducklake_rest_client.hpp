@@ -10,6 +10,7 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/main/connection.hpp"
 #include "rest/ducklake_rest_api.hpp"
 
 #include <chrono>
@@ -24,10 +25,10 @@ namespace duckdb {
 class DuckLakeRESTClient : public DuckLakeRESTClientAPI {
 public:
 	//! Requests carry the token as a bearer token, if it is set
-	DuckLakeRESTClient(string base_url, string token);
+	DuckLakeRESTClient(DatabaseInstance &db, string base_url, string token, bool accept_arrow = true);
 	~DuckLakeRESTClient() override;
 
-	string Call(const string &endpoint, const string &json, bool idempotent) override;
+	RESTHttpResponse Call(const string &endpoint, const string &json, bool idempotent) override;
 
 	//! Asks the server how to connect to a catalog: the properties of the server are merged with the properties of the
 	//! client, which finds the prefix of the catalog. The catalog is the one the URL names, if the name is empty
@@ -44,8 +45,10 @@ public:
 	optional_ptr<const RESTPathMapper> GetPathMapper() const override {
 		return path_mapper.get();
 	}
-	//! Sends an HTTP request, returns the status code and the body of the response
-	int32_t SendRaw(const string &method, const string &target, const string &body, string &response);
+	//! Sends an HTTP request, returns the status code, and the body and the content type of the response. The request
+	//! has the accept header, if it is set
+	int32_t SendRaw(const string &method, const string &target, const string &body, string &response,
+	                string &content_type, const string &accept = string());
 
 	const string &BaseURL() const {
 		return base_url;
@@ -66,7 +69,8 @@ private:
 	unique_ptr<duckdb_httplib::Client> GetConnection(bool &reused);
 	void ReturnConnection(unique_ptr<duckdb_httplib::Client> connection);
 	//! Sends a request, returns the status code and the body of the response
-	int32_t Send(const string &method, const string &target, const string &body, bool idempotent, string &response);
+	int32_t Send(const string &method, const string &target, const string &body, bool idempotent, string &response,
+	             string &content_type, const string &accept);
 
 private:
 	unique_ptr<RESTPathMapper> path_mapper;
@@ -79,6 +83,10 @@ private:
 	string server_url;
 	string prefix;
 	string token;
+	//! Whether the client accepts Arrow rather than JSON for the lists of files and rows
+	bool accept_arrow;
+	//! The context for the conversions of Arrow, which does not run queries
+	Connection arrow_connection;
 	mutex lock;
 	vector<IdleConnection> idle_connections;
 };

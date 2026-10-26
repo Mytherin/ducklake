@@ -1,6 +1,10 @@
 add_library(
   ducklake_rest OBJECT
   ducklake_rest_api.cpp
+  ducklake_rest_arrow.cpp
+  ducklake_rest_arrow_files.cpp
+  ducklake_rest_arrow_responses.cpp
+  ducklake_rest_arrow_ipc.cpp
   ducklake_rest_catalog_changes.cpp
   ducklake_rest_client.cpp
   ducklake_rest_codec.cpp

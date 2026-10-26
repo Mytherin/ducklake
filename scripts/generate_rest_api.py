@@ -1234,6 +1234,7 @@ def generate_header(spec):
         lines.append(f'#include "{include}"')
     lines.append("")
     lines.append("namespace duckdb {")
+    lines.append("class ClientContext;")
     lines.append("class DuckLakeRESTRequest;")
     lines.append("struct RESTCommitRequest;")
     for union in spec.unions:
@@ -1276,6 +1277,14 @@ def generate_header(spec):
         if not obj.is_bound:
             lines.append(f"struct {obj.cpp_name};")
     lines.append("")
+    lines.append("//! A response of a server")
+    lines.append("struct RESTHttpResponse {")
+    lines.append("\tstring body;")
+    lines.append("\tstring content_type;")
+    lines.append("\t//! The context for the conversions of the body")
+    lines.append("\toptional_ptr<ClientContext> context;")
+    lines.append("};")
+    lines.append("")
     lines.append("//! Conversion of the structures of the REST API to and from JSON")
     lines.append("struct DuckLakeRESTSerializer {")
     lines.append("\ttemplate <class T>")
@@ -1286,6 +1295,19 @@ def generate_header(spec):
     lines.append("\t\tRESTJsonWriter document;")
     lines.append("\t\tdocument.SetRoot(Write(document.writer, value));")
     lines.append("\t\treturn document.ToString();")
+    lines.append("\t}")
+    lines.append(
+        "\t//! The body of the response to a request: JSON, or another format that the request accepts"
+    )
+    lines.append("\ttemplate <class T>")
+    lines.append("\tstatic string ToResponse(DuckLakeRESTRequest &request, T &value) {")
+    lines.append("\t\treturn ToJSON(value);")
+    lines.append("\t}")
+    lines.append("\t//! Reads the body of a response of a content type")
+    lines.append("\ttemplate <class T>")
+    lines.append("\tstatic T ReadResponse(RESTHttpResponse &response) {")
+    lines.append("\t\tRESTJsonReader document(response.body);")
+    lines.append("\t\treturn Read<T>(document.Root());")
     lines.append("\t}")
     lines.append("")
     for obj in all_objects:
@@ -1629,14 +1651,15 @@ def generate_header(spec):
     lines.append("\t}")
     lines.append("")
     lines.append(
-        "\t//! Sends the JSON body of a request to an endpoint, returns the JSON body of the response"
+        "\t//! Sends the JSON body of a request to an endpoint, returns the body of the response, which is JSON unless"
     )
+    lines.append("\t//! the endpoint has a more compact format")
     lines.append("\t//! Rethrows the error reported by the server")
     lines.append(
         "\t//! Requests of idempotent endpoints can be sent again, e.g. if the connection was closed by the server"
     )
     lines.append(
-        "\tvirtual string Call(const string &endpoint, const string &body, bool idempotent) = 0;"
+        "\tvirtual RESTHttpResponse Call(const string &endpoint, const string &body, bool idempotent) = 0;"
     )
     lines.append("};")
     lines.append("")
@@ -1650,6 +1673,7 @@ def generate_source(spec):
     lines.append("")
     lines.append('#include "rest/ducklake_rest_api.hpp"')
     lines.append('#include "rest/ducklake_rest_server.hpp"')
+    lines.append('#include "rest/ducklake_rest_arrow_responses.hpp"')
     lines.append("")
     lines.append("namespace duckdb {")
     lines.append("")
@@ -1925,7 +1949,9 @@ def generate_source(spec):
             lines.append(
                 f"\tauto result = DuckLakeRESTEndpoints::{endpoint.cpp_name}(request, parameters);"
             )
-            lines.append("\treturn DuckLakeRESTSerializer::ToJSON(result);")
+            lines.append(
+                "\treturn DuckLakeRESTSerializer::ToResponse(request, result);"
+            )
         else:
             lines.append(
                 f"\tDuckLakeRESTEndpoints::{endpoint.cpp_name}(request, parameters);"
@@ -1994,9 +2020,9 @@ def generate_source(spec):
         idempotent = "true" if endpoint.idempotent else "false"
         post = f"Call({cpp_string(endpoint.name)}, DuckLakeRESTSerializer::ToJSON(request), {idempotent})"
         if response:
-            lines.append(f"\tRESTJsonReader document({post});")
+            lines.append(f"\tauto response = {post};")
             lines.append(
-                f"\treturn DuckLakeRESTSerializer::Read<{response.cpp_name}>(document.Root());"
+                f"\treturn DuckLakeRESTSerializer::ReadResponse<{response.cpp_name}>(response);"
             )
         else:
             lines.append(f"\t{post};")

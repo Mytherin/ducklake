@@ -45,6 +45,10 @@ public:
 	//! The server and the prefix of the catalog that the request is for
 	optional_ptr<DuckLakeRESTServer> server;
 	string prefix;
+	//! Whether the response can be Arrow IPC streams in a multipart response rather than JSON
+	bool accepts_arrow = false;
+	//! The content type of the response, set by the endpoint if it is not JSON
+	string content_type = "application/json";
 };
 
 //! The pages of the scans that were split into pages, which the server keeps for a while
@@ -105,6 +109,13 @@ public:
 	DuckLakeRESTPlans &Plans() {
 		return plans;
 	}
+	//! Whether the server sends lists of files and rows as Arrow to the clients that accept it
+	bool ArrowEnabled() const {
+		return arrow_enabled;
+	}
+	void SetArrowEnabled(bool enabled) {
+		arrow_enabled = enabled;
+	}
 	//! The properties that clients get from the server, besides the prefix of their catalog
 	void SetClientProperties(map<string, string> defaults, map<string, string> overrides);
 	const map<string, string> &ClientDefaults() const {
@@ -131,7 +142,8 @@ public:
 	//! Handles a request for an endpoint of a catalog, returns the HTTP status code. The prefix is only set for URLs
 	//! with a prefix
 	int32_t HandleRequest(const RESTRoute &route, optional_ptr<const string> prefix, const vector<string> &path_values,
-	                      const vector<pair<string, string>> &query, const string &body, string &response);
+	                      const vector<pair<string, string>> &query, const string &body, const string &accept,
+	                      string &response, string &content_type);
 
 private:
 	struct ServedCatalog {
@@ -147,6 +159,7 @@ private:
 	map<string, ServedCatalog> catalogs;
 	idx_t files_per_page = 10000;
 	idx_t default_page_size = 1000;
+	bool arrow_enabled = true;
 	DuckLakeRESTPlans plans;
 	map<string, string> client_defaults;
 	map<string, string> client_overrides;

@@ -31,6 +31,7 @@ SELECT listen_uri FROM ducklake_rest_serve('ducklake:metadata.ducklake', port :=
 | `prefix`         | The prefix of the catalog in the URLs of the server (default: the name of the catalog).  |
 | `files_per_page` | The number of files in a response of a scan and in each of its pages (default 10000).   |
 | `page_size`      | The number of entries of a page of a list if the request has no `page_size` (default 1000). |
+| `arrow`          | Send lists of files and rows as Arrow to the clients that accept it (default `true`, see [Arrow](#arrow)). |
 | `defaults`       | A `MAP` of the properties that clients use unless they have a value of their own.        |
 | `overrides`      | A `MAP` of the properties that clients use instead of their own values.                  |
 
@@ -40,8 +41,9 @@ process adds it to that server, under its own prefix. Serving a catalog under a 
 catalog. `ducklake_rest_stop` stops serving the catalog of a `listen_uri` with a prefix, and stops the server for a URI
 without one (`http://localhost:8181`).
 
-`ducklake_rest_request(listen_uri, method, path, body)` sends an HTTP request to a server and returns the status code
-and the JSON response, which is useful to explore the API:
+`ducklake_rest_request(listen_uri, method, path, body)` sends an HTTP request to a server and returns the status code,
+the response and its content type, which is useful to explore the API. The `accept` option sets the `Accept` header of
+the request; the response is JSON unless it asks for [Arrow](#arrow), and is a `BLOB` if it is not JSON:
 
 ```sql
 SELECT response FROM ducklake_rest_request('http://localhost:8181', 'GET', '/v1/snapshots?exclude_latest=true', '');
@@ -69,6 +71,7 @@ client reports requests that the server does not support, instead of sending the
 starts one.
 
 A server that requires a token is attached with `ATTACH 'ducklake:rest:http://localhost:8181' AS lake (META_TOKEN '...')`.
+`META_ARROW false` makes the client ask for JSON only (see [Arrow](#arrow)).
 
 The client reads the data path and the options of the DuckLake from the server. A `DATA_PATH` in the `ATTACH` of the
 client is the view of the client of the data path, e.g. when it has mounted the data path somewhere else: the client
@@ -132,6 +135,33 @@ Values whose type is known from the context (e.g. the rows of a table) are encod
 
 Values without a known type (e.g. tags) are `null`, a JSON string for `varchar` values, or an object
 `{"type": <type>, "value": <value>}`.
+
+### Arrow
+
+The lists of files and rows are the bulk of the data that the API sends, and the part that is slow as JSON. A client that
+accepts `multipart/mixed` (in its `Accept` header) gets the responses of `scan` and `changes` that have files or inlined
+rows as a multipart response, instead of JSON:
+
+- the part `response` is the JSON document of the response without the lists: `files`, `extended_files`, `insertions`
+  and `deletions` are empty, and `inlined_data` has its `columns` but no `rows`.
+- the part of each list that is not empty is named after the member (`files`, `extended_files`, `insertions`,
+  `deletions`, `inlined_data`), and is an [Arrow IPC stream](https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format)
+  (`application/vnd.apache.arrow.stream`) of the table described below.
+
+Everything else is JSON: responses without lists (e.g. only `aggregate_results` or `page_tokens`), the responses to
+clients that do not accept `multipart/mixed`, and the responses with rows of a type that Arrow cannot hold (`GEOMETRY`,
+`VARIANT` and arrays). A server answers with JSON when it is started with `arrow := false`.
+
+The tables have one row per entry of the list, and a column for each member of the entry, with the name of the member.
+Members that have their default value are `NULL`, and the members of a file (`file`, `delete_file`,
+`previous_delete_file`) are structs with the members `path`, `encryption_key`, `file_size_bytes`, `footer_size` and
+`format`. `column_min_max` is a list of structs with the members `column_id`, `min`, `max` and `contains_nan`, and
+`inlined_file_deletions` of a deletion is a list of structs with the members `row_id` and `snapshot_id`. Lists that are
+empty are `NULL`.
+
+The table of `inlined_data` has the columns of `inlined_data.columns`. Their types are the Arrow types of the DuckLake
+types, except for the types that Arrow does not have: `uuid`, `int128`, `uint128`, `timetz` and `json` are strings, and
+the client casts them to the type in `columns`.
 
 ## Specification
 
