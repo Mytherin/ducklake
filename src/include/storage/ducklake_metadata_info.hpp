@@ -437,6 +437,10 @@ struct DuckLakeFileListEntry {
 	optional_idx snapshot_filter_min;
 	MappingIndex mapping_id;
 	DuckLakeDataType data_type = DuckLakeDataType::DATA_FILE;
+	//! The partitioning the file was written with and the values of its partition keys, only set by
+	//! DuckLakeMetadataManager::ReadFilePartitions
+	optional_idx partition_id;
+	vector<DuckLakeFilePartition> partition_values;
 	//! The data file id
 	DataFileIndex file_id;
 	//! Inlined file deletions (row positions that have been deleted and stored in the metadata database)

@@ -634,6 +634,13 @@ structure FileListEntry {
     /// Where the rows are stored.
     data_type: DataType = "data_file"
 
+    /// The partitioning that the file was written with, absent if the table was not partitioned then. The partition
+    /// keys of the values are those of this partitioning, which is not necessarily the current one.
+    partition_id: UInt64
+
+    /// The values of the partition keys of the file, as text.
+    partition_values: FilePartitionValueList = []
+
     /// The positions of the rows of the file that are deleted by deletions inlined in the catalog.
     inlined_file_deletions: UInt64List = []
 

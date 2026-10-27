@@ -617,6 +617,7 @@ RESTSelectResponse DuckLakeRESTEndpoints::Select(DuckLakeRESTRequest &request, c
 		result.extended_files = metadata_manager.GetExtendedFilesForTable(table, snapshot, filters.get());
 	} else {
 		result.files = metadata_manager.GetFilesForTable(table, snapshot, filters.get());
+		metadata_manager.ReadFilePartitions(table.GetTableId(), snapshot, result.files);
 	}
 	SplitIntoPages(request, table.GetTableId(), result.files, &DuckLakeRESTPlan::files,
 	               parameters.known_column_mappings, result.page_tokens);

@@ -1534,6 +1534,11 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 		result.Add("mapping_id", RESTWriteValue<RESTUInt64Codec>(writer, value.mapping_id));
 	}
 	result.Add("data_type", RESTWriteValue<RESTDataTypeCodec>(writer, value.data_type));
+	if (!RESTIsNull(value.partition_id)) {
+		result.Add("partition_id", RESTWriteValue<RESTUInt64Codec>(writer, value.partition_id));
+	}
+	result.Add("partition_values",
+	           RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeFilePartition>>>(writer, value.partition_values));
 	result.Add("inlined_file_deletions",
 	           RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.inlined_file_deletions));
 	{
@@ -1615,6 +1620,18 @@ DuckLakeFileListEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 			RESTReadValue<RESTDataTypeCodec>(entry, result.data_type);
 		} else {
 			result.data_type = DuckLakeDataType::DATA_FILE;
+		}
+	}
+	{
+		auto entry = in.TryGet("partition_id");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.partition_id);
+		}
+	}
+	{
+		auto entry = in.TryGet("partition_values");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeFilePartition>>>(entry, result.partition_values);
 		}
 	}
 	{

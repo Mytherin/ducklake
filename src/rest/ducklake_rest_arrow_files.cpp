@@ -17,6 +17,7 @@ using FileRow = VectorStructType<string_t, string_t, uint64_t, uint64_t, string_
 using FileWriter = VectorWriter<FileRow>;
 using MinMaxRow = VectorStructType<uint64_t, string_t, string_t, bool>;
 using InlinedDeletionRow = VectorStructType<uint64_t, uint64_t>;
+using PartitionValueRow = VectorStructType<uint64_t, string_t>;
 
 LogicalType FileType() {
 	child_list_t<LogicalType> children;
@@ -34,6 +35,13 @@ LogicalType MinMaxType() {
 	children.emplace_back("min", LogicalType::VARCHAR);
 	children.emplace_back("max", LogicalType::VARCHAR);
 	children.emplace_back("contains_nan", LogicalType::BOOLEAN);
+	return LogicalType::STRUCT(std::move(children));
+}
+
+LogicalType PartitionValueType() {
+	child_list_t<LogicalType> children;
+	children.emplace_back("partition_key_index", LogicalType::UBIGINT);
+	children.emplace_back("partition_value", LogicalType::VARCHAR);
 	return LogicalType::STRUCT(std::move(children));
 }
 
@@ -180,10 +188,21 @@ void ReadChunks(ClientContext &context, shared_ptr<const string> data, idx_t off
 // FileListEntry
 //===--------------------------------------------------------------------===//
 static vector<string> FileListNames() {
-	return {"data_file_id",        "file_id",     "file",          "delete_file",
-	        "row_id_start",        "snapshot_id", "max_row_count", "snapshot_filter_max",
-	        "snapshot_filter_min", "mapping_id",  "data_type",     "inlined_file_deletions",
-	        "column_min_max"};
+	return {"data_file_id",
+	        "file_id",
+	        "file",
+	        "delete_file",
+	        "row_id_start",
+	        "snapshot_id",
+	        "max_row_count",
+	        "snapshot_filter_max",
+	        "snapshot_filter_min",
+	        "mapping_id",
+	        "data_type",
+	        "inlined_file_deletions",
+	        "column_min_max",
+	        "partition_id",
+	        "partition_values"};
 }
 
 static vector<LogicalType> FileListTypes() {
@@ -199,7 +218,9 @@ static vector<LogicalType> FileListTypes() {
 	        LogicalType::UBIGINT,
 	        LogicalType::VARCHAR,
 	        LogicalType::LIST(LogicalType::UBIGINT),
-	        LogicalType::LIST(MinMaxType())};
+	        LogicalType::LIST(MinMaxType()),
+	        LogicalType::UBIGINT,
+	        LogicalType::LIST(PartitionValueType())};
 }
 
 string RESTArrowFiles::Write(ClientContext &context, const vector<DuckLakeFileListEntry> &files) {
@@ -219,6 +240,8 @@ string RESTArrowFiles::Write(ClientContext &context, const vector<DuckLakeFileLi
 		    auto data_type = FlatVector::Writer<string_t>(chunk.data[10], count);
 		    auto inlined_deletions = FlatVector::Writer<VectorListType<uint64_t>>(chunk.data[11], count);
 		    auto min_max = FlatVector::Writer<VectorListType<MinMaxRow>>(chunk.data[12], count);
+		    auto partition_id = FlatVector::Writer<uint64_t>(chunk.data[13], count);
+		    auto partition_values = FlatVector::Writer<VectorListType<PartitionValueRow>>(chunk.data[14], count);
 		    for (idx_t i = 0; i < count; i++) {
 			    auto &entry = entries[start + i];
 			    WriteOptional(data_file_id, entry.data_file_id);
@@ -239,6 +262,24 @@ string RESTArrowFiles::Write(ClientContext &context, const vector<DuckLakeFileLi
 				    auto it = entry.inlined_file_deletions.begin();
 				    for (auto &writer : range) {
 					    writer.WriteValue(*it);
+					    ++it;
+				    }
+			    }
+			    WriteOptional(partition_id, entry.partition_id);
+			    if (entry.partition_values.empty()) {
+				    partition_values.WriteNull();
+			    } else {
+				    auto range = partition_values.WriteList(entry.partition_values.size());
+				    auto it = entry.partition_values.begin();
+				    for (auto &writer : range) {
+					    writer.WriteValue([&](auto &key_index, auto &value) {
+						    key_index.WriteValue(it->partition_column_idx);
+						    if (it->partition_value.IsNull()) {
+							    value.WriteNull();
+						    } else {
+							    value.WriteValue(Str(it->partition_value.ToString()));
+						    }
+					    });
 					    ++it;
 				    }
 			    }
@@ -290,6 +331,8 @@ void RESTArrowFiles::Read(ClientContext &context, shared_ptr<const string> data,
 		auto data_type = chunk.data[10].Values<string_t>();
 		auto inlined_deletions = chunk.data[11].Values<VectorListType<uint64_t>>();
 		auto min_max = chunk.data[12].Values<VectorListType<MinMaxRow>>();
+		auto partition_id = chunk.data[13].Values<uint64_t>();
+		auto partition_values = chunk.data[14].Values<VectorListType<PartitionValueRow>>();
 		for (idx_t i = 0; i < chunk.size(); i++) {
 			DuckLakeFileListEntry entry;
 			entry.data_file_id = ReadOptional(data_file_id[i]);
@@ -307,6 +350,18 @@ void RESTArrowFiles::Read(ClientContext &context, shared_ptr<const string> data,
 			if (deletions.IsValid()) {
 				for (auto child : deletions.GetChildValues()) {
 					entry.inlined_file_deletions.insert(child.GetValue());
+				}
+			}
+			entry.partition_id = ReadOptional(partition_id[i]);
+			auto values = partition_values[i];
+			if (values.IsValid()) {
+				for (auto child : values.GetChildValues()) {
+					DuckLakeFilePartition partition_value;
+					partition_value.partition_column_idx = child.GetChildValue<0>().GetValue();
+					auto text = child.GetChildValue<1>();
+					partition_value.partition_value =
+					    text.IsValid() ? Value(text.GetValue().GetString()) : Value(LogicalType::VARCHAR);
+					entry.partition_values.push_back(std::move(partition_value));
 				}
 			}
 			auto stats_list = min_max[i];

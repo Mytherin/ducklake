@@ -790,6 +790,8 @@ private:
 
 public:
 	//! Read inlined file deletions for regular table scans (no snapshot info per row)
+	//! Sets the partitioning and the partition values of the files of a table at a snapshot
+	void ReadFilePartitions(TableIndex table_id, DuckLakeSnapshot snapshot, vector<DuckLakeFileListEntry> &files);
 	map<idx_t, set<idx_t>> ReadInlinedFileDeletions(TableIndex table_id, DuckLakeSnapshot snapshot,
 	                                                bool include_local_changes = true);
 	//! Clear inlined table caches (needed after rollback so retry re-creates the tables)

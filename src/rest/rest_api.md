@@ -309,6 +309,9 @@ and the columns of the table at the snapshot, whatever the schema of the table w
 column that was changed from `TIMESTAMP` to `TIMESTAMPTZ` are the timestamps in UTC. It is absent if the table has
 no inlined rows.
 
+The files of a partitioned table have the `partition_id` of the partitioning they were written with and the values of
+their partition keys (`partition_values`), so clients can group the files by partition.
+
 The `aggregates` of a request without `filters` are answered from the statistics of the table where the server can,
 instead of listing the files: `aggregate_results` has an entry for each aggregate, and tells whether the server
 answered it. If it answered all of them, the response has no files and no inlined rows: the results are the answer.
@@ -1083,6 +1086,8 @@ A data file of a table that is visible in a snapshot, together with its deletes.
 | `snapshot_filter_min` | `uint64` (optional) | Only read rows that were inserted from this snapshot. |
 | `mapping_id` | `uint64` (optional) | The name map of the file. |
 | `data_type` | [`DataType`](#datatype) (default `"data_file"`) | Where the rows are stored. |
+| `partition_id` | `uint64` (optional) | The partitioning that the file was written with, absent if the table was not partitioned then. The partition keys of the values are those of this partitioning, which is not necessarily the current one. |
+| `partition_values` | list of [`FilePartitionValue`](#filepartitionvalue) (default `[]`) | The values of the partition keys of the file, as text. |
 | `inlined_file_deletions` | list of `uint64` (default `[]`) | The positions of the rows of the file that are deleted by deletions inlined in the catalog. |
 | `column_min_max` | list of [`FileColumnStats`](#filecolumnstats) (default `[]`) | Each entry has an additional field `column_id`. The statistics of the columns of the scan's `runtime_filter_columns`. |
 

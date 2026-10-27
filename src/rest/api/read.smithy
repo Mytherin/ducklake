@@ -130,6 +130,9 @@ structure SnapshotData {
 /// column that was changed from `TIMESTAMP` to `TIMESTAMPTZ` are the timestamps in UTC. It is absent if the table has
 /// no inlined rows.
 ///
+/// The files of a partitioned table have the `partition_id` of the partitioning they were written with and the values of
+/// their partition keys (`partition_values`), so clients can group the files by partition.
+///
 /// The `aggregates` of a request without `filters` are answered from the statistics of the table where the server can,
 /// instead of listing the files: `aggregate_results` has an entry for each aggregate, and tells whether the server
 /// answered it. If it answered all of them, the response has no files and no inlined rows: the results are the answer.
