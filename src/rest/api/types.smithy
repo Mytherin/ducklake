@@ -689,16 +689,6 @@ structure FileListExtendedEntry {
     data_type: DataType = "data_file"
 }
 
-/// Why a delete file was written.
-@cppClass("DeleteFileSource")
-enum DeleteFileSource {
-    /// By a delete.
-    REGULAR = "regular"
-
-    /// By a flush of inlined deletions.
-    FLUSH = "flush"
-}
-
 /// A delete file written by a client, which replaces the previous delete file of its data file.
 @cppClass("DuckLakeDeleteFile")
 structure DeleteFile {
@@ -749,9 +739,6 @@ structure DeleteFile {
 
     /// The last snapshot whose deletes the file holds, for partial delete files.
     max_snapshot: UInt64
-
-    /// Why the delete file was written.
-    source: DeleteFileSource = "regular"
 }
 
 /// The value of a partition key for the rows of a file.

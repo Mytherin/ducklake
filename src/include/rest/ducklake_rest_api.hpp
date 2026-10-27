@@ -64,14 +64,6 @@ struct RESTDataTypeCodec : public RESTCodec<RESTDataTypeCodec> {
 	static void Read(RESTJsonIn in, DuckLakeDataType &result);
 };
 
-//! Why a delete file was written.
-struct RESTDeleteFileSourceCodec : public RESTCodec<RESTDeleteFileSourceCodec> {
-	static const char *ToString(DeleteFileSource value);
-	static DeleteFileSource FromString(const string &value);
-	static JSONMutableValue Write(JSONWriter &writer, DeleteFileSource value);
-	static void Read(RESTJsonIn in, DeleteFileSource &result);
-};
-
 //! The type of an entry that `drop` drops.
 struct RESTDropEntryTypeCodec : public RESTCodec<RESTDropEntryTypeCodec> {
 	static const char *ToString(const string &value);

@@ -944,16 +944,6 @@ A delete file written by a client, which replaces the previous delete file of it
 | `overwritten_delete_file_path` | `path` (default `""`) | The path of the delete file that is replaced. |
 | `begin_snapshot` | `uint64` (optional) | The snapshot of the deletes, if it is not the snapshot of the commit. |
 | `max_snapshot` | `uint64` (optional) | The last snapshot whose deletes the file holds, for partial delete files. |
-| `source` | [`DeleteFileSource`](#deletefilesource) (default `"regular"`) | Why the delete file was written. |
-
-### `DeleteFileSource`
-
-Why a delete file was written.
-
-| Value | Description |
-|-------|-------------|
-| `regular` | By a delete. |
-| `flush` | By a flush of inlined deletions. |
 
 ### `DeleteScanEntry`
 

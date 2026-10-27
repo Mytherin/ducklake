@@ -183,37 +183,6 @@ void RESTDataTypeCodec::Read(RESTJsonIn in, DuckLakeDataType &result) {
 	result = FromString(in.Str());
 }
 
-const char *RESTDeleteFileSourceCodec::ToString(DeleteFileSource value) {
-	switch (value) {
-	case DeleteFileSource::REGULAR:
-		return "regular";
-	case DeleteFileSource::FLUSH:
-		return "flush";
-	default:
-		throw InternalException("DeleteFileSource value %d is not a value of the REST API type DeleteFileSource",
-		                        static_cast<int>(value));
-	}
-}
-
-DeleteFileSource RESTDeleteFileSourceCodec::FromString(const string &value) {
-	if (value == "regular") {
-		return DeleteFileSource::REGULAR;
-	}
-	if (value == "flush") {
-		return DeleteFileSource::FLUSH;
-	}
-	throw InvalidInputException(
-	    "DuckLake REST: \"%s\" is not a valid DeleteFileSource (expected one of regular, flush)", value);
-}
-
-JSONMutableValue RESTDeleteFileSourceCodec::Write(JSONWriter &writer, DeleteFileSource value) {
-	return writer.CreateString(ToString(value));
-}
-
-void RESTDeleteFileSourceCodec::Read(RESTJsonIn in, DeleteFileSource &result) {
-	result = FromString(in.Str());
-}
-
 const char *RESTDropEntryTypeCodec::ToString(const string &value) {
 	if (value == "schema") {
 		return "schema";
@@ -1065,7 +1034,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	if (!RESTIsNull(value.max_snapshot)) {
 		result.Add("max_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.max_snapshot));
 	}
-	result.Add("source", RESTWriteValue<RESTDeleteFileSourceCodec>(writer, value.source));
 	return result;
 }
 
@@ -1154,14 +1122,6 @@ DuckLakeDeleteFile DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("max_snapshot");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTUInt64Codec>(entry, result.max_snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("source");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTDeleteFileSourceCodec>(entry, result.source);
-		} else {
-			result.source = DeleteFileSource::REGULAR;
 		}
 	}
 	return result;
