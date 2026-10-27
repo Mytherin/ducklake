@@ -181,10 +181,12 @@ jobs:
 
     - name: Install the Iceberg clients
       run: |
-        pip install duckdb pyiceberg pyiceberg-core pyarrow
+        pip install duckdb pyiceberg pyiceberg-core pyarrow pyspark==3.5.3
+        curl -sSL -o iceberg-spark-runtime.jar https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.10.0/iceberg-spark-runtime-3.5_2.12-1.10.0.jar
 
     - name: Test the Iceberg REST API with Iceberg clients
       env:
         DUCKLAKE_SHELL: ${{ github.workspace }}/build/release/duckdb
+        ICEBERG_SPARK_JAR: ${{ github.workspace }}/iceberg-spark-runtime.jar
       run: |
         python3 test/iceberg/run_tests.py

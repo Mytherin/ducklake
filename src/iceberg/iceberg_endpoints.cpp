@@ -36,6 +36,16 @@ static const DuckLakeSchemaInfo &GetNamespaceOrThrow(IcebergRequest &request, co
 	return *schema;
 }
 
+//! The schema of a table: a table of a namespace that does not exist does not exist either
+static const DuckLakeSchemaInfo &GetSchemaOfTable(IcebergRequest &request, const vector<string> &ns,
+                                                  const string &name) {
+	auto schema = request.FindSchema(ns);
+	if (!schema) {
+		throw NoSuchTable(ns, name);
+	}
+	return *schema;
+}
+
 static void SetJson(IcebergHttpResponse &response, RESTJsonWriter &writer, JSONMutableValue root) {
 	writer.SetRoot(root);
 	response.body = writer.ToString();
@@ -326,7 +336,7 @@ static void ListTables(IcebergRequest &request, const IcebergHttpRequest &http, 
 static void LoadTable(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
 	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
 	auto &name = http.path_values[1];
-	auto &schema = GetNamespaceOrThrow(request, ns);
+	auto &schema = GetSchemaOfTable(request, ns, name);
 	auto table = request.FindTable(schema, name);
 	if (!table) {
 		throw NoSuchTable(ns, name);
@@ -349,7 +359,7 @@ static string PlanResponse(const string &plan_id, const string &plan) {
 static void PlanTable(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
 	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
 	auto &name = http.path_values[1];
-	auto &schema = GetNamespaceOrThrow(request, ns);
+	auto &schema = GetSchemaOfTable(request, ns, name);
 	auto table = request.FindTable(schema, name);
 	if (!table) {
 		throw NoSuchTable(ns, name);
@@ -392,7 +402,7 @@ static void FetchScanTasks(IcebergRequest &request, const IcebergHttpRequest &ht
 static void DropTable(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
 	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
 	auto &name = http.path_values[1];
-	auto &schema = GetNamespaceOrThrow(request, ns);
+	auto &schema = GetSchemaOfTable(request, ns, name);
 	auto table = request.FindTable(schema, name);
 	if (!table) {
 		throw NoSuchTable(ns, name);
@@ -454,7 +464,7 @@ static void ReportMetrics(IcebergRequest &request, const IcebergHttpRequest &htt
 static void GetCredentials(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
 	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
 	auto &name = http.path_values[1];
-	auto &schema = GetNamespaceOrThrow(request, ns);
+	auto &schema = GetSchemaOfTable(request, ns, name);
 	auto table = request.FindTable(schema, name);
 	if (!table) {
 		throw NoSuchTable(ns, name);

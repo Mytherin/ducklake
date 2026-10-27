@@ -17,6 +17,15 @@ IcebergException NoSuchView(const vector<string> &ns, const string &name) {
 	                        StringUtil::Format("View does not exist: %s.%s", IcebergUtil::NamespaceToString(ns), name));
 }
 
+//! The schema of a view: a view of a namespace that does not exist does not exist either
+const DuckLakeSchemaInfo &GetSchemaOfView(IcebergRequest &request, const vector<string> &ns, const string &name) {
+	auto schema = request.FindSchema(ns);
+	if (!schema) {
+		throw NoSuchView(ns, name);
+	}
+	return *schema;
+}
+
 const DuckLakeSchemaInfo &GetSchemaOrThrow(IcebergRequest &request, const vector<string> &ns) {
 	auto schema = request.FindSchema(ns);
 	if (!schema) {
@@ -227,7 +236,7 @@ void IcebergViewEndpoints::LoadView(IcebergRequest &request, const IcebergHttpRe
                                     IcebergHttpResponse &response) {
 	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
 	auto &name = http.path_values[1];
-	auto &schema = GetSchemaOrThrow(request, ns);
+	auto &schema = GetSchemaOfView(request, ns, name);
 	auto view = request.FindView(schema, name);
 	if (!view) {
 		throw NoSuchView(ns, name);
@@ -279,7 +288,7 @@ void IcebergViewEndpoints::ReplaceView(IcebergRequest &request, const IcebergHtt
                                        IcebergHttpResponse &response) {
 	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
 	auto name = http.path_values[1];
-	auto &schema = GetSchemaOrThrow(request, ns);
+	auto &schema = GetSchemaOfView(request, ns, name);
 	auto view = request.FindView(schema, name);
 	if (!view) {
 		throw NoSuchView(ns, name);
@@ -360,7 +369,7 @@ void IcebergViewEndpoints::DropView(IcebergRequest &request, const IcebergHttpRe
                                     IcebergHttpResponse &response) {
 	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
 	auto &name = http.path_values[1];
-	auto &schema = GetSchemaOrThrow(request, ns);
+	auto &schema = GetSchemaOfView(request, ns, name);
 	if (!request.FindView(schema, name)) {
 		throw NoSuchView(ns, name);
 	}

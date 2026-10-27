@@ -6,7 +6,9 @@ DuckLake itself, to compare what both sides see.
 
 Environment:
   DUCKLAKE_SHELL   the DuckDB shell with the DuckLake extension (default: build/reldebug/duckdb)
-  ICEBERG_PYTHONPATH   directory with the duckdb, pyiceberg and pyarrow Python packages (optional)
+  ICEBERG_PYTHONPATH   directories (separated like PATH) with the duckdb, pyiceberg, pyarrow and pyspark Python packages
+                       (optional)
+  ICEBERG_SPARK_JAR    the Iceberg runtime jar for Spark (optional, for the Spark tests)
 """
 import os
 import queue

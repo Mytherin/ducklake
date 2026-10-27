@@ -268,10 +268,9 @@ class TokenTest(IcebergTestCase):
         self.assertIn(('main',), cat.list_namespaces())
 
     def test_wrong_token(self):
-        from pyiceberg.exceptions import NotAuthorizedError, RESTError
-        cat = pyiceberg_catalog(self.uri, token='wrong')
-        with self.assertRaises((NotAuthorizedError, RESTError)):
-            cat.list_namespaces()
+        from pyiceberg.exceptions import RESTError, UnauthorizedError
+        with self.assertRaises((UnauthorizedError, RESTError)):
+            pyiceberg_catalog(self.uri, token='wrong').list_namespaces()
 
 
 if __name__ == '__main__':

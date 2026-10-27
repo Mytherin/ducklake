@@ -268,8 +268,9 @@ void TableUpdate::Reload() {
 	request.InvalidateCatalogInfo();
 	schema = request.FindSchema(ns);
 	if (!schema) {
-		throw IcebergException(404, "NoSuchNamespaceException",
-		                       StringUtil::Format("Namespace does not exist: %s", IcebergUtil::NamespaceToString(ns)));
+		throw IcebergException(
+		    404, "NoSuchTableException",
+		    StringUtil::Format("Table does not exist: %s.%s", IcebergUtil::NamespaceToString(ns), name));
 	}
 	table = request.FindTable(*schema, name);
 	if (!table) {
@@ -746,6 +747,10 @@ vector<PartitionLayoutField> TableUpdate::GetPartitionLayout() {
 		field.column_name = row.GetValue<string>(0);
 		field.column_type = DuckLakeTypes::FromString(row.GetValue<string>(1));
 		field.transform = row.GetValue<string>(2);
+		if (StringUtil::StartsWith(field.transform, "bucket(")) {
+			// the name of the transform for the keys of the partition
+			field.transform = "bucket";
+		}
 		result.push_back(std::move(field));
 	}
 	return result;

@@ -3,9 +3,9 @@ import os
 import sys
 import unittest
 
-extra_path = os.environ.get('ICEBERG_PYTHONPATH')
-if extra_path:
-    sys.path.insert(0, extra_path)
+for extra_path in reversed(os.environ.get('ICEBERG_PYTHONPATH', '').split(os.pathsep)):
+    if extra_path:
+        sys.path.insert(0, extra_path)
 
 try:
     import duckdb
