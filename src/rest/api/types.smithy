@@ -787,9 +787,6 @@ structure DataFile {
     /// The row id of the first row, for files that hold flushed inlined rows.
     flush_row_id_start: UInt64
 
-    /// Whether the file was written by DuckLake (rather than added with `ducklake_add_data_files`).
-    created_by_ducklake: Boolean = false
-
     /// The statistics of the columns of the file.
     @cppMap(keyField: "column_id", value: ColumnStats)
     column_stats: ColumnStatsEntryList = []

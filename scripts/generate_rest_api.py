@@ -1707,7 +1707,7 @@ def generate_header(spec):
     lines.append(
         "\t//! The context for the conversion of the tables of the requests and responses"
     )
-    lines.append("\tvirtual ClientContext &GetContext() = 0;")
+    lines.append("\tvirtual shared_ptr<ClientContext> GetContext() = 0;")
     lines.append("};")
     lines.append("")
     lines.append("} // namespace duckdb")
@@ -2064,13 +2064,13 @@ def generate_source(spec):
         )
         lines.append("\tRESTPathScope paths(GetPathMapper());")
         idempotent = "true" if endpoint.idempotent else "false"
+        lines.append("\tauto context = GetContext();")
         lines.append("\tvector<RESTBodyPart> parts;")
-        lines.append(
-            "\tDuckLakeRESTSerializer::AddParts(GetContext(), request, parts);"
-        )
+        lines.append("\tDuckLakeRESTSerializer::AddParts(*context, request, parts);")
         post = f"Call({cpp_string(endpoint.name)}, DuckLakeRESTSerializer::ToJSON(request), {idempotent}, parts)"
         if response:
             lines.append(f"\tauto response = {post};")
+            lines.append("\tresponse.context = context.get();")
             lines.append(
                 f"\treturn DuckLakeRESTSerializer::ReadResponse<{response.cpp_name}>(response);"
             )

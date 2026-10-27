@@ -30,9 +30,7 @@ public:
 
 	RESTHttpResponse Call(const string &endpoint, const string &json, bool idempotent,
 	                      const vector<RESTBodyPart> &parts) override;
-	ClientContext &GetContext() override {
-		return *arrow_connection.context;
-	}
+	shared_ptr<ClientContext> GetContext() override;
 
 	//! Asks the server how to connect to a catalog: the properties of the server are merged with the properties of the
 	//! client, which finds the prefix of the catalog. The catalog is the one the URL names, if the name is empty
@@ -87,8 +85,9 @@ private:
 	string server_url;
 	string prefix;
 	string token;
-	//! The context for the conversions of Arrow, which does not run queries
-	Connection arrow_connection;
+	//! The database for the contexts of the conversions of Arrow. A context holds its database, so the client, which
+	//! the database owns, cannot hold a context
+	weak_ptr<DatabaseInstance> db;
 	mutex lock;
 	vector<IdleConnection> idle_connections;
 };

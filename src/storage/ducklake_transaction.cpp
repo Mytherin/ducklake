@@ -669,6 +669,11 @@ void LocalTableChanges::CleanupFiles(ClientContext &context, TableIndex table_id
 	}
 }
 
+void LocalTableChanges::Forget(TableIndex table_id) {
+	lock_guard<mutex> guard(lock);
+	changes.erase(table_id);
+}
+
 void LocalTableChanges::AddDeletesToMap(ClientContext &context, vector<DuckLakeDeleteFile> new_deletes,
                                         unordered_map<string, vector<DuckLakeDeleteFile>> &table_delete_map) {
 	for (auto &file : new_deletes) {
@@ -828,7 +833,9 @@ void DuckLakeTransaction::Rollback() {
 		}
 		connection.reset();
 	}
-	state->CleanupFiles();
+	if (!files_owned_by_client) {
+		state->CleanupFiles();
+	}
 	state->local_changes.Clear();
 	pending_name_map_cache_invalidations.clear();
 	SetRequiresNewInlinedTable(false);
@@ -1996,7 +2003,11 @@ void DuckLakeTransaction::DropTable(DuckLakeTableEntry &table) {
 		               table.name.GetIdentifierName());
 		// if we have written any files for this table - clean them up
 		auto context_ref = context.lock();
-		state->local_changes.CleanupFiles(*context_ref, table_id);
+		if (files_owned_by_client) {
+			state->local_changes.Forget(table_id);
+		} else {
+			state->local_changes.CleanupFiles(*context_ref, table_id);
+		}
 	}
 
 	// The table exists before the transaction, drop the table anyway.

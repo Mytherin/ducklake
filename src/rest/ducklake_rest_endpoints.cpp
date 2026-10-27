@@ -797,6 +797,8 @@ public:
 	explicit DuckLakeRESTCommit(DuckLakeRESTRequest &request)
 	    : request(request), transaction(*request.transaction), catalog(*request.catalog),
 	      context(*request.connection.context) {
+		// the client wrote the files of the transaction, and cleans them up itself
+		transaction.SetFilesOwnedByClient();
 	}
 
 	RESTCommitTransactionResponse Run(const RESTCommitTransactionRequest &parameters);

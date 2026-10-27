@@ -2,14 +2,15 @@
 #include "rest/ducklake_rest_multipart.hpp"
 
 #include "duckdb/common/error_data.hpp"
+#include "duckdb/main/database.hpp"
 #include "duckdb/common/exception.hpp"
 
 #include "httplib.hpp"
 
 namespace duckdb {
 
-DuckLakeRESTClient::DuckLakeRESTClient(DatabaseInstance &db, string base_url_p, string token_p)
-    : base_url(std::move(base_url_p)), token(std::move(token_p)), arrow_connection(db) {
+DuckLakeRESTClient::DuckLakeRESTClient(DatabaseInstance &db_p, string base_url_p, string token_p)
+    : base_url(std::move(base_url_p)), token(std::move(token_p)), db(db_p.shared_from_this()) {
 	StringUtil::RTrim(base_url, "/");
 	// the path of the URL is the prefix of the catalog on the server
 	auto scheme_end = base_url.find("://");
@@ -23,6 +24,16 @@ DuckLakeRESTClient::DuckLakeRESTClient(DatabaseInstance &db, string base_url_p, 
 }
 
 DuckLakeRESTClient::~DuckLakeRESTClient() {
+}
+
+shared_ptr<ClientContext> DuckLakeRESTClient::GetContext() {
+	auto database = db.lock();
+	if (!database) {
+		throw InvalidInputException("The database of the DuckLake REST client is closed");
+	}
+	// the context stays valid when the connection is gone
+	Connection connection(*database);
+	return connection.context;
 }
 
 //! Servers close connections that are idle for a while (5 seconds for the reference server) - a connection that has
@@ -160,7 +171,6 @@ RESTHttpResponse DuckLakeRESTClient::Call(const string &endpoint, const string &
 		auto type = Exception::StringToExceptionType(error.error.type);
 		ErrorData(type, error.error.message).Throw();
 	}
-	result.context = arrow_connection.context.get();
 	return result;
 }
 

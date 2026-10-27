@@ -108,6 +108,8 @@ public:
 	LocalTableChangeIterationHelper Changes() const;
 	void CleanupFiles(DatabaseInstance &db);
 	void CleanupFiles(ClientContext &context, TableIndex table_id);
+	//! Forgets the changes of a table, the files stay
+	void Forget(TableIndex table_id);
 	void GetWrittenFiles(vector<string> &result) const;
 	bool HasTransactionLocalInserts(TableIndex table_id) const;
 	bool HasTransactionInlinedData(TableIndex table_id) const;
@@ -300,6 +302,10 @@ public:
 	bool InlinedFileDeletionsFlushed(TableIndex table_id);
 
 	bool ChangesMade() const;
+	//! The files of the transaction were written by a client of a REST server, which cleans them up itself
+	void SetFilesOwnedByClient() {
+		files_owned_by_client = true;
+	}
 	bool SchemaChangesMade() const;
 	idx_t GetLocalCatalogId();
 	static bool IsTransactionLocal(idx_t id) {
@@ -431,6 +437,9 @@ private:
 	vector<DuckLakeConfigOptionUndo> config_option_undo;
 
 	atomic<idx_t> catalog_version;
+
+private:
+	bool files_owned_by_client = false;
 };
 
 } // namespace duckdb

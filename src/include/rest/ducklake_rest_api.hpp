@@ -1575,7 +1575,7 @@ public:
 	virtual RESTHttpResponse Call(const string &endpoint, const string &body, bool idempotent,
 	                              const vector<RESTBodyPart> &parts) = 0;
 	//! The context for the conversion of the tables of the requests and responses
-	virtual ClientContext &GetContext() = 0;
+	virtual shared_ptr<ClientContext> GetContext() = 0;
 };
 
 } // namespace duckdb
