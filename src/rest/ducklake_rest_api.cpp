@@ -891,16 +891,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	if (!RESTIsNull(value.mapping_id)) {
 		result.Add("mapping_id", RESTWriteValue<RESTUInt64Codec>(writer, value.mapping_id));
 	}
-	if (!RESTIsNull(value.begin_snapshot)) {
-		result.Add("begin_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.begin_snapshot));
-	}
-	if (!RESTIsNull(value.max_partial_file_snapshot)) {
-		result.Add("max_partial_file_snapshot",
-		           RESTWriteValue<RESTUInt64Codec>(writer, value.max_partial_file_snapshot));
-	}
-	if (!RESTIsNull(value.flush_row_id_start)) {
-		result.Add("flush_row_id_start", RESTWriteValue<RESTUInt64Codec>(writer, value.flush_row_id_start));
-	}
 	{
 		auto entries = writer.CreateArray();
 		for (auto &entry : value.column_stats) {
@@ -956,24 +946,6 @@ DuckLakeDataFile DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("mapping_id");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTUInt64Codec>(entry, result.mapping_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("begin_snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.begin_snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("max_partial_file_snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.max_partial_file_snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("flush_row_id_start");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.flush_row_id_start);
 		}
 	}
 	for (auto &item : in.TryGet("column_stats").Items()) {

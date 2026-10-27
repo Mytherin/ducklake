@@ -778,15 +778,6 @@ structure DataFile {
     /// request.
     mapping_id: UInt64
 
-    /// The snapshot of the rows, if it is not the snapshot of the commit.
-    begin_snapshot: UInt64
-
-    /// The last snapshot whose rows the file holds, for partial files.
-    max_partial_file_snapshot: UInt64
-
-    /// The row id of the first row, for files that hold flushed inlined rows.
-    flush_row_id_start: UInt64
-
     /// The statistics of the columns of the file.
     @cppMap(keyField: "column_id", value: ColumnStats)
     column_stats: ColumnStatsEntryList = []

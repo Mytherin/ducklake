@@ -906,9 +906,6 @@ read it.
 | `partition_id` | `uint64` (optional) | The partitioning the file was written for. Partitionings set in the transaction are referred to by the `partition_id` of their request. |
 | `encryption_key` | `string` (default `""`) | The key the file is encrypted with, if any. |
 | `mapping_id` | `uint64` (optional) | The name map of the file. Name maps created in the transaction are referred to by the `mapping_id` of their request. |
-| `begin_snapshot` | `uint64` (optional) | The snapshot of the rows, if it is not the snapshot of the commit. |
-| `max_partial_file_snapshot` | `uint64` (optional) | The last snapshot whose rows the file holds, for partial files. |
-| `flush_row_id_start` | `uint64` (optional) | The row id of the first row, for files that hold flushed inlined rows. |
 | `column_stats` | list of [`ColumnStats`](#columnstats) (default `[]`) | Each entry has an additional field `column_id`. The statistics of the columns of the file. |
 | `partition_values` | list of [`FilePartitionValue`](#filepartitionvalue) (default `[]`) | The values of the partition keys. |
 | `delete_files` | list of [`DeleteFile`](#deletefile) (default `[]`) | Delete files for the rows of the file. |
