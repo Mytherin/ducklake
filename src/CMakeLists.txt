@@ -1,5 +1,6 @@
 add_subdirectory(common)
 add_subdirectory(functions)
+add_subdirectory(iceberg)
 add_subdirectory(metadata_manager)
 add_subdirectory(rest)
 add_subdirectory(storage)

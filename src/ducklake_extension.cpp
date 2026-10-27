@@ -13,6 +13,8 @@
 #include "duckdb/storage/storage_extension.hpp"
 #include "storage/ducklake_log_type.hpp"
 #include "rest/ducklake_rest_server.hpp"
+#include "iceberg/iceberg_server.hpp"
+#include "iceberg/iceberg_avro_functions.hpp"
 
 namespace duckdb {
 
@@ -62,6 +64,18 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	DuckLakeRESTRowsFunction rest_rows;
 	loader.RegisterFunction(rest_rows);
+
+	DuckLakeIcebergServeFunction iceberg_serve;
+	loader.RegisterFunction(iceberg_serve);
+
+	DuckLakeIcebergStopFunction iceberg_stop;
+	loader.RegisterFunction(iceberg_stop);
+
+	DuckLakeAvroReadFunction avro_read;
+	loader.RegisterFunction(avro_read);
+
+	DuckLakeAvroSchemaFunction avro_schema;
+	loader.RegisterFunction(avro_schema);
 
 	DuckLakeSnapshotsFunction snapshots;
 	loader.RegisterFunction(snapshots);
