@@ -581,6 +581,7 @@ static unique_ptr<FunctionData> DuckLakeIcebergServeBind(ClientContext &context,
 	auto metadata_path_val = GetNamedParameter(input, "metadata_path");
 	auto public_uri_val = GetNamedParameter(input, "public_uri");
 	auto virtual_files_val = GetNamedParameter(input, "virtual_files");
+	auto cleanup_val = GetNamedParameter(input, "cleanup_client_metadata");
 	auto snapshot_limit_val = GetNamedParameter(input, "snapshot_limit");
 	string host = host_val.IsNull() ? "localhost" : StringValue::Get(host_val);
 	idx_t port = port_val.IsNull() ? 0 : port_val.GetValue<idx_t>();
@@ -613,6 +614,9 @@ static unique_ptr<FunctionData> DuckLakeIcebergServeBind(ClientContext &context,
 	}
 	if (!token_val.IsNull()) {
 		server->SetToken(StringValue::Get(token_val));
+	}
+	if (!cleanup_val.IsNull()) {
+		server->SetCleanupClientMetadata(BooleanValue::Get(cleanup_val));
 	}
 	if (!virtual_files_val.IsNull()) {
 		server->SetVirtualFiles(BooleanValue::Get(virtual_files_val));
@@ -691,6 +695,7 @@ DuckLakeIcebergServeFunction::DuckLakeIcebergServeFunction()
 		    .Add("metadata_path", LogicalType::VARCHAR)
 		    .Add("public_uri", LogicalType::VARCHAR)
 		    .Add("virtual_files", LogicalType::BOOLEAN)
+		    .Add("cleanup_client_metadata", LogicalType::BOOLEAN)
 		    .Add("snapshot_limit", LogicalType::UBIGINT)
 		    .Add("table_config", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))
 		    .Add("defaults", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))

@@ -73,6 +73,14 @@ class SparkTest(IcebergTestCase):
         self.assertEqual(self.shell.sql('SELECT * FROM dl.sp.t ORDER BY id'), ['1,a,NULL', '3,zz,NULL', '4,merged,1.5'])
         self.assertEqual(self.sql('SELECT id FROM lake.sp.t ORDER BY id'), [(1,), (3,), (4,)])
 
+    def test_client_metadata_is_deleted(self):
+        self.sql('CREATE NAMESPACE IF NOT EXISTS lake.sp')
+        self.sql('CREATE TABLE lake.sp.cm (id bigint) USING iceberg')
+        self.sql('INSERT INTO lake.sp.cm VALUES (1), (2)')
+        self.sql('DELETE FROM lake.sp.cm WHERE id = 1')
+        self.assertEqual(self.avro_files('sp'), [])
+        self.assertEqual(self.sql('SELECT id FROM lake.sp.cm'), [(2,)])
+
     def test_partitioned(self):
         self.sql('CREATE NAMESPACE IF NOT EXISTS lake.sp')
         self.sql('CREATE TABLE lake.sp.p (id bigint, ts timestamp, cat string) USING iceberg '

@@ -224,6 +224,19 @@ class PyIcebergTest(IcebergTestCase):
         self.assertEqual(self.shell.sql('SELECT id FROM dl.rb.t ORDER BY id'), ['1', '2'])
         self.assertEqual(cat.load_table('rb.t').scan().to_arrow().sort_by('id')['id'].to_pylist(), [1, 2])
 
+    def test_client_metadata_is_deleted(self):
+        cat = self.catalog()
+        cat.create_namespace_if_not_exists('cm')
+        schema = pa.schema([('id', pa.int64())])
+        table = cat.create_table('cm.t', schema)
+        table.append(pa.table({'id': [1, 2]}, schema=schema))
+        table.append(pa.table({'id': [3]}, schema=schema))
+        table.delete('id = 1')
+        # the manifests and manifest lists of the client are gone, the data files are not
+        self.assertEqual(self.avro_files('cm'), [])
+        self.assertEqual(cat.load_table('cm.t').scan().to_arrow().sort_by('id')['id'].to_pylist(), [2, 3])
+        self.assertEqual(self.shell.sql('SELECT id FROM dl.cm.t ORDER BY id'), ['2', '3'])
+
     def test_branch_writes_are_not_supported(self):
         cat = self.catalog()
         cat.create_namespace_if_not_exists('rb')
@@ -234,6 +247,18 @@ class PyIcebergTest(IcebergTestCase):
             cat.load_table('rb.branch').append(pa.table({'id': [2]}, schema=schema), branch='dev')
         self.assertIn('main branch', str(raised.exception))
         self.assertEqual(self.shell.sql('SELECT id FROM dl.rb.branch'), ['1'])
+
+
+@requires_pyiceberg
+class KeepClientMetadataTest(IcebergTestCase):
+    serve_options = ', cleanup_client_metadata := false'
+
+    def test_client_metadata_is_kept(self):
+        cat = pyiceberg_catalog(self.uri)
+        cat.create_namespace_if_not_exists('cm')
+        schema = pa.schema([('id', pa.int64())])
+        cat.create_table('cm.kept', schema).append(pa.table({'id': [1]}, schema=schema))
+        self.assertGreaterEqual(len(self.avro_files('cm')), 2)
 
 
 @requires_pyiceberg

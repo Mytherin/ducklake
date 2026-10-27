@@ -210,7 +210,24 @@ struct PendingProperties {
 	vector<string> property_removals;
 	map<string, string> references;
 	vector<string> reference_removals;
+	//! The manifest lists and manifests that the client wrote for its snapshots, which are not needed after the commit
+	vector<string> client_files;
 };
+
+//! Deletes the files that a client wrote for a commit, which DuckLake has taken over. A file that cannot be deleted
+//! stays.
+void DeleteClientFiles(IcebergRequest &request, const vector<string> &files) {
+	if (!request.server.CleanupClientMetadata()) {
+		return;
+	}
+	auto &fs = FileSystem::GetFileSystem(*request.connection.context);
+	for (auto &file : files) {
+		try {
+			fs.TryRemoveFile(NormalizePath(file));
+		} catch (std::exception &) {
+		}
+	}
+}
 
 class TableUpdate {
 public:
@@ -222,6 +239,8 @@ public:
 	void Apply(RESTJsonIn requirements, RESTJsonIn updates);
 	//! Makes the table have the files of a snapshot
 	void ApplyManifestList(const string &manifest_list_path);
+	//! The manifest list of a snapshot of the client and the manifests that the client wrote for it
+	void CollectClientFiles(idx_t snapshot_id, const string &manifest_list_path);
 	//! The expressions of the partitioning of the table that a spec describes
 	static vector<string> PartitionExpressions(const IcebergSchema &schema, RESTJsonIn spec);
 	//! The expressions of the sort order of a table that a sort order describes
@@ -787,6 +806,22 @@ vector<PartitionLayoutField> TableUpdate::GetPartitionLayout() {
 	return result;
 }
 
+void TableUpdate::CollectClientFiles(idx_t snapshot_id, const string &manifest_list_path) {
+	if (IcebergVirtualFiles::IsGenerated(request, manifest_list_path)) {
+		return;
+	}
+	pending.client_files.push_back(manifest_list_path);
+	auto list = AvroReader::Read(IcebergVirtualFiles::Read(request, ReadablePath(manifest_list_path)));
+	for (auto &manifest : list.records) {
+		auto path = manifest.Get("manifest_path").AsString();
+		// the manifests of earlier snapshots are not the files of this commit
+		if (manifest.Get("added_snapshot_id").AsLong() == NumericCast<int64_t>(snapshot_id) &&
+		    !IcebergVirtualFiles::IsGenerated(request, path)) {
+			pending.client_files.push_back(path);
+		}
+	}
+}
+
 void TableUpdate::ApplyManifestList(const string &manifest_list_path) {
 	Reload();
 	ApplySnapshot(manifest_list_path, GetPartitionLayout());
@@ -909,6 +944,7 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 			auto snapshot = update.Get("snapshot");
 			auto snapshot_id = snapshot.UInt("snapshot-id");
 			added_snapshot_lists[snapshot_id] = snapshot.Str("manifest-list");
+			CollectClientFiles(snapshot_id, snapshot.Str("manifest-list"));
 			last_added_snapshot = snapshot_id;
 		} else if (action == "remove-snapshot-ref") {
 			auto ref_name = update.Str("ref-name");
@@ -1020,6 +1056,9 @@ string RespondWithTable(IcebergRequest &request, const vector<string> &ns, const
 			                          pending->reference_removals);
 		}
 		lookup.connection.Rollback();
+	}
+	if (pending) {
+		DeleteClientFiles(request, pending->client_files);
 	}
 	IcebergRequest fresh(request.server, request.db, request.catalog_name, request.prefix);
 	auto schema = fresh.FindSchema(ns);
@@ -1145,6 +1184,7 @@ void IcebergTableEndpoints::CommitTransaction(IcebergRequest &request, const Ice
 		                          pending.property_removals);
 		IcebergProperties::Update(request, IcebergProperties::REFERENCE, pending.table_uuid, pending.references,
 		                          pending.reference_removals);
+		DeleteClientFiles(request, pending.client_files);
 	}
 	response.status = 204;
 }

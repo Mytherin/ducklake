@@ -162,6 +162,13 @@ public:
 	bool VirtualFiles() const {
 		return virtual_files;
 	}
+	//! Whether the manifest lists and manifests that a client wrote for a commit are deleted after the commit
+	void SetCleanupClientMetadata(bool enabled) {
+		cleanup_client_metadata = enabled;
+	}
+	bool CleanupClientMetadata() const {
+		return cleanup_client_metadata;
+	}
 	//! The address of the server for clients, if it is not the address in the host header of their requests
 	void SetPublicURI(string uri) {
 		public_uri = std::move(uri);
@@ -230,6 +237,7 @@ private:
 	string token;
 	string public_uri;
 	bool virtual_files = false;
+	bool cleanup_client_metadata = true;
 	string metadata_path;
 	idx_t snapshot_limit = 100;
 	unique_ptr<duckdb_httplib::Server> server;

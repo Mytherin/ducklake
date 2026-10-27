@@ -101,5 +101,12 @@ class IcebergTestCase(unittest.TestCase):
         cls.shell.close()
         shutil.rmtree(cls.directory, ignore_errors=True)
 
+    def avro_files(self, schema):
+        """The Avro files in the data path of a schema, i.e. the manifests that clients wrote"""
+        found = []
+        for root, _, files in os.walk(os.path.join(self.shell.data_path, schema)):
+            found += [os.path.join(root, name) for name in files if name.endswith('.avro')]
+        return found
+
     def unique(self, prefix='t'):
         return '%s_%s' % (prefix, uuid.uuid4().hex[:8])

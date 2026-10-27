@@ -62,7 +62,16 @@ class DuckDBExtensionTest(IcebergTestCase):
         self.assertEqual(con.execute('SELECT * FROM ice.w.t ORDER BY id').fetchall(),
                          [(1, 'a', None), (3, 'zz', None), (4, 'd', 7)])
         con.execute('DROP TABLE ice.w.t')
-        self.assertEqual(self.shell.sql("SELECT count(*) FROM duckdb_tables() WHERE table_name = 't'"), ['0'])
+        self.assertEqual(self.shell.sql("SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'w' AND table_name = 't'"), ['0'])
+
+    def test_client_metadata_is_deleted(self):
+        con = self.connect()
+        con.execute('CREATE SCHEMA ice.cm')
+        con.execute('CREATE TABLE ice.cm.t(i INTEGER)')
+        con.execute('INSERT INTO ice.cm.t VALUES (1), (2)')
+        con.execute('DELETE FROM ice.cm.t WHERE i = 1')
+        self.assertEqual(self.avro_files('cm'), [])
+        self.assertEqual(self.shell.sql('SELECT * FROM dl.cm.t'), ['2'])
 
     def test_schema_evolution(self):
         self.shell.sql('CREATE TABLE dl.main.x(a INTEGER, b INTEGER)')
