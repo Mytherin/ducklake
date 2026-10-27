@@ -1126,20 +1126,6 @@ The statistics of a table.
 | `file_size_bytes` | `uint64` (optional) | The size of the files of the table, absent if unknown. |
 | `column_stats` | list of [`GlobalColumnStats`](#globalcolumnstats) (default `[]`) | The statistics of the columns. |
 
-### `InlinedFileDeletion`
-
-A deletion of a row of a data file that is inlined in the catalog.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `data_file_id` | `uint64` | The data file. |
-| `data_file_path` | `path` | The path of the data file. |
-| `row_id` | `uint64` | The position of the row in the file. |
-| `begin_snapshot` | `uint64` | The snapshot that deleted the row. |
-| `delete_file_id` | `uint64` (optional) | The current delete file of the data file. |
-| `delete_file` | [`FileData`](#filedata) (optional) | The current delete file. |
-| `delete_file_begin_snapshot` | `uint64` (default `0`) | The snapshot that added the current delete file. |
-
 ### `MacroImplementation`
 
 An implementation (overload) of a macro.

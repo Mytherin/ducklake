@@ -829,36 +829,6 @@ structure DeleteScanEntry {
     inlined_file_deletions: InlinedFileDeletionsEntryList = []
 }
 
-/// A deletion of a row of a data file that is inlined in the catalog.
-@cppClass("DuckLakeInlinedFileDeletionEntry")
-structure InlinedFileDeletion {
-    /// The data file.
-    @required
-    @cppMember("file_id")
-    data_file_id: UInt64
-
-    /// The path of the data file.
-    @required
-    data_file_path: DataPath
-
-    /// The position of the row in the file.
-    @required
-    row_id: UInt64
-
-    /// The snapshot that deleted the row.
-    @required
-    begin_snapshot: UInt64
-
-    /// The current delete file of the data file.
-    delete_file_id: UInt64
-
-    /// The current delete file.
-    delete_file: FileData
-
-    /// The snapshot that added the current delete file.
-    delete_file_begin_snapshot: UInt64 = 0
-}
-
 /// The storage used by a table.
 @cppClass("DuckLakeTableSizeInfo")
 structure TableSize {
@@ -1131,10 +1101,6 @@ list GlobalColumnStatsList {
 
 list GlobalTableStatsList {
     member: GlobalTableStats
-}
-
-list InlinedFileDeletionList {
-    member: InlinedFileDeletion
 }
 
 list InlinedFileDeletionsEntryList {

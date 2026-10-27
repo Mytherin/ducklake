@@ -1791,55 +1791,6 @@ DuckLakeGlobalStatsInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeInlinedFileDeletionEntry &value) {
-	auto result = writer.CreateObject();
-	result.Add("data_file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.file_id));
-	result.Add("data_file_path", RESTWriteValue<RESTPathCodec>(writer, value.data_file_path));
-	result.Add("row_id", RESTWriteValue<RESTUInt64Codec>(writer, value.row_id));
-	result.Add("begin_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.begin_snapshot));
-	if (!RESTIsNull(value.delete_file_id)) {
-		result.Add("delete_file_id", RESTWriteValue<RESTUInt64Codec>(writer, value.delete_file_id));
-	}
-	if (!RESTIsNull(value.delete_file)) {
-		result.Add("delete_file", RESTWriteValue<RESTObjectCodec<DuckLakeFileData>>(writer, value.delete_file));
-	}
-	result.Add("delete_file_begin_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.delete_file_begin_snapshot));
-	return result;
-}
-
-template <>
-DuckLakeInlinedFileDeletionEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for InlinedFileDeletion");
-	}
-	DuckLakeInlinedFileDeletionEntry result;
-	RESTReadValue<RESTUInt64Codec>(in.Get("data_file_id"), result.file_id);
-	RESTReadValue<RESTPathCodec>(in.Get("data_file_path"), result.data_file_path);
-	RESTReadValue<RESTUInt64Codec>(in.Get("row_id"), result.row_id);
-	RESTReadValue<RESTUInt64Codec>(in.Get("begin_snapshot"), result.begin_snapshot);
-	{
-		auto entry = in.TryGet("delete_file_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.delete_file_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("delete_file");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<DuckLakeFileData>>(entry, result.delete_file);
-		}
-	}
-	{
-		auto entry = in.TryGet("delete_file_begin_snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.delete_file_begin_snapshot);
-		} else {
-			result.delete_file_begin_snapshot = 0;
-		}
-	}
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTInlinedRows &value) {
 	auto result = writer.CreateObject();
 	return result;

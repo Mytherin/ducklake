@@ -258,7 +258,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTFileRowDeletes &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeGlobalColumnStatsInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeGlobalStatsInfo &value);
-	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeInlinedFileDeletionEntry &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTInlinedRows &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeMacroImplementation &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeMacroInfo &value);
@@ -389,8 +388,6 @@ template <>
 DuckLakeGlobalColumnStatsInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeGlobalStatsInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-DuckLakeInlinedFileDeletionEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTInlinedRows DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
