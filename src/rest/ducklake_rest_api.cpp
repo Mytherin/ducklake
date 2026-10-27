@@ -146,43 +146,6 @@ void RESTCompactionTypeCodec::Read(RESTJsonIn in, string &result) {
 	result = FromString(in.Str());
 }
 
-const char *RESTDataTypeCodec::ToString(DuckLakeDataType value) {
-	switch (value) {
-	case DuckLakeDataType::DATA_FILE:
-		return "data_file";
-	case DuckLakeDataType::INLINED_DATA:
-		return "inlined_data";
-	case DuckLakeDataType::TRANSACTION_LOCAL_INLINED_DATA:
-		return "transaction_local_inlined_data";
-	default:
-		throw InternalException("DuckLakeDataType value %d is not a value of the REST API type DataType",
-		                        static_cast<int>(value));
-	}
-}
-
-DuckLakeDataType RESTDataTypeCodec::FromString(const string &value) {
-	if (value == "data_file") {
-		return DuckLakeDataType::DATA_FILE;
-	}
-	if (value == "inlined_data") {
-		return DuckLakeDataType::INLINED_DATA;
-	}
-	if (value == "transaction_local_inlined_data") {
-		return DuckLakeDataType::TRANSACTION_LOCAL_INLINED_DATA;
-	}
-	throw InvalidInputException("DuckLake REST: \"%s\" is not a valid DataType (expected one of data_file, "
-	                            "inlined_data, transaction_local_inlined_data)",
-	                            value);
-}
-
-JSONMutableValue RESTDataTypeCodec::Write(JSONWriter &writer, DuckLakeDataType value) {
-	return writer.CreateString(ToString(value));
-}
-
-void RESTDataTypeCodec::Read(RESTJsonIn in, DuckLakeDataType &result) {
-	result = FromString(in.Str());
-}
-
 const char *RESTDropEntryTypeCodec::ToString(const string &value) {
 	if (value == "schema") {
 		return "schema";
@@ -1427,7 +1390,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	if (!RESTIsNull(value.mapping_id)) {
 		result.Add("mapping_id", RESTWriteValue<RESTUInt64Codec>(writer, value.mapping_id));
 	}
-	result.Add("data_type", RESTWriteValue<RESTDataTypeCodec>(writer, value.data_type));
 	if (!RESTIsNull(value.partition_id)) {
 		result.Add("partition_id", RESTWriteValue<RESTUInt64Codec>(writer, value.partition_id));
 	}
@@ -1509,14 +1471,6 @@ DuckLakeFileListEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		}
 	}
 	{
-		auto entry = in.TryGet("data_type");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTDataTypeCodec>(entry, result.data_type);
-		} else {
-			result.data_type = DuckLakeDataType::DATA_FILE;
-		}
-	}
-	{
 		auto entry = in.TryGet("partition_id");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTUInt64Codec>(entry, result.partition_id);
@@ -1570,7 +1524,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 	if (!RESTIsNull(value.mapping_id)) {
 		result.Add("mapping_id", RESTWriteValue<RESTUInt64Codec>(writer, value.mapping_id));
 	}
-	result.Add("data_type", RESTWriteValue<RESTDataTypeCodec>(writer, value.data_type));
 	return result;
 }
 
@@ -1630,14 +1583,6 @@ DuckLakeFileListExtendedEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("mapping_id");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTUInt64Codec>(entry, result.mapping_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("data_type");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTDataTypeCodec>(entry, result.data_type);
-		} else {
-			result.data_type = DuckLakeDataType::DATA_FILE;
 		}
 	}
 	return result;

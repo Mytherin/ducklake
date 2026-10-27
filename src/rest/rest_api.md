@@ -910,16 +910,6 @@ read it.
 | `partition_values` | list of [`FilePartitionValue`](#filepartitionvalue) (default `[]`) | The values of the partition keys. |
 | `delete_files` | list of [`DeleteFile`](#deletefile) (default `[]`) | Delete files for the rows of the file. |
 
-### `DataType`
-
-Where the rows of a file list entry are stored.
-
-| Value | Description |
-|-------|-------------|
-| `data_file` | In a data file. |
-| `inlined_data` | In an inlined data table. |
-| `transaction_local_inlined_data` | In the inlined data of the transaction. |
-
 ### `DeleteFile`
 
 A delete file written by a client, which replaces the previous delete file of its data file.
@@ -1068,7 +1058,6 @@ A data file of a table that is visible in a snapshot, together with its deletes.
 | `snapshot_filter_max` | `uint64` (optional) | Only read rows that were inserted up to this snapshot. |
 | `snapshot_filter_min` | `uint64` (optional) | Only read rows that were inserted from this snapshot. |
 | `mapping_id` | `uint64` (optional) | The name map of the file. |
-| `data_type` | [`DataType`](#datatype) (default `"data_file"`) | Where the rows are stored. |
 | `partition_id` | `uint64` (optional) | The partitioning that the file was written with, absent if the table was not partitioned then. The partition keys of the values are those of this partitioning, which is not necessarily the current one. |
 | `partition_values` | list of [`FilePartitionValue`](#filepartitionvalue) (default `[]`) | The values of the partition keys of the file, as text. |
 | `inlined_file_deletions` | list of `uint64` (default `[]`) | The positions of the rows of the file that are deleted by deletions inlined in the catalog. |
@@ -1090,7 +1079,6 @@ A data file of a table with the ids of its files, used to plan deletes and updat
 | `record_count` | `uint64` | The number of rows of the file. |
 | `delete_count` | `uint64` (default `0`) | The number of deleted rows of the file. |
 | `mapping_id` | `uint64` (optional) | The name map of the file. |
-| `data_type` | [`DataType`](#datatype) (default `"data_file"`) | Where the rows are stored. |
 
 ### `FilePartitionValue`
 

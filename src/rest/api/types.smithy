@@ -563,19 +563,6 @@ structure FileData {
     format: FileFormat = "parquet"
 }
 
-/// Where the rows of a file list entry are stored.
-@cppClass("DuckLakeDataType")
-enum DataType {
-    /// In a data file.
-    DATA_FILE = "data_file"
-
-    /// In an inlined data table.
-    INLINED_DATA = "inlined_data"
-
-    /// In the inlined data of the transaction.
-    TRANSACTION_LOCAL_INLINED_DATA = "transaction_local_inlined_data"
-}
-
 /// The min/max statistics of a column of a file.
 @mixin(
     localTraits: [cppClass]
@@ -631,9 +618,6 @@ structure FileListEntry {
     /// The name map of the file.
     mapping_id: UInt64
 
-    /// Where the rows are stored.
-    data_type: DataType = "data_file"
-
     /// The partitioning that the file was written with, absent if the table was not partitioned then. The partition
     /// keys of the values are those of this partitioning, which is not necessarily the current one.
     partition_id: UInt64
@@ -684,9 +668,6 @@ structure FileListExtendedEntry {
 
     /// The name map of the file.
     mapping_id: UInt64
-
-    /// Where the rows are stored.
-    data_type: DataType = "data_file"
 }
 
 /// A delete file written by a client, which replaces the previous delete file of its data file.

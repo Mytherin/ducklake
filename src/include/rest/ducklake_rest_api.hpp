@@ -56,14 +56,6 @@ struct RESTCompactionTypeCodec : public RESTCodec<RESTCompactionTypeCodec> {
 	static void Read(RESTJsonIn in, string &result);
 };
 
-//! Where the rows of a file list entry are stored.
-struct RESTDataTypeCodec : public RESTCodec<RESTDataTypeCodec> {
-	static const char *ToString(DuckLakeDataType value);
-	static DuckLakeDataType FromString(const string &value);
-	static JSONMutableValue Write(JSONWriter &writer, DuckLakeDataType value);
-	static void Read(RESTJsonIn in, DuckLakeDataType &result);
-};
-
 //! The type of an entry that `drop` drops.
 struct RESTDropEntryTypeCodec : public RESTCodec<RESTDropEntryTypeCodec> {
 	static const char *ToString(const string &value);
