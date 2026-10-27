@@ -10,6 +10,7 @@
 #include "iceberg/iceberg_inlined.hpp"
 #include "iceberg/iceberg_properties.hpp"
 #include "iceberg/iceberg_util.hpp"
+#include "storage/ducklake_delete_filter.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
 #include "storage/ducklake_transaction.hpp"
 
@@ -583,6 +584,8 @@ private:
 	const DuckLakeTableInfo &table;
 	idx_t table_id;
 	idx_t table_begin = 0;
+	//! The files that ended before this snapshot are not of interest
+	idx_t file_cutoff = 0;
 	string table_location;
 	string metadata_dir;
 
@@ -740,7 +743,7 @@ void TableExport::LoadFiles() {
 	    "{METADATA_CATALOG}.ducklake_data_file WHERE "
 	    "table_id = %d AND begin_snapshot <= {SNAPSHOT_ID} AND (end_snapshot IS NULL OR end_snapshot > %d) ORDER BY "
 	    "begin_snapshot, file_order, data_file_id",
-	    table_id, table_begin));
+	    table_id, file_cutoff));
 	for (auto &row : *files) {
 		if (row.GetValue<bool>(9)) {
 			throw NotImplementedException("The Iceberg REST API does not support encrypted DuckLake tables");
@@ -762,7 +765,7 @@ void TableExport::LoadFiles() {
 	    "delete_count, file_size_bytes, partial_max FROM {METADATA_CATALOG}.ducklake_delete_file WHERE table_id = %d "
 	    "AND begin_snapshot <= {SNAPSHOT_ID} AND (end_snapshot IS NULL OR end_snapshot > %d) ORDER BY "
 	    "begin_snapshot, delete_file_id",
-	    table_id, table_begin));
+	    table_id, file_cutoff));
 	for (auto &row : *deletes) {
 		ExportDeleteFile file;
 		file.id = row.GetValue<idx_t>(0);
@@ -875,6 +878,10 @@ void TableExport::ChooseSnapshots() {
 		}
 		chosen = std::move(kept);
 	}
+	// the files of the snapshots before the cutoff were not loaded
+	while (!chosen.empty() && chosen.front() < file_cutoff) {
+		chosen.erase(chosen.begin());
+	}
 }
 
 const ExportSpec &TableExport::SpecOfPartition(optional_idx partition_id) {
@@ -917,13 +924,6 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 	LoadColumns();
 	LoadPartitions();
 	LoadSnapshots();
-	LoadFiles();
-	for (auto &snapshot : all_snapshots) {
-		if (snapshot.id == latest_snapshot) {
-			latest_time_ms = snapshot.time_ms;
-		}
-	}
-	inlined = IcebergInlinedExport::Create(request, table);
 	for (auto &reference : IcebergProperties::Get(request, IcebergProperties::REFERENCE, table.uuid)) {
 		try {
 			RESTJsonReader reader(reference.second);
@@ -933,6 +933,32 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 			// a reference that cannot be read is left out
 		}
 	}
+	// only the files of the snapshots that are exposed are loaded
+	file_cutoff = table_begin;
+	vector<idx_t> data_snapshots;
+	for (auto &entry : snapshot_changes) {
+		for (auto &token : StringUtil::Split(entry.second, ',')) {
+			if (IsDataEventToken(token, table_id)) {
+				data_snapshots.push_back(entry.first);
+				break;
+			}
+		}
+	}
+	std::sort(data_snapshots.begin(), data_snapshots.end());
+	auto limit = request.server.SnapshotLimit();
+	if (data_snapshots.size() > limit) {
+		file_cutoff = MaxValue<idx_t>(file_cutoff, data_snapshots[data_snapshots.size() - limit]);
+	}
+	for (auto snapshot : reference_snapshots) {
+		file_cutoff = MinValue<idx_t>(file_cutoff, snapshot);
+	}
+	LoadFiles();
+	for (auto &snapshot : all_snapshots) {
+		if (snapshot.id == latest_snapshot) {
+			latest_time_ms = snapshot.time_ms;
+		}
+	}
+	inlined = IcebergInlinedExport::Create(request, table);
 	ChooseSnapshots();
 
 	// the schemas: a new one for every change of the columns
@@ -1463,11 +1489,28 @@ void TableExport::ConvertDeleteFile(const ExportDeleteFile &file, const string &
 	auto &fs = FileSystem::GetFileSystem(context);
 	if (!IcebergUtil::FileExists(context, converted)) {
 		fs.CreateDirectoriesRecursive(metadata_dir);
-		request.MetadataQuery(StringUtil::Format(
-		    "COPY (SELECT %s AS file_path, pos FROM read_parquet(%s) ORDER BY pos) TO %s (FORMAT PARQUET, "
-		    "FIELD_IDS {'file_path': %d, 'pos': %d})",
-		    SQLString::ToString(data_path), SQLString::ToString(file.path), SQLString::ToString(converted),
-		    POSITION_DELETE_PATH_ID, POSITION_DELETE_PATH_ID - 1));
+		string source;
+		if (file.format == "puffin") {
+			// a deletion vector: the positions are written as a position delete file
+			DuckLakeFileData delete_file;
+			delete_file.path = file.path;
+			delete_file.format = DeleteFileFormat::PUFFIN;
+			delete_file.file_size_bytes = file.file_size;
+			auto positions = DuckLakeDeleteFilter::ScanDeletionVectorFile(context, delete_file).deleted_rows;
+			std::sort(positions.begin(), positions.end());
+			vector<string> literals;
+			for (auto position : positions) {
+				literals.push_back(to_string(position));
+			}
+			source = StringUtil::Format("(SELECT unnest([%s]::BIGINT[]) AS pos)", StringUtil::Join(literals, ", "));
+		} else {
+			source = StringUtil::Format("read_parquet(%s)", SQLString::ToString(file.path));
+		}
+		request.MetadataQuery(
+		    StringUtil::Format("COPY (SELECT %s AS file_path, pos FROM %s ORDER BY pos) TO %s (FORMAT PARQUET, "
+		                       "FIELD_IDS {'file_path': %d, 'pos': %d})",
+		                       SQLString::ToString(data_path), source, SQLString::ToString(converted),
+		                       POSITION_DELETE_PATH_ID, POSITION_DELETE_PATH_ID - 1));
 	}
 	path = converted;
 	file_size = fs.OpenFile(converted, FileOpenFlags::FILE_FLAGS_READ)->GetFileSize();
@@ -1558,9 +1601,6 @@ void TableExport::GatherItems(idx_t snapshot_id, GatheredItems &out) {
 		delete_items[SpecOfPartition(data_file->second->partition_id).spec_id].push_back(std::move(item));
 	}
 	for (auto file : delete_list) {
-		if (file->format != "parquet") {
-			throw NotImplementedException("The Iceberg REST API does not support deletion vectors yet");
-		}
 		auto data_file = data_by_id.find(file->data_file_id);
 		if (data_file == data_by_id.end()) {
 			continue;

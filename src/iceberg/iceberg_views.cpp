@@ -2,6 +2,7 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/parser.hpp"
 #include "iceberg/iceberg_properties.hpp"
 #include "iceberg/iceberg_types.hpp"
 #include "iceberg/iceberg_util.hpp"
@@ -183,6 +184,12 @@ string GetViewSQL(RESTJsonIn version, string &dialect) {
 	}
 	if (result.empty()) {
 		throw IcebergException(400, "BadRequestException", "The view version has no SQL representation");
+	}
+	// the SQL of a view is a single query
+	auto parser = Parser::GetBuiltinParser();
+	parser.ParseQuery(result);
+	if (parser.statements.size() != 1 || parser.statements[0]->type != StatementType::SELECT_STATEMENT) {
+		throw IcebergException(400, "BadRequestException", "The SQL of a view has to be a single SELECT statement");
 	}
 	return result;
 }

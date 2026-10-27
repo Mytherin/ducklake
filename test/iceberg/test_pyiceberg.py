@@ -210,5 +210,69 @@ class PyIcebergTest(IcebergTestCase):
                          ['id,ASC'])
 
 
+    def test_rollback(self):
+        cat = self.catalog()
+        cat.create_namespace_if_not_exists('rb')
+        schema = pa.schema([('id', pa.int64())])
+        table = cat.create_table('rb.t', schema)
+        table.append(pa.table({'id': [1, 2]}, schema=schema))
+        first = cat.load_table('rb.t').current_snapshot().snapshot_id
+        table.append(pa.table({'id': [3]}, schema=schema))
+        table.delete('id = 1')
+        self.assertEqual(self.shell.sql('SELECT id FROM dl.rb.t ORDER BY id'), ['2', '3'])
+        cat.load_table('rb.t').manage_snapshots().rollback_to_snapshot(first).commit()
+        self.assertEqual(self.shell.sql('SELECT id FROM dl.rb.t ORDER BY id'), ['1', '2'])
+        self.assertEqual(cat.load_table('rb.t').scan().to_arrow().sort_by('id')['id'].to_pylist(), [1, 2])
+
+    def test_branch_writes_are_not_supported(self):
+        cat = self.catalog()
+        cat.create_namespace_if_not_exists('rb')
+        schema = pa.schema([('id', pa.int64())])
+        table = cat.create_table('rb.branch', schema)
+        table.append(pa.table({'id': [1]}, schema=schema))
+        with self.assertRaises(Exception) as raised:
+            cat.load_table('rb.branch').append(pa.table({'id': [2]}, schema=schema), branch='dev')
+        self.assertIn('main branch', str(raised.exception))
+        self.assertEqual(self.shell.sql('SELECT id FROM dl.rb.branch'), ['1'])
+
+
+@requires_pyiceberg
+class DeletionVectorTest(IcebergTestCase):
+    attach_options = ', DATA_INLINING_ROW_LIMIT 0, WRITE_DELETION_VECTORS true'
+
+    def test_deletion_vectors_are_position_deletes(self):
+        self.shell.sql('CREATE TABLE dl.main.dv(i INTEGER)')
+        self.shell.sql('INSERT INTO dl.main.dv SELECT i FROM range(100) t(i)')
+        self.shell.sql('DELETE FROM dl.main.dv WHERE i % 10 = 0')
+        self.assertEqual(self.shell.sql("SELECT count(*) FROM __ducklake_metadata_dl.ducklake_delete_file WHERE format = 'puffin'"), ['1'])
+        table = pyiceberg_catalog(self.uri).load_table('main.dv')
+        values = table.scan().to_arrow()['i'].to_pylist()
+        self.assertEqual(len(values), 90)
+        self.assertNotIn(10, values)
+
+
+@requires_pyiceberg
+class TokenTest(IcebergTestCase):
+    token = 'secret'
+
+    def test_token(self):
+        cat = pyiceberg_catalog(self.uri, token='secret')
+        cat.create_namespace('tok')
+        self.assertIn(('tok',), cat.list_namespaces())
+
+    def test_oauth_credentials(self):
+        # PyIceberg gets a token from the OAuth endpoint with the credentials
+        from pyiceberg.catalog import load_catalog
+        cat = load_catalog('rest', **{'uri': self.uri, 'warehouse': 'dl', 'credential': 'client:secret',
+                                      'oauth2-server-uri': self.uri + '/v1/oauth/tokens'})
+        self.assertIn(('main',), cat.list_namespaces())
+
+    def test_wrong_token(self):
+        from pyiceberg.exceptions import NotAuthorizedError, RESTError
+        cat = pyiceberg_catalog(self.uri, token='wrong')
+        with self.assertRaises((NotAuthorizedError, RESTError)):
+            cat.list_namespaces()
+
+
 if __name__ == '__main__':
     unittest.main()

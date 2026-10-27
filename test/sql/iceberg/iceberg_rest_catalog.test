@@ -1,0 +1,161 @@
+# name: test/sql/iceberg/iceberg_rest_catalog.test
+# description: Read a DuckLake through the Iceberg REST API: namespaces, tables, metadata and generated manifests
+# group: [iceberg]
+
+require json
+
+include test/template/iceberg_setup.test_template
+
+# the config tells the client the prefix of the catalog
+query I
+SELECT response->>'$.overrides.prefix' FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/config', '')
+----
+iceberg_lake
+
+query I
+SELECT list_contains((response->'$.endpoints')::VARCHAR[], 'GET /v1/{prefix}/namespaces') FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/config', '')
+----
+true
+
+# namespaces
+query I
+SELECT response->>'$.namespaces' FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces', '')
+----
+[["main"]]
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces/missing', '')
+----
+404	NoSuchNamespaceException
+
+query II
+SELECT status, response->>'$.namespace' FROM ducklake_rest_request('{iceberg_server}', 'POST', '/v1/iceberg_lake/namespaces', '{"namespace": ["analytics"]}')
+----
+200	["analytics"]
+
+query II
+SELECT status, response->>'$.error.type' FROM ducklake_rest_request('{iceberg_server}', 'POST', '/v1/iceberg_lake/namespaces', '{"namespace": ["analytics"]}')
+----
+409	AlreadyExistsException
+
+# a table that is created through DuckLake is a table of the Iceberg API
+statement ok iceberg_db:iceberg_server_con
+CREATE TABLE iceberg_lake.analytics.events(id BIGINT, name VARCHAR, ts TIMESTAMP, amount DECIMAL(10,2))
+
+query I
+SELECT response->>'$.identifiers' FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces/analytics/tables', '')
+----
+[{"namespace":["analytics"],"name":"events"}]
+
+# an empty table has no snapshot
+query IIII
+SELECT response->>'$.metadata."format-version"', response->>'$.metadata."current-snapshot-id"',
+       response->>'$.metadata.schemas[0].fields[1].name', response->>'$.metadata.schemas[0].fields[3].type'
+FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces/analytics/tables/events', '')
+----
+2	-1	name	decimal(10, 2)
+
+statement ok iceberg_db:iceberg_server_con
+INSERT INTO iceberg_lake.analytics.events VALUES (1, 'a', '2020-01-01 10:00:00', 1.50), (2, 'b', '2020-01-02 11:00:00', 2.50), (3, NULL, NULL, NULL)
+
+statement ok iceberg_db:iceberg_server_con
+INSERT INTO iceberg_lake.analytics.events VALUES (4, 'd', '2020-01-04 13:00:00', 4.50)
+
+statement ok iceberg_db:iceberg_server_con
+DELETE FROM iceberg_lake.analytics.events WHERE id = 2
+
+statement ok
+SET VARIABLE table_json = (SELECT response FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces/analytics/tables/events', ''))
+
+# every snapshot that changed the data of the table is a snapshot of the Iceberg table
+query III
+SELECT json_array_length(getvariable('table_json')->'$.metadata.snapshots'),
+       getvariable('table_json')->>'$.metadata.snapshots[0].summary.operation',
+       getvariable('table_json')->>'$.metadata.snapshots[2].summary.operation'
+----
+3	append	overwrite
+
+query I
+SELECT getvariable('table_json')->>'$.metadata."current-snapshot-id"' = getvariable('table_json')->>'$.metadata.snapshots[2]."snapshot-id"'
+----
+true
+
+query III
+SELECT getvariable('table_json')->>'$.metadata.snapshots[2].summary."total-records"',
+       getvariable('table_json')->>'$.metadata.snapshots[2].summary."total-position-deletes"',
+       getvariable('table_json')->>'$.metadata.snapshots[2].summary."total-data-files"'
+----
+4	1	2
+
+# the manifest list of the current snapshot has a data manifest and a delete manifest
+statement ok
+SET VARIABLE manifest_list = getvariable('table_json')->>'$.metadata.snapshots[2]."manifest-list"'
+
+query II
+SELECT record->>'$.content', record->>'$.added_files_count' FROM ducklake_avro_read(getvariable('manifest_list')) ORDER BY 1
+----
+0	0
+1	1
+
+# the first snapshot is a data manifest with one added file
+statement ok
+SET VARIABLE first_manifest_list = getvariable('table_json')->>'$.metadata.snapshots[0]."manifest-list"'
+
+query III
+SELECT record->>'$.content', record->>'$.added_files_count', record->>'$.added_rows_count'
+FROM ducklake_avro_read(getvariable('first_manifest_list'))
+----
+0	1	3
+
+statement ok
+SET VARIABLE data_manifest = (SELECT record->>'$.manifest_path' FROM ducklake_avro_read(getvariable('manifest_list')) WHERE record->>'$.content' = '0')
+
+# the entries of the data manifest: the files with their stats (the files were added by earlier snapshots)
+query III
+SELECT record->>'$.status', record->>'$.data_file.record_count', record->>'$.data_file.file_format'
+FROM ducklake_avro_read(getvariable('data_manifest')) ORDER BY record->>'$.data_file.record_count' DESC
+----
+0	3	PARQUET
+0	1	PARQUET
+
+# the field ids of the columns are the ids of DuckLake
+query II
+SELECT x.key, x.value FROM (SELECT unnest(from_json(record->'$.data_file.null_value_counts', '[{"key": "BIGINT", "value": "BIGINT"}]')) AS x
+FROM ducklake_avro_read(getvariable('data_manifest')) WHERE record->>'$.data_file.record_count' = '3') ORDER BY 1
+----
+1	0
+2	1
+3	1
+4	1
+
+statement ok
+SET VARIABLE delete_manifest = (SELECT record->>'$.manifest_path' FROM ducklake_avro_read(getvariable('manifest_list')) WHERE record->>'$.content' = '1')
+
+# the delete file is a position delete file of Iceberg
+query II
+SELECT record->>'$.data_file.content', record->>'$.data_file.record_count' FROM ducklake_avro_read(getvariable('delete_manifest'))
+----
+1	1
+
+statement ok
+SET VARIABLE delete_file = (SELECT record->>'$.data_file.file_path' FROM ducklake_avro_read(getvariable('delete_manifest')))
+
+query I
+SELECT pos FROM read_parquet(getvariable('delete_file'))
+----
+1
+
+# the metadata file is the one of the response
+query I
+SELECT json_extract(content, '$."table-uuid"') = to_json(getvariable('table_json')->>'$.metadata."table-uuid"')
+FROM read_text(getvariable('table_json')->>'$."metadata-location"')
+----
+true
+
+# table exists
+query I
+SELECT status FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces/analytics/tables/events', '')
+----
+200
+
+include test/template/iceberg_teardown.test_template

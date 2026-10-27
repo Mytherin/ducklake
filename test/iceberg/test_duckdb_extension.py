@@ -74,5 +74,19 @@ class DuckDBExtensionTest(IcebergTestCase):
                          [(2, None), (4, 'z')])
 
 
+@requires_duckdb_iceberg
+class DuckDBExtensionTokenTest(IcebergTestCase):
+    token = 'secret'
+
+    def test_token(self):
+        con = duckdb_iceberg_connection(self.uri, token='secret')
+        con.execute('CREATE SCHEMA ice.tok')
+        con.execute('CREATE TABLE ice.tok.t(i INTEGER)')
+        con.execute('INSERT INTO ice.tok.t VALUES (42)')
+        self.assertEqual(self.shell.sql('SELECT * FROM dl.tok.t'), ['42'])
+        with self.assertRaises(Exception):
+            duckdb_iceberg_connection(self.uri, token='wrong')
+
+
 if __name__ == '__main__':
     unittest.main()

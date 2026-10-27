@@ -1,0 +1,4 @@
+# Stops the Iceberg REST server started by iceberg_setup.test_template
+
+statement ok iceberg_db:iceberg_server_con
+SELECT * FROM ducklake_iceberg_stop(regexp_extract(getvariable('iceberg_listen_uri'), '^(.*://[^/]+)', 1))

@@ -902,6 +902,13 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 	if (has_current_schema) {
 		ApplySchema(current_schema);
 	}
+	for (auto &reference : pending.references) {
+		RESTJsonReader reader(reference.second);
+		if (added_snapshot_lists.find(reader.Root().UInt("snapshot-id")) != added_snapshot_lists.end()) {
+			throw Unsupported(StringUtil::Format(
+			    "The reference \"%s\": new snapshots can only be added to the main branch", reference.first));
+		}
+	}
 	if (has_sort_order) {
 		ApplySortOrder(has_current_schema ? current_schema : state.schemas.back(), has_added_sort_order, sort_order,
 		               sort_order_id);
@@ -919,7 +926,20 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 			    state.current_snapshot_id.GetIndex() == main_snapshot.GetIndex()) {
 				// the branch stays where it is
 			} else {
-				throw Unsupported("Moving the main branch to an existing snapshot is not supported");
+				// the branch moves to a snapshot of the history: the table gets the files of the snapshot
+				IcebergTableExporter exporter(request);
+				auto load = exporter.Export(*schema, *table, "all");
+				RESTJsonReader reader(load.metadata_json);
+				string manifest_list;
+				for (auto &snapshot : reader.Root().Get("snapshots").Items()) {
+					if (snapshot.UInt("snapshot-id") == main_snapshot.GetIndex()) {
+						manifest_list = snapshot.Str("manifest-list");
+					}
+				}
+				if (manifest_list.empty()) {
+					throw BadRequest(StringUtil::Format("The snapshot %llu does not exist", main_snapshot.GetIndex()));
+				}
+				ApplySnapshot(manifest_list, GetPartitionLayout());
 			}
 		} else {
 			vector<PartitionLayoutField> layout;
