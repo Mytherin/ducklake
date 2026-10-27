@@ -10,7 +10,8 @@ add_library(
   iceberg_table_update.cpp
   iceberg_types.cpp
   iceberg_util.cpp
-  iceberg_views.cpp)
+  iceberg_views.cpp
+  iceberg_virtual_files.cpp)
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:ducklake_iceberg>
     PARENT_SCOPE)

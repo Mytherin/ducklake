@@ -10,6 +10,7 @@
 #include "iceberg/iceberg_inlined.hpp"
 #include "iceberg/iceberg_properties.hpp"
 #include "iceberg/iceberg_util.hpp"
+#include "iceberg/iceberg_virtual_files.hpp"
 #include "storage/ducklake_delete_filter.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
 #include "storage/ducklake_transaction.hpp"
@@ -24,6 +25,35 @@ bool IcebergExportCache::Get(const string &key, IcebergExportedSnapshot &result)
 	}
 	result = entry->second;
 	return true;
+}
+
+bool IcebergExportCache::GetBytes(const string &key, string &result) {
+	lock_guard<mutex> guard(lock);
+	auto entry = bytes.find(key);
+	if (entry == bytes.end()) {
+		return false;
+	}
+	result = entry->second;
+	return true;
+}
+
+void IcebergExportCache::PutBytes(const string &key, string content) {
+	static constexpr idx_t MAX_BYTES = 256ULL * 1024 * 1024;
+	lock_guard<mutex> guard(lock);
+	if (content.size() > MAX_BYTES / 4 || bytes.find(key) != bytes.end()) {
+		return;
+	}
+	bytes_size += content.size();
+	bytes[key] = std::move(content);
+	bytes_order.push_back(key);
+	while (bytes_size > MAX_BYTES && !bytes_order.empty()) {
+		auto oldest = bytes.find(bytes_order.front());
+		if (oldest != bytes.end()) {
+			bytes_size -= oldest->second.size();
+			bytes.erase(oldest);
+		}
+		bytes_order.erase(bytes_order.begin());
+	}
 }
 
 bool IcebergExportCache::GetPlan(const string &plan_id, string &result) {
@@ -158,8 +188,9 @@ struct ManifestItem {
 struct GatheredItems {
 	vector<const ExportDataFile *> data_list;
 	vector<const ExportDeleteFile *> delete_list;
-	vector<IcebergInlinedFile> inlined_files;
-	vector<IcebergInlinedDeleteFile> inlined_deletes;
+	idx_t inlined_file_count = 0;
+	idx_t inlined_rows = 0;
+	idx_t inlined_delete_count = 0;
 	map<idx_t, vector<ManifestItem>> data_items;
 	map<idx_t, vector<ManifestItem>> delete_items;
 	idx_t delete_rows = 0;
@@ -556,6 +587,9 @@ public:
 	//! Computes the scan of a snapshot, which is returned as the metadata JSON of the load
 	bool plan_scan = false;
 	optional_idx plan_snapshot;
+	//! Generates a file of the table instead of its metadata
+	string generate_name;
+	string generated;
 
 private:
 	void LoadColumns();
@@ -570,8 +604,14 @@ private:
 	IcebergExportedSnapshot ExportSnapshot(idx_t index);
 	string WriteManifest(const vector<ManifestItem> &items, const ExportSpec &spec, idx_t snapshot_id,
 	                     const IcebergSchema &snapshot_schema, bool deletes, ManifestSummary &summary);
-	void ConvertDeleteFile(const ExportDeleteFile &file, const string &data_path, string &path, idx_t &file_size);
-	void GatherItems(idx_t snapshot_id, GatheredItems &out);
+	string GenerateDeleteFile(idx_t snapshot_id, idx_t delete_file_id);
+	string GenerateParquet(const string &name);
+	string GenerateManifest(idx_t snapshot_id, idx_t spec_id, bool deletes);
+	string GenerateManifestList(idx_t snapshot_id, const string &previous);
+	string Dispatch(const string &name);
+	//! The URL of a generated file of the table
+	string Url(const string &name) const;
+	void GatherItems(idx_t snapshot_id, GatheredItems &out, bool materialize);
 	string BuildPlan(optional_idx requested_snapshot);
 	vector<const ExportDataFile *> VisibleDataFiles(idx_t snapshot_id);
 	vector<const ExportDeleteFile *> VisibleDeleteFiles(idx_t snapshot_id);
@@ -587,7 +627,6 @@ private:
 	//! The files that ended before this snapshot are not of interest
 	idx_t file_cutoff = 0;
 	string table_location;
-	string metadata_dir;
 
 	vector<ExportColumnRow> column_rows;
 	vector<ExportPartition> partitions;
@@ -909,11 +948,6 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 	auto &server = request.server;
 	latest_snapshot = request.GetSnapshot().snapshot_id;
 	table_location = IcebergUtil::StripTrailingSlash(table.path);
-	auto root = server.MetadataPath();
-	if (root.empty()) {
-		throw InternalException("The Iceberg REST server has no metadata path");
-	}
-	metadata_dir = IcebergUtil::JoinPath(IcebergUtil::JoinPath(root, table.uuid), "metadata");
 
 	// when the table was created
 	auto begin = request.MetadataQuery(StringUtil::Format(
@@ -951,6 +985,10 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 	}
 	for (auto snapshot : reference_snapshots) {
 		file_cutoff = MinValue<idx_t>(file_cutoff, snapshot);
+	}
+	if (!generate_name.empty()) {
+		// only the files that are visible at the snapshot of the file are needed
+		file_cutoff = latest_snapshot;
 	}
 	LoadFiles();
 	for (auto &snapshot : all_snapshots) {
@@ -1088,10 +1126,26 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 		}
 	}
 
+	if (!generate_name.empty()) {
+		generated = Dispatch(generate_name);
+		return IcebergTableLoad();
+	}
 	if (plan_scan) {
 		IcebergTableLoad plan;
 		plan.metadata_json = BuildPlan(plan_snapshot);
 		return plan;
+	}
+	if (!state_only && table_location.find("://") == string::npos) {
+		// object stores have no directories, but the clients of a local file system expect them
+		auto &fs = FileSystem::GetFileSystem(context);
+		fs.CreateDirectoriesRecursive(table_location + "/metadata");
+		fs.CreateDirectoriesRecursive(table_location + "/data");
+	}
+	if (!state_only && table_location.find("://") == string::npos) {
+		// object stores have no directories, but the clients of a local file system expect them
+		auto &fs = FileSystem::GetFileSystem(context);
+		fs.CreateDirectoriesRecursive(table_location + "/metadata");
+		fs.CreateDirectoriesRecursive(table_location + "/data");
 	}
 	if (state_only) {
 		IcebergTableLoad state;
@@ -1262,11 +1316,9 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 	load.last_partition_id = last_partition_id;
 	load.last_sequence_number = last_sequence_number;
 	load.schemas = schemas;
-	load.metadata_location = IcebergUtil::JoinPath(
-	    metadata_dir, StringUtil::Format("%05d-%s.metadata.json", latest_snapshot, FormatHash(load.metadata_json)));
-	if (!IcebergUtil::FileExists(context, load.metadata_location)) {
-		IcebergUtil::WriteFile(context, load.metadata_location, load.metadata_json);
-	}
+	auto metadata_name = StringUtil::Format("meta-%d.metadata.json", latest_snapshot);
+	load.metadata_location = Url(metadata_name);
+	IcebergVirtualFiles::Publish(request, IcebergVirtualFiles::Entity(table), metadata_name, load.metadata_json);
 	return load;
 }
 
@@ -1472,48 +1524,7 @@ string TableExport::WriteManifest(const vector<ManifestItem> &items, const Expor
 	header["content"] = deletes ? "deletes" : "data";
 	auto bytes = AvroWriter::Write(ManifestSchema(spec, snapshot_schema), header, records, "null");
 	summary.length = bytes.size();
-	auto path = IcebergUtil::JoinPath(metadata_dir, FormatHash(bytes) + "-m" + to_string(spec.spec_id) +
-	                                                    (deletes ? "-d" : "") + ".avro");
-	if (!IcebergUtil::FileExists(context, path)) {
-		IcebergUtil::WriteFile(context, path, bytes);
-	}
-	return path;
-}
-
-//! The delete files of DuckLake have other field ids than the position delete files of Iceberg, so the delete file is
-//! rewritten with the ids and the path of the data file that Iceberg readers expect
-void TableExport::ConvertDeleteFile(const ExportDeleteFile &file, const string &data_path, string &path,
-                                    idx_t &file_size) {
-	auto converted = IcebergUtil::JoinPath(
-	    metadata_dir, StringUtil::Format("delete-%d-%s.parquet", file.id, FormatHash(data_path + file.path)));
-	auto &fs = FileSystem::GetFileSystem(context);
-	if (!IcebergUtil::FileExists(context, converted)) {
-		fs.CreateDirectoriesRecursive(metadata_dir);
-		string source;
-		if (file.format == "puffin") {
-			// a deletion vector: the positions are written as a position delete file
-			DuckLakeFileData delete_file;
-			delete_file.path = file.path;
-			delete_file.format = DeleteFileFormat::PUFFIN;
-			delete_file.file_size_bytes = file.file_size;
-			auto positions = DuckLakeDeleteFilter::ScanDeletionVectorFile(context, delete_file).deleted_rows;
-			std::sort(positions.begin(), positions.end());
-			vector<string> literals;
-			for (auto position : positions) {
-				literals.push_back(to_string(position));
-			}
-			source = StringUtil::Format("(SELECT unnest([%s]::BIGINT[]) AS pos)", StringUtil::Join(literals, ", "));
-		} else {
-			source = StringUtil::Format("read_parquet(%s)", SQLString::ToString(file.path));
-		}
-		request.MetadataQuery(
-		    StringUtil::Format("COPY (SELECT %s AS file_path, pos FROM %s ORDER BY pos) TO %s (FORMAT PARQUET, "
-		                       "FIELD_IDS {'file_path': %d, 'pos': %d})",
-		                       SQLString::ToString(data_path), source, SQLString::ToString(converted),
-		                       POSITION_DELETE_PATH_ID, POSITION_DELETE_PATH_ID - 1));
-	}
-	path = converted;
-	file_size = fs.OpenFile(converted, FileOpenFlags::FILE_FLAGS_READ)->GetFileSize();
+	return bytes;
 }
 
 vector<const ExportDataFile *> TableExport::VisibleDataFiles(idx_t snapshot_id) {
@@ -1536,18 +1547,12 @@ vector<const ExportDeleteFile *> TableExport::VisibleDeleteFiles(idx_t snapshot_
 	return result;
 }
 
-void TableExport::GatherItems(idx_t snapshot_id, GatheredItems &out) {
+void TableExport::GatherItems(idx_t snapshot_id, GatheredItems &out, bool materialize) {
 	auto &data_list = out.data_list;
 	auto &delete_list = out.delete_list;
 	data_list = VisibleDataFiles(snapshot_id);
 	delete_list = VisibleDeleteFiles(snapshot_id);
 	LoadStatsAndPartitionValues(data_list);
-
-	// the rows of the table that are inlined in the catalog are written to a file
-	auto &inlined_files = out.inlined_files;
-	if (inlined->HasRows(snapshot_id)) {
-		inlined_files = inlined->Materialize(snapshot_id, ColumnsAt(snapshot_id), metadata_dir);
-	}
 
 	map<idx_t, const ExportDataFile *> data_by_id;
 	for (auto file : data_list) {
@@ -1566,57 +1571,206 @@ void TableExport::GatherItems(idx_t snapshot_id, GatheredItems &out) {
 		item.stats = stats == file_stats.end() ? nullptr : &stats->second;
 		data_items[SpecOfPartition(file->partition_id).spec_id].push_back(std::move(item));
 	}
-	for (auto &inlined_file : inlined_files) {
+	// the rows that DuckLake has in its catalog are a file of the snapshot
+	for (auto &rows : inlined->RowsAt(snapshot_id)) {
+		auto name = StringUtil::Format("inlined-%d-%d.parquet", snapshot_id, rows.schema_version);
 		ManifestItem item;
 		item.begin = snapshot_id;
-		item.path = inlined_file.path;
-		item.record_count = inlined_file.record_count;
-		item.file_size = inlined_file.file_size;
-		item.partition_source = nullptr;
-		item.owned_stats = inlined_file.stats;
+		item.path = Url(name);
+		item.record_count = rows.row_count;
+		item.file_size = materialize ? GenerateParquet(name).size() : 0;
 		data_items[0].push_back(std::move(item));
+		out.inlined_file_count++;
+		out.inlined_rows += rows.row_count;
 	}
-	idx_t &delete_rows = out.delete_rows;
-	auto &inlined_deletes = out.inlined_deletes;
-	if (inlined->HasDeletes(snapshot_id)) {
-		map<idx_t, pair<string, idx_t>> file_info;
-		for (auto file : data_list) {
-			file_info[file->id] = make_pair(file->path, file->row_id_start);
-		}
-		inlined_deletes = inlined->MaterializeDeletes(snapshot_id, file_info, metadata_dir);
-	}
-	for (auto &inlined_delete : inlined_deletes) {
-		auto data_file = data_by_id.find(inlined_delete.data_file_id);
+	for (auto &deletes : inlined->DeletesAt(snapshot_id)) {
+		auto data_file = data_by_id.find(deletes.data_file_id);
 		if (data_file == data_by_id.end()) {
 			continue;
 		}
+		auto name = StringUtil::Format("inlined-delete-%d-%d.parquet", snapshot_id, deletes.data_file_id);
 		ManifestItem item;
 		item.begin = snapshot_id;
-		item.path = inlined_delete.path;
-		item.record_count = inlined_delete.delete_count;
-		item.file_size = inlined_delete.file_size;
+		item.path = Url(name);
+		item.record_count = deletes.delete_count;
+		item.file_size = materialize ? GenerateParquet(name).size() : 0;
 		item.partition_source = data_file->second;
 		item.referenced_path = data_file->second->path;
-		delete_rows += inlined_delete.delete_count;
+		out.delete_rows += deletes.delete_count;
+		out.inlined_delete_count++;
 		delete_items[SpecOfPartition(data_file->second->partition_id).spec_id].push_back(std::move(item));
 	}
+	// the delete files of DuckLake have other field ids than the position delete files of Iceberg: they are rewritten
 	for (auto file : delete_list) {
 		auto data_file = data_by_id.find(file->data_file_id);
 		if (data_file == data_by_id.end()) {
 			continue;
 		}
+		auto name = StringUtil::Format("delete-%d-%d.parquet", snapshot_id, file->id);
 		ManifestItem item;
 		item.begin = file->begin;
-		item.path = file->path;
+		item.path = Url(name);
 		item.record_count = file->delete_count;
-		item.file_size = file->file_size;
-		ConvertDeleteFile(*file, data_file->second->path, item.path, item.file_size);
+		item.file_size = materialize ? GenerateParquet(name).size() : 0;
 		item.partition_source = data_file->second;
 		item.referenced_path = data_file->second->path;
-		item.stats = nullptr;
-		delete_rows += file->delete_count;
+		out.delete_rows += file->delete_count;
 		delete_items[SpecOfPartition(data_file->second->partition_id).spec_id].push_back(std::move(item));
 	}
+}
+
+string TableExport::Url(const string &name) const {
+	return IcebergVirtualFiles::Url(request, IcebergVirtualFiles::Entity(table), name);
+}
+
+//! The Parquet files that are generated: the rows and deletes that DuckLake has in its catalog, and the delete files
+string TableExport::GenerateParquet(const string &name) {
+	auto cache_key = request.prefix + "/" + IcebergVirtualFiles::Entity(table) + "/" + name;
+	string cached;
+	if (request.server.GetExportCache().GetBytes(cache_key, cached)) {
+		return cached;
+	}
+	auto parts = StringUtil::Split(name.substr(0, name.size() - 8), '-');
+	string result;
+	try {
+		if (parts[0] == "delete" && parts.size() == 3) {
+			result = GenerateDeleteFile(std::stoull(parts[1]), std::stoull(parts[2]));
+		} else if (parts[0] == "inlined" && parts.size() == 3) {
+			result =
+			    inlined->GenerateRows(std::stoull(parts[1]), std::stoull(parts[2]), ColumnsAt(std::stoull(parts[1])));
+		} else if (parts[0] == "inlined" && parts[1] == "delete" && parts.size() == 4) {
+			auto data_file_id = std::stoull(parts[3]);
+			for (auto &file : data_files) {
+				if (file.id == data_file_id) {
+					result = inlined->GenerateDeletes(std::stoull(parts[2]), file.id, file.path, file.row_id_start);
+				}
+			}
+		}
+	} catch (std::invalid_argument &) {
+		result.clear();
+	}
+	if (result.empty()) {
+		throw IcebergException(404, "NoSuchFileException", "The file does not exist: " + name);
+	}
+	request.server.GetExportCache().PutBytes(cache_key, result);
+	IcebergVirtualFiles::Publish(request, IcebergVirtualFiles::Entity(table), name, result);
+	return result;
+}
+
+//! A delete file of DuckLake as the position delete file of Iceberg: with the ids and the path of the data file that
+//! Iceberg readers expect
+string TableExport::GenerateDeleteFile(idx_t snapshot_id, idx_t delete_file_id) {
+	for (auto &file : delete_files) {
+		if (file.id != delete_file_id) {
+			continue;
+		}
+		string data_path;
+		for (auto &data_file : data_files) {
+			if (data_file.id == file.data_file_id) {
+				data_path = data_file.path;
+			}
+		}
+		string source;
+		if (file.format == "puffin") {
+			// a deletion vector: the positions are written as a position delete file
+			DuckLakeFileData delete_file;
+			delete_file.path = file.path;
+			delete_file.format = DeleteFileFormat::PUFFIN;
+			delete_file.file_size_bytes = file.file_size;
+			auto positions = DuckLakeDeleteFilter::ScanDeletionVectorFile(context, delete_file).deleted_rows;
+			std::sort(positions.begin(), positions.end());
+			vector<string> literals;
+			for (auto position : positions) {
+				literals.push_back(to_string(position));
+			}
+			source = StringUtil::Format("(SELECT unnest([%s]::BIGINT[]) AS pos)", StringUtil::Join(literals, ", "));
+		} else {
+			source = StringUtil::Format("read_parquet(%s)", SQLString::ToString(file.path));
+		}
+		return IcebergUtil::CopyToBytes(
+		    request, StringUtil::Format("COPY (SELECT %s AS file_path, pos FROM %s ORDER BY pos) TO {FILE} (FORMAT "
+		                                "PARQUET, FIELD_IDS {'file_path': %d, 'pos': %d})",
+		                                SQLString::ToString(data_path), source, POSITION_DELETE_PATH_ID,
+		                                POSITION_DELETE_PATH_ID - 1));
+	}
+	return string();
+}
+
+string TableExport::GenerateManifest(idx_t snapshot_id, idx_t spec_id, bool deletes) {
+	GatheredItems gathered;
+	GatherItems(snapshot_id, gathered, true);
+	auto &items = deletes ? gathered.delete_items : gathered.data_items;
+	auto entry = items.find(spec_id);
+	if (entry == items.end() || spec_id >= specs.size()) {
+		throw IcebergException(404, "NoSuchFileException", "The manifest does not exist");
+	}
+	ManifestSummary summary;
+	return WriteManifest(entry->second, specs[spec_id], snapshot_id, schemas[SchemaIdAt(snapshot_id)], deletes,
+	                     summary);
+}
+
+string TableExport::GenerateManifestList(idx_t snapshot_id, const string &previous) {
+	GatheredItems gathered;
+	GatherItems(snapshot_id, gathered, true);
+	auto &snapshot_schema = schemas[SchemaIdAt(snapshot_id)];
+	vector<AvroValue> list_records;
+	auto add_manifests = [&](map<idx_t, vector<ManifestItem>> &items, bool deletes) {
+		for (auto &entry : items) {
+			ManifestSummary summary;
+			auto bytes =
+			    WriteManifest(entry.second, specs[entry.first], snapshot_id, snapshot_schema, deletes, summary);
+			auto name = StringUtil::Format("m-%d-%d-%s.avro", snapshot_id, entry.first, deletes ? "d" : "m");
+			request.server.GetExportCache().PutBytes(
+			    request.prefix + "/" + IcebergVirtualFiles::Entity(table) + "/" + name, bytes);
+			IcebergVirtualFiles::Publish(request, IcebergVirtualFiles::Entity(table), name, bytes);
+			vector<AvroValue> fields;
+			fields.push_back(AvroValue::String(Url(name)));
+			fields.push_back(AvroValue::Long(NumericCast<int64_t>(summary.length)));
+			fields.push_back(AvroValue::Int(NumericCast<int32_t>(entry.first)));
+			fields.push_back(AvroValue::Int(deletes ? 1 : 0));
+			fields.push_back(AvroValue::Long(NumericCast<int64_t>(snapshot_id)));
+			fields.push_back(AvroValue::Long(NumericCast<int64_t>(summary.min_sequence)));
+			fields.push_back(AvroValue::Long(NumericCast<int64_t>(snapshot_id)));
+			fields.push_back(AvroValue::Int(NumericCast<int32_t>(summary.added_files)));
+			fields.push_back(AvroValue::Int(NumericCast<int32_t>(summary.existing_files)));
+			fields.push_back(AvroValue::Int(0));
+			fields.push_back(AvroValue::Long(NumericCast<int64_t>(summary.added_rows)));
+			fields.push_back(AvroValue::Long(NumericCast<int64_t>(summary.existing_rows)));
+			fields.push_back(AvroValue::Long(0));
+			fields.push_back(AvroValue::Union(0, AvroValue::Null()));
+			fields.push_back(AvroValue::Union(0, AvroValue::Null()));
+			list_records.push_back(AvroValue::Record(std::move(fields)));
+		}
+	};
+	add_manifests(gathered.data_items, false);
+	add_manifests(gathered.delete_items, true);
+	map<string, string> header;
+	header["snapshot-id"] = to_string(snapshot_id);
+	header["parent-snapshot-id"] = previous == "none" ? "null" : previous;
+	header["sequence-number"] = to_string(snapshot_id);
+	header["format-version"] = "2";
+	auto bytes = AvroWriter::Write(MANIFEST_LIST_SCHEMA, header, list_records, "null");
+	IcebergVirtualFiles::Publish(request, IcebergVirtualFiles::Entity(table),
+	                             StringUtil::Format("snap-%d-%s.avro", snapshot_id, previous), bytes);
+	return bytes;
+}
+
+//! Generates the file with a name (see IcebergVirtualFiles)
+string TableExport::Dispatch(const string &name) {
+	auto parts = StringUtil::Split(name.substr(0, name.rfind('.')), '-');
+	try {
+		if (StringUtil::EndsWith(name, ".parquet")) {
+			return GenerateParquet(name);
+		}
+		if (parts[0] == "snap" && parts.size() == 3) {
+			return GenerateManifestList(std::stoull(parts[1]), parts[2]);
+		}
+		if (parts[0] == "m" && parts.size() == 4) {
+			return GenerateManifest(std::stoull(parts[1]), std::stoull(parts[2]), parts[3] == "d");
+		}
+	} catch (std::invalid_argument &) {
+	}
+	throw IcebergException(404, "NoSuchFileException", "The file does not exist: " + name);
 }
 
 string TableExport::BuildPlan(optional_idx requested_snapshot) {
@@ -1632,7 +1786,7 @@ string TableExport::BuildPlan(optional_idx requested_snapshot) {
 		}
 	}
 	GatheredItems gathered;
-	GatherItems(snapshot_id, gathered);
+	GatherItems(snapshot_id, gathered, true);
 	auto &snapshot_schema = schemas[SchemaIdAt(snapshot_id)];
 	RESTJsonWriter writer;
 	auto &w = writer.writer;
@@ -1764,68 +1918,28 @@ IcebergExportedSnapshot TableExport::ExportSnapshot(idx_t index) {
 	auto snapshot_id = chosen[index];
 	auto &server = request.server;
 	string previous_text = index > 0 ? to_string(chosen[index - 1]) : "none";
-	auto cache_key = StringUtil::Format("%s:%d:%s:%d", metadata_dir, snapshot_id, previous_text,
-	                                    inlined->HasRows(snapshot_id) ? 1 : 0);
+	auto cache_key = StringUtil::Format("%s:%d:%d:%s", request.prefix, table_id, snapshot_id, previous_text);
 	IcebergExportedSnapshot result;
-	if (server.GetExportCache().Get(cache_key, result) && IcebergUtil::FileExists(context, result.manifest_list_path)) {
+	if (server.GetExportCache().Get(cache_key, result)) {
 		return result;
 	}
+	result.manifest_list_path = Url(StringUtil::Format("snap-%d-%s.avro", snapshot_id, previous_text));
+	if (!server.VirtualFiles()) {
+		// the files are written now, virtual files are generated when a client asks for them
+		GenerateManifestList(snapshot_id, previous_text);
+	}
 	GatheredItems gathered;
-	GatherItems(snapshot_id, gathered);
+	GatherItems(snapshot_id, gathered, false);
 	auto &data_list = gathered.data_list;
 	auto &delete_list = gathered.delete_list;
-	auto &inlined_files = gathered.inlined_files;
-	auto &inlined_deletes = gathered.inlined_deletes;
-	auto &data_items = gathered.data_items;
-	auto &delete_items = gathered.delete_items;
 	idx_t delete_rows = gathered.delete_rows;
-	auto &snapshot_schema = schemas[SchemaIdAt(snapshot_id)];
-
-	vector<AvroValue> list_records;
-	idx_t added_files = 0, added_rows = 0, total_rows = 0, total_size = 0, data_file_count = 0;
-	auto add_manifests = [&](map<idx_t, vector<ManifestItem>> &items, bool deletes) {
-		for (auto &entry : items) {
-			ManifestSummary summary;
-			auto path = WriteManifest(entry.second, specs[entry.first], snapshot_id, snapshot_schema, deletes, summary);
-			vector<AvroValue> fields;
-			fields.push_back(AvroValue::String(path));
-			fields.push_back(AvroValue::Long(NumericCast<int64_t>(summary.length)));
-			fields.push_back(AvroValue::Int(NumericCast<int32_t>(entry.first)));
-			fields.push_back(AvroValue::Int(deletes ? 1 : 0));
-			fields.push_back(AvroValue::Long(NumericCast<int64_t>(snapshot_id)));
-			fields.push_back(AvroValue::Long(NumericCast<int64_t>(summary.min_sequence)));
-			fields.push_back(AvroValue::Long(NumericCast<int64_t>(snapshot_id)));
-			fields.push_back(AvroValue::Int(NumericCast<int32_t>(summary.added_files)));
-			fields.push_back(AvroValue::Int(NumericCast<int32_t>(summary.existing_files)));
-			fields.push_back(AvroValue::Int(0));
-			fields.push_back(AvroValue::Long(NumericCast<int64_t>(summary.added_rows)));
-			fields.push_back(AvroValue::Long(NumericCast<int64_t>(summary.existing_rows)));
-			fields.push_back(AvroValue::Long(0));
-			fields.push_back(AvroValue::Union(0, AvroValue::Null()));
-			fields.push_back(AvroValue::Union(0, AvroValue::Null()));
-			list_records.push_back(AvroValue::Record(std::move(fields)));
-			if (!deletes) {
-				for (auto &item : entry.second) {
-					total_rows += item.record_count;
-					total_size += item.file_size;
-					data_file_count++;
-				}
-			}
+	idx_t total_rows = 0, total_size = 0, data_file_count = 0;
+	for (auto &entry : gathered.data_items) {
+		for (auto &item : entry.second) {
+			total_rows += item.record_count;
+			total_size += item.file_size;
+			data_file_count++;
 		}
-	};
-	add_manifests(data_items, false);
-	add_manifests(delete_items, true);
-
-	map<string, string> header;
-	header["snapshot-id"] = to_string(snapshot_id);
-	header["parent-snapshot-id"] = index > 0 ? to_string(chosen[index - 1]) : "null";
-	header["sequence-number"] = to_string(snapshot_id);
-	header["format-version"] = "2";
-	auto bytes = AvroWriter::Write(MANIFEST_LIST_SCHEMA, header, list_records, "null");
-	result.manifest_list_path =
-	    IcebergUtil::JoinPath(metadata_dir, StringUtil::Format("snap-%d-%s.avro", snapshot_id, FormatHash(bytes)));
-	if (!IcebergUtil::FileExists(context, result.manifest_list_path)) {
-		IcebergUtil::WriteFile(context, result.manifest_list_path, bytes);
 	}
 
 	// the operation: what changed compared to the previous snapshot
@@ -1861,15 +1975,9 @@ IcebergExportedSnapshot TableExport::ExportSnapshot(idx_t index) {
 	for (auto id : previous_deletes) {
 		removed_deletes += current_deletes.find(id) == current_deletes.end();
 	}
-	if (!inlined_deletes.empty()) {
-		added_deletes += inlined_deletes.size();
-	}
-	if (!inlined_files.empty()) {
-		added_data += inlined_files.size();
-		for (auto &inlined_file : inlined_files) {
-			added_data_rows += inlined_file.record_count;
-		}
-	}
+	added_deletes += gathered.inlined_delete_count;
+	added_data += gathered.inlined_file_count;
+	added_data_rows += gathered.inlined_rows;
 	if (removed_data == 0 && removed_deletes == 0 && added_deletes == 0) {
 		result.operation = "append";
 	} else if (added_data == 0 && added_deletes == 0) {
@@ -1888,8 +1996,6 @@ IcebergExportedSnapshot TableExport::ExportSnapshot(idx_t index) {
 	result.summary["total-files-size"] = to_string(total_size);
 	result.summary["total-position-deletes"] = to_string(delete_rows);
 	result.summary["total-equality-deletes"] = "0";
-	(void)added_files;
-	(void)added_rows;
 	server.GetExportCache().Put(cache_key, result);
 	return result;
 }
@@ -1903,6 +2009,17 @@ IcebergTableLoad IcebergTableExporter::Export(const DuckLakeSchemaInfo &schema, 
                                               const string &snapshots) {
 	TableExport table_export(request, schema, table);
 	return table_export.Run(snapshots);
+}
+
+string IcebergTableExporter::GenerateFile(const DuckLakeSchemaInfo &schema, const DuckLakeTableInfo &table,
+                                          const string &name) {
+	TableExport table_export(request, schema, table);
+	if (StringUtil::StartsWith(name, "meta-")) {
+		return table_export.Run("all").metadata_json;
+	}
+	table_export.generate_name = name;
+	table_export.Run("all");
+	return table_export.generated;
 }
 
 string IcebergTableExporter::PlanScan(const DuckLakeSchemaInfo &schema, const DuckLakeTableInfo &table,

@@ -6,6 +6,7 @@
 #include "iceberg/iceberg_properties.hpp"
 #include "iceberg/iceberg_types.hpp"
 #include "iceberg/iceberg_util.hpp"
+#include "iceberg/iceberg_virtual_files.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
 
 namespace duckdb {
@@ -109,7 +110,7 @@ IcebergField FieldFromLogicalType(const string &name, const LogicalType &type, i
 }
 
 string ViewMetadata(IcebergRequest &request, const vector<string> &ns, const DuckLakeSchemaInfo &schema,
-                    const DuckLakeViewInfo &view, string &metadata_location) {
+                    const DuckLakeViewInfo &view) {
 	// the columns of the view
 	auto result = request.Query("SELECT * FROM " + request.EntrySQL(ns, view.name) + " LIMIT 0");
 	IcebergSchema iceberg_schema;
@@ -120,7 +121,14 @@ string ViewMetadata(IcebergRequest &request, const vector<string> &ns, const Duc
 	for (idx_t i = 0; i < names.size(); i++) {
 		iceberg_schema.fields.push_back(FieldFromLogicalType(names[i].GetIdentifierName(), types[i], next_id));
 	}
-	auto time_ms = IcebergUtil::NowMs();
+	// the time of the snapshot, so that the metadata is the same every time it is generated
+	int64_t time_ms = 0;
+	auto snapshot_time =
+	    request.MetadataQuery("SELECT CAST(epoch_ms(snapshot_time) AS BIGINT) FROM "
+	                          "{METADATA_CATALOG}.ducklake_snapshot WHERE snapshot_id = {SNAPSHOT_ID}");
+	for (auto &row : *snapshot_time) {
+		time_ms = row.GetValue<int64_t>(0);
+	}
 	RESTJsonWriter writer;
 	auto &w = writer.writer;
 	auto metadata = w.CreateObject();
@@ -160,20 +168,14 @@ string ViewMetadata(IcebergRequest &request, const vector<string> &ns, const Duc
 	             IcebergUtil::StringMap(w, IcebergProperties::Get(request, IcebergProperties::VIEW, view.uuid)));
 	writer.SetRoot(metadata);
 	auto text = writer.ToString();
-	auto &server = request.server;
-	metadata_location = IcebergUtil::JoinPath(
-	    IcebergUtil::JoinPath(IcebergUtil::JoinPath(server.MetadataPath(), view.uuid), "metadata"),
-	    StringUtil::Format("%016llx.metadata.json", std::hash<string>()(text)));
-	if (!IcebergUtil::FileExists(*request.connection.context, metadata_location)) {
-		IcebergUtil::WriteFile(*request.connection.context, metadata_location, text);
-	}
 	return text;
 }
 
 string ViewResponse(IcebergRequest &request, const vector<string> &ns, const DuckLakeSchemaInfo &schema,
                     const DuckLakeViewInfo &view) {
-	string location;
-	auto metadata = ViewMetadata(request, ns, schema, view, location);
+	auto location = IcebergVirtualFiles::Url(request, IcebergVirtualFiles::ViewEntity(view), "view.metadata.json");
+	auto metadata = ViewMetadata(request, ns, schema, view);
+	IcebergVirtualFiles::Publish(request, IcebergVirtualFiles::ViewEntity(view), "view.metadata.json", metadata);
 	return "{\"metadata-location\": " + IcebergUtil::JsonString(location) + ", \"metadata\": " + metadata +
 	       ", \"config\": {}}";
 }
@@ -204,6 +206,11 @@ string GetViewSQL(RESTJsonIn version, string &dialect) {
 }
 
 } // namespace
+
+string IcebergViewEndpoints::GenerateMetadata(IcebergRequest &request, const DuckLakeSchemaInfo &schema,
+                                              const DuckLakeViewInfo &view) {
+	return ViewMetadata(request, request.GetNamespace(schema), schema, view);
+}
 
 void IcebergViewEndpoints::ListViews(IcebergRequest &request, const IcebergHttpRequest &http,
                                      IcebergHttpResponse &response) {

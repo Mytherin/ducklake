@@ -7,7 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <random>
+#include "mbedtls_wrapper.hpp"
 
 namespace duckdb {
 
@@ -1288,12 +1288,14 @@ string AvroWriter::Write(const string &schema_json, const map<string, string> &m
 	}
 	auto schema = AvroSchema::Parse(schema_json);
 
-	string sync(AVRO_SYNC_SIZE, '\0');
-	std::random_device device;
-	std::mt19937_64 engine((static_cast<uint64_t>(device()) << 32) ^ device());
-	for (auto &c : sync) {
-		c = static_cast<char>(engine() & 0xFF);
+	// the sync marker is derived from the schema and the header, so that the same data is always written as the same
+	// bytes: files that are generated again are the same file
+	string sync_input = schema_json;
+	for (auto &entry : metadata) {
+		sync_input += '\0' + entry.first + '\0' + entry.second;
 	}
+	sync_input += '\0' + codec;
+	string sync = duckdb_mbedtls::MbedTlsWrapper::ComputeSha256Hash(sync_input).substr(0, AVRO_SYNC_SIZE);
 
 	string out(AVRO_MAGIC, sizeof(AVRO_MAGIC));
 	vector<pair<string, string>> header;

@@ -83,6 +83,17 @@ void IcebergUtil::WriteFile(ClientContext &context, const string &path, const st
 	handle->Close();
 }
 
+void IcebergUtil::WriteFileAtomically(ClientContext &context, const string &path, const string &content) {
+	if (path.find("://") != string::npos) {
+		// the objects of an object store appear when they are complete
+		WriteFile(context, path, content);
+		return;
+	}
+	auto temporary = path + ".tmp-" + RandomUUID();
+	WriteFile(context, temporary, content);
+	FileSystem::GetFileSystem(context).MoveFile(temporary, path);
+}
+
 bool IcebergUtil::FileExists(ClientContext &context, const string &path) {
 	return FileSystem::GetFileSystem(context).FileExists(path);
 }
@@ -96,6 +107,23 @@ string IcebergUtil::StripTrailingSlash(string path) {
 
 string IcebergUtil::JoinPath(const string &a, const string &b) {
 	return StripTrailingSlash(a) + "/" + b;
+}
+
+string IcebergUtil::CopyToBytes(IcebergRequest &request, const string &copy_statement) {
+	auto &context = *request.connection.context;
+	auto &fs = FileSystem::GetFileSystem(context);
+	auto directory = request.server.MetadataPath();
+	fs.CreateDirectoriesRecursive(directory);
+	auto path = JoinPath(directory, "generating-" + RandomUUID() + ".parquet");
+	try {
+		request.MetadataQuery(StringUtil::Replace(copy_statement, "{FILE}", SQLString::ToString(path)));
+		auto result = ReadFile(context, path);
+		fs.TryRemoveFile(path);
+		return result;
+	} catch (...) {
+		fs.TryRemoveFile(path);
+		throw;
+	}
 }
 
 int64_t IcebergUtil::NowMs() {

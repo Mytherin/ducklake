@@ -9,6 +9,7 @@
 #include "iceberg/iceberg_types.hpp"
 #include "iceberg/iceberg_util.hpp"
 #include "iceberg/iceberg_views.hpp"
+#include "iceberg/iceberg_virtual_files.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
 #include "storage/ducklake_transaction.hpp"
 
@@ -413,6 +414,18 @@ static void FetchScanTasks(IcebergRequest &request, const IcebergHttpRequest &ht
 	throw IcebergException(404, "NoSuchPlanTaskException", "The plan task does not exist");
 }
 
+//! A file of the metadata of a table or a view, which is generated when it is requested
+static void ServeFile(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
+	auto &entity = http.path_values[0];
+	auto &name = http.path_values[1];
+	if (!request.server.Token().empty() && !http.authorized &&
+	    !IcebergVirtualFiles::CheckSignature(request.server, request.prefix, entity, name, http.GetQuery("sig"))) {
+		throw IcebergException(403, "ForbiddenException", "The signature of the URL is not valid");
+	}
+	response.body = IcebergVirtualFiles::Generate(request, entity, name);
+	response.content_type = StringUtil::EndsWith(name, ".json") ? "application/json" : "application/octet-stream";
+}
+
 static void DropTable(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
 	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
 	auto &name = http.path_values[1];
@@ -537,6 +550,7 @@ const vector<IcebergRoute> &IcebergEndpoints::GetRoutes() {
 		add("POST", "/namespaces/{namespace}/tables/{table}/tasks", FetchScanTasks);
 		add("POST", "/namespaces/{namespace}/tables/{table}/metrics", ReportMetrics);
 		add("GET", "/namespaces/{namespace}/tables/{table}/credentials", GetCredentials);
+		add("GET", "/metadata/{entity}/{name}", ServeFile);
 		add("POST", "/tables/rename", RenameTable);
 		add("POST", "/transactions/commit", IcebergTableEndpoints::CommitTransaction);
 		add("GET", "/namespaces/{namespace}/views", IcebergViewEndpoints::ListViews);

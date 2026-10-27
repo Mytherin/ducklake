@@ -1,4 +1,5 @@
 """The Iceberg extension of DuckDB reads and writes DuckLake through the Iceberg REST API."""
+import os
 import unittest
 
 from clients import duckdb_iceberg_connection, requires_duckdb_iceberg
@@ -72,6 +73,22 @@ class DuckDBExtensionTest(IcebergTestCase):
         self.shell.sql('ALTER TABLE dl.main.x DROP COLUMN a')
         self.assertEqual(self.connect().execute('SELECT * FROM ice.main.x ORDER BY bb').fetchall(),
                          [(2, None), (4, 'z')])
+
+
+@requires_duckdb_iceberg
+class DuckDBExtensionVirtualFilesTest(DuckDBExtensionTest):
+    """The same tests, with metadata files that the server generates when they are requested"""
+    serve_options = ', virtual_files := true'
+
+    def test_no_files_are_written(self):
+        self.shell.sql('CREATE TABLE dl.main.virtual_t(i INTEGER)')
+        self.shell.sql('INSERT INTO dl.main.virtual_t SELECT i FROM range(10) t(i)')
+        self.shell.sql('DELETE FROM dl.main.virtual_t WHERE i < 3')
+        self.assertEqual(self.connect().execute('SELECT count(*) FROM ice.main.virtual_t').fetchall(), [(7,)])
+        written = []
+        for root, _, files in os.walk(self.shell.metadata_path):
+            written += [name for name in files if name.endswith(('.avro', '.json'))]
+        self.assertEqual(written, [])
 
 
 @requires_duckdb_iceberg

@@ -71,6 +71,12 @@ const DuckLakeCatalogInfo &IcebergRequest::GetCatalogInfo() {
 	return *catalog_info;
 }
 
+void IcebergRequest::UseSnapshot(idx_t snapshot_id) {
+	BoundAtClause at_clause(Identifier("version"), Value::UBIGINT(snapshot_id));
+	snapshot = make_uniq<DuckLakeSnapshot>(transaction->GetSnapshot(at_clause));
+	catalog_info.reset();
+}
+
 void IcebergRequest::InvalidateCatalogInfo() {
 	catalog_info.reset();
 }
@@ -308,6 +314,7 @@ int32_t DuckLakeIcebergServer::HandleRequest(const IcebergRoute &route, optional
 		}
 		auto served = GetCatalog(prefix);
 		IcebergRequest request(*this, *served.db, served.catalog_name, served.prefix);
+		request.base_uri = !public_uri.empty() ? public_uri : (http.host.empty() ? listen_uri : "http://" + http.host);
 		try {
 			route.handler(request, http, response);
 			if (request.connection.HasActiveTransaction()) {
@@ -353,7 +360,10 @@ idx_t DuckLakeIcebergServer::Start(const string &host, idx_t port, idx_t thread_
 			                                           duckdb_httplib::Response &res) {
 				IcebergHttpResponse response;
 				const bool open_endpoint = route.global_handler && route.path == "/oauth/tokens";
-				if (!token.empty() && !open_endpoint && req.get_header_value("Authorization") != "Bearer " + token) {
+				// the generated files are signed
+				const bool signed_file = route.path == "/metadata/{entity}/{name}" && req.has_param("sig");
+				const bool authorized = token.empty() || req.get_header_value("Authorization") == "Bearer " + token;
+				if (!authorized && !open_endpoint && !signed_file) {
 					res.status = 401;
 					res.set_content(ErrorBody("NotAuthorizedException",
 					                          "Missing or invalid token for the Iceberg REST server", 401),
@@ -375,11 +385,20 @@ idx_t DuckLakeIcebergServer::Start(const string &host, idx_t port, idx_t thread_
 					http.query.emplace_back(param.first, param.second);
 				}
 				http.body = req.body;
+				http.host = req.get_header_value("Host");
+				http.authorized = authorized;
 				http.content_type = req.get_header_value("Content-Type");
 				HandleRequest(route, with_prefix ? optional_ptr<const string>(&prefix) : nullptr, http, response);
 				res.status = response.status;
-				if (response.status == 204 || req.method == "HEAD") {
+				if (response.status == 204) {
 					return;
+				}
+				// the generated files are read with ranges (the HTTP library cuts the range out of the content)
+				if (route.path == "/metadata/{entity}/{name}" && response.status == 200) {
+					res.set_header("Accept-Ranges", "bytes");
+					if (StringUtil::StartsWith(req.get_header_value("Range"), "bytes=") && !req.ranges.empty()) {
+						res.status = 206;
+					}
 				}
 				res.set_content(response.body, response.content_type);
 			};
@@ -560,6 +579,8 @@ static unique_ptr<FunctionData> DuckLakeIcebergServeBind(ClientContext &context,
 	auto defaults_val = GetNamedParameter(input, "defaults");
 	auto overrides_val = GetNamedParameter(input, "overrides");
 	auto metadata_path_val = GetNamedParameter(input, "metadata_path");
+	auto public_uri_val = GetNamedParameter(input, "public_uri");
+	auto virtual_files_val = GetNamedParameter(input, "virtual_files");
 	auto snapshot_limit_val = GetNamedParameter(input, "snapshot_limit");
 	string host = host_val.IsNull() ? "localhost" : StringValue::Get(host_val);
 	idx_t port = port_val.IsNull() ? 0 : port_val.GetValue<idx_t>();
@@ -592,6 +613,14 @@ static unique_ptr<FunctionData> DuckLakeIcebergServeBind(ClientContext &context,
 	}
 	if (!token_val.IsNull()) {
 		server->SetToken(StringValue::Get(token_val));
+	}
+	if (!virtual_files_val.IsNull()) {
+		server->SetVirtualFiles(BooleanValue::Get(virtual_files_val));
+	}
+	if (!public_uri_val.IsNull()) {
+		auto public_uri = StringValue::Get(public_uri_val);
+		StringUtil::RTrim(public_uri, "/");
+		server->SetPublicURI(public_uri);
 	}
 	if (!metadata_path_val.IsNull()) {
 		server->SetMetadataPath(StringValue::Get(metadata_path_val));
@@ -660,6 +689,8 @@ DuckLakeIcebergServeFunction::DuckLakeIcebergServeFunction()
 		    .Add("token", LogicalType::VARCHAR)
 		    .Add("prefix", LogicalType::VARCHAR)
 		    .Add("metadata_path", LogicalType::VARCHAR)
+		    .Add("public_uri", LogicalType::VARCHAR)
+		    .Add("virtual_files", LogicalType::BOOLEAN)
 		    .Add("snapshot_limit", LogicalType::UBIGINT)
 		    .Add("table_config", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))
 		    .Add("defaults", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))

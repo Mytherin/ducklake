@@ -25,20 +25,16 @@ struct IcebergFileStats {
 	bool contains_nan = false;
 };
 
-//! A file that was generated from data that is inlined in the catalog
-struct IcebergInlinedFile {
-	string path;
-	idx_t record_count = 0;
-	idx_t file_size = 0;
-	vector<IcebergFileStats> stats;
+//! The rows of one table that DuckLake keeps in its catalog at a snapshot
+struct IcebergInlinedRows {
+	idx_t schema_version = 0;
+	idx_t row_count = 0;
 };
 
-//! A position delete file for the deletes of data files that are inlined in the catalog
-struct IcebergInlinedDeleteFile {
+//! The deletes of the rows of a data file that DuckLake keeps in its catalog at a snapshot
+struct IcebergInlinedDeletes {
 	idx_t data_file_id = 0;
-	string path;
 	idx_t delete_count = 0;
-	idx_t file_size = 0;
 };
 
 //! The data of a table that DuckLake keeps in its catalog, which is exposed to Iceberg as Parquet files
@@ -50,13 +46,14 @@ public:
 	bool HasRows(idx_t snapshot_id) const;
 	//! Whether file deletions of the table are inlined at the snapshot
 	bool HasDeletes(idx_t snapshot_id) const;
-	//! Writes the inlined rows that are visible at the snapshot to Parquet files
-	vector<IcebergInlinedFile> Materialize(idx_t snapshot_id, const vector<DuckLakeColumnInfo> &columns,
-	                                       const string &directory);
-	//! Writes the inlined deletions that are visible at the snapshot to position delete files. The data files are
-	//! given by id with their path and the first row id.
-	vector<IcebergInlinedDeleteFile>
-	MaterializeDeletes(idx_t snapshot_id, const map<idx_t, pair<string, idx_t>> &data_files, const string &directory);
+	//! The inlined rows of the table that are visible at the snapshot
+	vector<IcebergInlinedRows> RowsAt(idx_t snapshot_id) const;
+	//! The inlined deletes of the data files at the snapshot
+	vector<IcebergInlinedDeletes> DeletesAt(idx_t snapshot_id);
+	//! The Parquet file with the inlined rows that are visible at the snapshot
+	string GenerateRows(idx_t snapshot_id, idx_t schema_version, const vector<DuckLakeColumnInfo> &columns);
+	//! The position delete file with the inlined deletes of a data file at the snapshot
+	string GenerateDeletes(idx_t snapshot_id, idx_t data_file_id, const string &data_path, idx_t row_id_start);
 
 private:
 	struct InlinedTable {

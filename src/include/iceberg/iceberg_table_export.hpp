@@ -28,6 +28,10 @@ public:
 	void PutPlan(const string &plan_id, string plan);
 	void RemovePlan(const string &plan_id);
 
+	//! The content of generated files, which are generated again when they were forgotten
+	bool GetBytes(const string &key, string &result);
+	void PutBytes(const string &key, string content);
+
 	bool Get(const string &key, IcebergExportedSnapshot &result);
 	void Put(const string &key, IcebergExportedSnapshot value);
 
@@ -36,6 +40,9 @@ private:
 	map<string, IcebergExportedSnapshot> entries;
 	map<string, string> plans;
 	vector<string> plan_order;
+	map<string, string> bytes;
+	vector<string> bytes_order;
+	idx_t bytes_size = 0;
 };
 
 //! The Iceberg view of a table at the latest snapshot of a request
@@ -72,6 +79,10 @@ public:
 	//! The tasks of a scan of the snapshot (the latest snapshot if it is not set), as the JSON members
 	//! "file-scan-tasks" and "delete-files" of a scan plan of the Iceberg REST API
 	string PlanScan(const DuckLakeSchemaInfo &schema, const DuckLakeTableInfo &table, optional_idx snapshot_id);
+
+	//! The content of a generated file of a table: the table metadata, a manifest list, a manifest, or a Parquet file
+	//! with inlined data or deletes. The request has to read the catalog at the snapshot in the name of the file.
+	string GenerateFile(const DuckLakeSchemaInfo &schema, const DuckLakeTableInfo &table, const string &name);
 
 	//! The state of a table that requirements of updates are checked against, no files are written
 	IcebergTableLoad GetState(const DuckLakeSchemaInfo &schema, const DuckLakeTableInfo &table);

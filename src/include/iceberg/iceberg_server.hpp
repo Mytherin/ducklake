@@ -51,6 +51,10 @@ struct IcebergHttpRequest {
 	vector<pair<string, string>> query;
 	string body;
 	string content_type;
+	//! The host header of the request
+	string host;
+	//! Whether the request has the token of the server
+	bool authorized = true;
 
 	string GetQuery(const string &name, const string &default_value = string()) const;
 	bool HasQuery(const string &name) const;
@@ -89,6 +93,8 @@ public:
 	//! The qualified SQL name of the schema / table / view
 	string SchemaSQL(const vector<string> &ns);
 	string EntrySQL(const vector<string> &ns, const string &name);
+	//! Makes the request read the catalog at another snapshot
+	void UseSnapshot(idx_t snapshot_id);
 	//! Forgets the catalog at the snapshot of the request, e.g. after the request changed it
 	void InvalidateCatalogInfo();
 
@@ -99,6 +105,8 @@ public:
 	DuckLakeTransaction *transaction;
 	string prefix;
 	string catalog_name;
+	//! The address of the server as the client sees it, which the URLs of the generated files start with
+	string base_uri;
 
 private:
 	unique_ptr<DuckLakeSnapshot> snapshot;
@@ -146,10 +154,25 @@ public:
 	void SetToken(string token_p) {
 		token = std::move(token_p);
 	}
+	//! Whether the metadata files are served by the server (generated when they are requested) instead of written to
+	//! the metadata path
+	void SetVirtualFiles(bool enabled) {
+		virtual_files = enabled;
+	}
+	bool VirtualFiles() const {
+		return virtual_files;
+	}
+	//! The address of the server for clients, if it is not the address in the host header of their requests
+	void SetPublicURI(string uri) {
+		public_uri = std::move(uri);
+	}
+	const string &PublicURI() const {
+		return public_uri;
+	}
 	const string &Token() const {
 		return token;
 	}
-	//! The directory of the metadata files (manifests, manifest lists and table metadata) that the server generates
+	//! A directory for the files that the server needs while it generates metadata files, which are not kept
 	void SetMetadataPath(string path) {
 		metadata_path = std::move(path);
 	}
@@ -205,6 +228,8 @@ private:
 	map<string, string> client_overrides;
 	map<string, string> table_config;
 	string token;
+	string public_uri;
+	bool virtual_files = false;
 	string metadata_path;
 	idx_t snapshot_limit = 100;
 	unique_ptr<duckdb_httplib::Server> server;

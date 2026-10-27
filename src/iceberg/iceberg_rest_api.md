@@ -9,8 +9,9 @@ DuckLake does not store any Iceberg metadata: the metadata files of Iceberg are 
   the files of the new snapshot with the files of the table, and applies the difference as DuckLake operations in one
   DuckLake transaction.
 - **When a client loads a table** (`GET .../tables/{table}`), the server generates the Iceberg metadata of the table from
-  the DuckLake catalog: the table metadata (JSON) and, for each snapshot, a manifest list and manifests (Avro). The files
-  are written to the `metadata_path` of the server, they are temporary and generated again when they are missing.
+  the DuckLake catalog: the table metadata (JSON) and, for each snapshot, a manifest list and manifests (Avro), and
+  Parquet files for delete files and for data that DuckLake keeps in its catalog. The files are not part of DuckLake:
+  they are written to the `metadata_path` of the server (the default), or they are *virtual* (`virtual_files := true`).
 
 ## Usage
 
@@ -29,7 +30,9 @@ SELECT * FROM ducklake_iceberg_serve('ducklake:metadata.ducklake', port := 8181,
 | `host`, `port` | The address to listen on (default `localhost`, a free port). |
 | `prefix` | The prefix of the catalog in the URLs, `/v1/<prefix>/...` (default: the name of the catalog). The `warehouse` of a client selects the catalog. A server can serve several catalogs. |
 | `token` | Requests have to carry this token (`Authorization: Bearer <token>`). The OAuth endpoint hands the token out for the client secret. |
-| `metadata_path` | The directory (or object store prefix) where the generated metadata files go. **The clients have to be able to read it**: use a path of a shared file system or an object store if the clients run on other machines. |
+| `metadata_path` | The directory (or object store prefix) where the generated metadata files go. **The clients have to be able to read it**: use a path of a shared file system or an object store if the clients run on other machines. With virtual files, it is only a scratch directory. |
+| `virtual_files` | If `true`, the files do not exist: their URLs are addresses of the server (`<base>/v1/<prefix>/metadata/t<table id>/<name>`) and the server generates a file from the DuckLake catalog when it is requested. The name of a file has what it takes to generate it (the table, the snapshot, the manifest, ...), so the server keeps no list of files, and the same name is always the same content. The files can be read with ranges and HEAD requests; if the server has a token, the URLs are signed (`?sig=`). **Clients have to read `http://` locations**: the Iceberg extension of DuckDB does, the stock file IO of PyIceberg and the Hadoop HTTP file system of Spark do not. |
+| `public_uri` | The address of the server in the URLs of virtual files (default: the `Host` of the request), e.g. when the server is behind a proxy. |
 | `snapshot_limit` | The number of snapshots of the history that are exposed (default 100). |
 | `table_config` | Properties for the storage of the tables that clients get with every table, e.g. `{'s3.endpoint': '...', 's3.access-key-id': '...'}` (they are in the `config` and the `storage-credentials` of a loaded table). |
 | `defaults`, `overrides` | The properties that clients get from `/v1/config`. |

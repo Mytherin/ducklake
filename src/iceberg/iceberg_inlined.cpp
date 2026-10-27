@@ -88,28 +88,50 @@ static string FieldIdsOf(const vector<DuckLakeColumnInfo> &columns) {
 	return StringUtil::Join(parts, ", ");
 }
 
-vector<IcebergInlinedFile> IcebergInlinedExport::Materialize(idx_t snapshot_id,
-                                                             const vector<DuckLakeColumnInfo> &columns,
-                                                             const string &directory) {
-	vector<IcebergInlinedFile> result;
-	auto &mm = request.GetMetadataManager();
-	auto col_names = mm.InlinedColNames();
-	auto &context = *request.connection.context;
+vector<IcebergInlinedRows> IcebergInlinedExport::RowsAt(idx_t snapshot_id) const {
+	vector<IcebergInlinedRows> result;
 	for (auto &inlined_table : tables) {
-		idx_t visible = 0;
+		IcebergInlinedRows rows;
+		rows.schema_version = inlined_table.schema_version;
 		for (auto &lifetime : inlined_table.lifetimes) {
 			if (lifetime.first <= snapshot_id &&
 			    (!lifetime.second.IsValid() || lifetime.second.GetIndex() > snapshot_id)) {
-				visible++;
+				rows.row_count++;
 			}
 		}
-		if (visible == 0) {
+		if (rows.row_count > 0) {
+			result.push_back(rows);
+		}
+	}
+	return result;
+}
+
+vector<IcebergInlinedDeletes> IcebergInlinedExport::DeletesAt(idx_t snapshot_id) {
+	vector<IcebergInlinedDeletes> result;
+	if (!HasDeletes(snapshot_id)) {
+		return result;
+	}
+	auto rows = request.MetadataQuery(StringUtil::Format(
+	    "SELECT file_id, COUNT(*) FROM {METADATA_CATALOG}.%s WHERE begin_snapshot <= %d GROUP BY file_id ORDER BY "
+	    "file_id",
+	    delete_table, snapshot_id));
+	for (auto &row : *rows) {
+		IcebergInlinedDeletes deletes;
+		deletes.data_file_id = row.GetValue<idx_t>(0);
+		deletes.delete_count = row.GetValue<idx_t>(1);
+		result.push_back(deletes);
+	}
+	return result;
+}
+
+string IcebergInlinedExport::GenerateRows(idx_t snapshot_id, idx_t schema_version,
+                                          const vector<DuckLakeColumnInfo> &columns) {
+	auto &mm = request.GetMetadataManager();
+	auto col_names = mm.InlinedColNames();
+	for (auto &inlined_table : tables) {
+		if (inlined_table.schema_version != schema_version) {
 			continue;
 		}
-		IcebergInlinedFile file;
-		file.path = IcebergUtil::JoinPath(directory, StringUtil::Format("inlined-%d-%d-%s.parquet", snapshot_id,
-		                                                                inlined_table.schema_version, table.uuid));
-		file.record_count = visible;
 		// the columns of the inlined table by name
 		auto description = request.MetadataQuery(StringUtil::Format(
 		    "SELECT column_name FROM (DESCRIBE SELECT * FROM {METADATA_CATALOG}.%s)", inlined_table.name));
@@ -127,60 +149,27 @@ vector<IcebergInlinedFile> IcebergInlinedExport::Materialize(idx_t snapshot_id,
 				select_list.push_back(StringUtil::Format("CAST(NULL AS %s) AS %s", type.ToString(), quoted));
 			}
 		}
-		if (!IcebergUtil::FileExists(context, file.path)) {
-			auto query = StringUtil::Format(
-			    "COPY (SELECT %s FROM {METADATA_CATALOG}.%s WHERE %d >= %s AND (%d < %s OR %s IS NULL)) TO %s "
-			    "(FORMAT PARQUET, FIELD_IDS {%s})",
-			    StringUtil::Join(select_list, ", "), inlined_table.name, snapshot_id, col_names.begin_snapshot,
-			    snapshot_id, col_names.end_snapshot, col_names.end_snapshot, SQLString(file.path), FieldIdsOf(columns));
-			FileSystem::GetFileSystem(context).CreateDirectoriesRecursive(directory);
-			request.MetadataQuery(query);
-		}
-		file.file_size =
-		    FileSystem::GetFileSystem(context).OpenFile(file.path, FileOpenFlags::FILE_FLAGS_READ)->GetFileSize();
-		result.push_back(std::move(file));
+		return IcebergUtil::CopyToBytes(
+		    request, StringUtil::Format("COPY (SELECT %s FROM {METADATA_CATALOG}.%s WHERE %d >= %s AND (%d < %s OR %s "
+		                                "IS NULL) ORDER BY %s) TO {FILE} (FORMAT PARQUET, FIELD_IDS {%s})",
+		                                StringUtil::Join(select_list, ", "), inlined_table.name, snapshot_id,
+		                                col_names.begin_snapshot, snapshot_id, col_names.end_snapshot,
+		                                col_names.end_snapshot, col_names.row_id, FieldIdsOf(columns)));
 	}
-	return result;
+	throw IcebergException(404, "NoSuchFileException", "The inlined data does not exist");
 }
 
-vector<IcebergInlinedDeleteFile>
-IcebergInlinedExport::MaterializeDeletes(idx_t snapshot_id, const map<idx_t, pair<string, idx_t>> &data_files,
-                                         const string &directory) {
-	vector<IcebergInlinedDeleteFile> result;
-	auto &context = *request.connection.context;
-	for (auto &entry : data_files) {
-		auto data_file_id = entry.first;
-		auto &path = entry.second.first;
-		auto row_id_start = entry.second.second;
-		auto counted = request.MetadataQuery(
-		    StringUtil::Format("SELECT COUNT(*) FROM {METADATA_CATALOG}.%s WHERE file_id = %d AND begin_snapshot <= %d",
-		                       delete_table, data_file_id, snapshot_id));
-		idx_t count = 0;
-		for (auto &row : *counted) {
-			count = row.GetValue<idx_t>(0);
-		}
-		if (count == 0) {
-			continue;
-		}
-		IcebergInlinedDeleteFile file;
-		file.data_file_id = data_file_id;
-		file.delete_count = count;
-		file.path = IcebergUtil::JoinPath(
-		    directory, StringUtil::Format("inlined-delete-%d-%d-%s.parquet", snapshot_id, data_file_id, table.uuid));
-		if (!IcebergUtil::FileExists(context, file.path)) {
-			auto query = StringUtil::Format(
-			    "COPY (SELECT %s AS file_path, row_id - %d AS pos FROM {METADATA_CATALOG}.%s WHERE file_id = %d AND "
-			    "begin_snapshot <= %d ORDER BY row_id) TO %s (FORMAT PARQUET, FIELD_IDS {'file_path': "
-			    "2147483546, 'pos': 2147483545})",
-			    SQLString(path), row_id_start, delete_table, data_file_id, snapshot_id, SQLString(file.path));
-			FileSystem::GetFileSystem(context).CreateDirectoriesRecursive(directory);
-			request.MetadataQuery(query);
-		}
-		file.file_size =
-		    FileSystem::GetFileSystem(context).OpenFile(file.path, FileOpenFlags::FILE_FLAGS_READ)->GetFileSize();
-		result.push_back(std::move(file));
+string IcebergInlinedExport::GenerateDeletes(idx_t snapshot_id, idx_t data_file_id, const string &data_path,
+                                             idx_t row_id_start) {
+	if (!HasDeletes(snapshot_id)) {
+		throw IcebergException(404, "NoSuchFileException", "The inlined deletes do not exist");
 	}
-	return result;
+	return IcebergUtil::CopyToBytes(
+	    request,
+	    StringUtil::Format("COPY (SELECT %s AS file_path, row_id - %d AS pos FROM {METADATA_CATALOG}.%s WHERE "
+	                       "file_id = %d AND begin_snapshot <= %d ORDER BY row_id) TO {FILE} (FORMAT PARQUET, "
+	                       "FIELD_IDS {'file_path': 2147483546, 'pos': 2147483545})",
+	                       SQLString::ToString(data_path), row_id_start, delete_table, data_file_id, snapshot_id));
 }
 
 } // namespace duckdb

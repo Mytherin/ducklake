@@ -11,6 +11,7 @@
 #include "iceberg/iceberg_table_export.hpp"
 #include "iceberg/iceberg_types.hpp"
 #include "iceberg/iceberg_util.hpp"
+#include "iceberg/iceberg_virtual_files.hpp"
 #include "storage/ducklake_delete.hpp"
 #include "storage/ducklake_delete_filter.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
@@ -66,14 +67,14 @@ struct PartitionLayoutField {
 };
 
 //! The files of a snapshot, read from its manifest list and manifests
-vector<IcebergFileEntry> ReadSnapshotFiles(ClientContext &context, const string &manifest_list_path) {
+vector<IcebergFileEntry> ReadSnapshotFiles(IcebergRequest &request, const string &manifest_list_path) {
 	vector<IcebergFileEntry> result;
-	auto list = AvroReader::Read(IcebergUtil::ReadFile(context, ReadablePath(manifest_list_path)));
+	auto list = AvroReader::Read(IcebergVirtualFiles::Read(request, ReadablePath(manifest_list_path)));
 	for (auto &manifest : list.records) {
 		auto manifest_path = manifest.Get("manifest_path").AsString();
 		auto &content_value = manifest.TryGet("content");
 		idx_t manifest_content = content_value.IsNull() ? 0 : NumericCast<idx_t>(content_value.AsLong());
-		auto manifest_file = AvroReader::Read(IcebergUtil::ReadFile(context, ReadablePath(manifest_path)));
+		auto manifest_file = AvroReader::Read(IcebergVirtualFiles::Read(request, ReadablePath(manifest_path)));
 		for (auto &entry : manifest_file.records) {
 			auto status = entry.Get("status").AsLong();
 			if (status == 2) {
@@ -601,7 +602,7 @@ static set<idx_t> ReadPositions(IcebergRequest &request, const string &delete_pa
 }
 
 void TableUpdate::ApplySnapshot(const string &manifest_list_path, const vector<PartitionLayoutField> &layout) {
-	auto files = ReadSnapshotFiles(context, manifest_list_path);
+	auto files = ReadSnapshotFiles(request, manifest_list_path);
 	auto live = GetLiveFiles();
 	map<string, idx_t> live_by_path;
 	for (idx_t i = 0; i < live.size(); i++) {
@@ -612,9 +613,8 @@ void TableUpdate::ApplySnapshot(const string &manifest_list_path, const vector<P
 	vector<IcebergFileEntry> delete_entries;
 	for (auto &file : files) {
 		// the files that the server generated for the metadata are not data of the table
-		if (!request.server.MetadataPath().empty() &&
-		    StringUtil::StartsWith(NormalizePath(file.path), NormalizePath(request.server.MetadataPath())) &&
-		    (file.content == 0 || NormalizePath(file.path).find("/inlined-delete-") != string::npos)) {
+		if (IcebergVirtualFiles::IsGenerated(request, file.path) &&
+		    (file.content == 0 || file.path.find("/inlined-delete-") != string::npos)) {
 			if (file.content == 0) {
 				wanted_data.insert(NormalizePath(file.path));
 			}
@@ -644,11 +644,23 @@ void TableUpdate::ApplySnapshot(const string &manifest_list_path, const vector<P
 	map<string, vector<string>> delete_paths_of_file;
 	for (auto &entry : delete_entries) {
 		auto delete_path = ReadablePath(entry.path);
+		string temporary_file;
+		if (IcebergVirtualFiles::IsGenerated(request, delete_path) && IcebergVirtualFiles::IsVirtual(delete_path)) {
+			// a delete file that the server generated is generated again
+			temporary_file =
+			    IcebergUtil::JoinPath(request.server.MetadataPath(), "reading-" + IcebergUtil::RandomUUID());
+			IcebergUtil::WriteFile(context, temporary_file, IcebergVirtualFiles::Read(request, delete_path));
+			delete_path = temporary_file;
+		}
 		auto rows =
 		    request.Query(StringUtil::Format("SELECT file_path, pos FROM read_parquet(%s)", SQLString(delete_path)));
 		for (auto &row : *rows) {
 			auto data_path = NormalizePath(row.GetValue<string>(0));
 			wanted_deletes[data_path].insert(row.GetValue<idx_t>(1));
+		}
+		if (!temporary_file.empty()) {
+			rows.reset();
+			FileSystem::GetFileSystem(context).TryRemoveFile(temporary_file);
 		}
 	}
 	vector<DuckLakeDeleteFile> new_deletes;
@@ -1154,7 +1166,7 @@ void IcebergTableEndpoints::RegisterTable(IcebergRequest &request, const Iceberg
 		    409, "AlreadyExistsException",
 		    StringUtil::Format("Table already exists: %s.%s", IcebergUtil::NamespaceToString(ns), name));
 	}
-	auto metadata_text = IcebergUtil::ReadFile(*request.connection.context, ReadablePath(metadata_location));
+	auto metadata_text = IcebergVirtualFiles::Read(request, ReadablePath(metadata_location));
 	RESTJsonReader metadata_reader(metadata_text);
 	auto metadata = metadata_reader.Root();
 	// the current schema and partition spec of the table
