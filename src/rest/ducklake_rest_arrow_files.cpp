@@ -13,7 +13,7 @@ namespace duckdb {
 
 namespace {
 
-using FileRow = VectorStructType<string_t, string_t, uint64_t, uint64_t, string_t>;
+using FileRow = VectorStructType<string_t, string_t, uint64_t, uint64_t, string_t, uint64_t, uint64_t>;
 using FileWriter = VectorWriter<FileRow>;
 using MinMaxRow = VectorStructType<uint64_t, string_t, string_t, bool>;
 using InlinedDeletionRow = VectorStructType<uint64_t, uint64_t>;
@@ -26,6 +26,8 @@ LogicalType FileType() {
 	children.emplace_back("file_size_bytes", LogicalType::UBIGINT);
 	children.emplace_back("footer_size", LogicalType::UBIGINT);
 	children.emplace_back("format", LogicalType::VARCHAR);
+	children.emplace_back("row_count", LogicalType::UBIGINT);
+	children.emplace_back("row_group_count", LogicalType::UBIGINT);
 	return LogicalType::STRUCT(std::move(children));
 }
 
@@ -77,21 +79,24 @@ void WriteIndex(VectorWriter<uint64_t> &writer, const INDEX &value) {
 }
 
 void WriteFile(FileWriter &writer, const DuckLakeFileData &file) {
-	writer.WriteValue([&](auto &path, auto &key, auto &size, auto &footer, auto &format) {
-		path.WriteValue(Str(file.path));
-		if (file.encryption_key.empty()) {
-			key.WriteNull();
-		} else {
-			key.WriteValue(Str(file.encryption_key));
-		}
-		size.WriteValue(file.file_size_bytes);
-		WriteOptional(footer, file.footer_size);
-		if (file.format == DeleteFileFormat::PARQUET) {
-			format.WriteNull();
-		} else {
-			format.WriteValue(Str(RESTFileFormatCodec::ToString(file.format)));
-		}
-	});
+	writer.WriteValue(
+	    [&](auto &path, auto &key, auto &size, auto &footer, auto &format, auto &row_count, auto &row_group_count) {
+		    path.WriteValue(Str(file.path));
+		    if (file.encryption_key.empty()) {
+			    key.WriteNull();
+		    } else {
+			    key.WriteValue(Str(file.encryption_key));
+		    }
+		    size.WriteValue(file.file_size_bytes);
+		    WriteOptional(footer, file.footer_size);
+		    if (file.format == DeleteFileFormat::PARQUET) {
+			    format.WriteNull();
+		    } else {
+			    format.WriteValue(Str(RESTFileFormatCodec::ToString(file.format)));
+		    }
+		    WriteOptional(row_count, file.row_count);
+		    WriteOptional(row_group_count, file.row_group_count);
+	    });
 }
 
 //! Delete files are NULL if there is none
@@ -155,6 +160,8 @@ DuckLakeFileData ReadFile(const ENTRY &entry) {
 	if (format.IsValid()) {
 		result.format = RESTFileFormatCodec::FromString(format.GetValue().GetString());
 	}
+	result.row_count = ReadOptional(entry.template GetChildValue<5>());
+	result.row_group_count = ReadOptional(entry.template GetChildValue<6>());
 	return result;
 }
 

@@ -749,6 +749,8 @@ private:
 
 protected:
 	string GetFileSelectList(const string &prefix);
+	string GetFileCountsSelectList(const string &prefix, const string &row_count_column);
+	static void ReadFileCounts(const QueryResultRow &row, idx_t &col_idx, DuckLakeFileData &data);
 	string GetDataFileSelectList(const string &prefix);
 	string GetDeleteFileSelectList(const string &prefix);
 	//! Build an additional WHERE fragment that prunes files by bucket() partition value.

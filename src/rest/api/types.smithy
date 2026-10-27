@@ -561,6 +561,12 @@ structure FileData {
 
     /// The format of the file.
     format: FileFormat = "parquet"
+
+    /// The number of rows of the file. For a delete file: the number of deleted rows.
+    row_count: UInt64
+
+    /// The number of row groups of the file.
+    row_group_count: UInt64
 }
 
 /// The min/max statistics of a column of a file.

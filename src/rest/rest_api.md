@@ -1032,6 +1032,8 @@ A file that a client reads.
 | `file_size_bytes` | `uint64` (default `0`) | The size of the file. |
 | `footer_size` | `uint64` (optional) | The size of the footer of the file. |
 | `format` | [`FileFormat`](#fileformat) (default `"parquet"`) | The format of the file. |
+| `row_count` | `uint64` (optional) | The number of rows of the file. For a delete file: the number of deleted rows. |
+| `row_group_count` | `uint64` (optional) | The number of row groups of the file. |
 
 ### `FileFormat`
 

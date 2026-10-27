@@ -1475,16 +1475,26 @@ string DuckLakeMetadataManager::GetFileSelectList(const string &prefix) {
 	return result;
 }
 
+//! The row count and the row group count of a file, the row group count only exists in the metadata of DuckLake 1.1
+string DuckLakeMetadataManager::GetFileCountsSelectList(const string &prefix, const string &row_count_column) {
+	auto row_group_count =
+	    transaction.GetCatalog().SupportsV1_1Metadata() ? prefix + ".row_group_count" : string("CAST(NULL AS BIGINT)");
+	return StringUtil::Format(", %s.%s AS %s_row_count, %s AS %s_row_group_count", prefix, row_count_column, prefix,
+	                          row_group_count, prefix);
+}
+
 string DuckLakeMetadataManager::GetDataFileSelectList(const string &prefix) {
 	// the format DuckLake writes is returned as NULL, so the common case transfers no string
 	return GetFileSelectList(prefix) +
 	       StringUtil::Format(", CASE WHEN %s.file_format = 'parquet' THEN NULL ELSE %s.file_format END AS "
 	                          "%s_unsupported_format",
-	                          prefix, prefix, prefix);
+	                          prefix, prefix, prefix) +
+	       GetFileCountsSelectList(prefix, "record_count");
 }
 
 string DuckLakeMetadataManager::GetDeleteFileSelectList(const string &prefix) {
-	return GetFileSelectList(prefix) + ", " + prefix + ".format AS " + prefix + "_format";
+	return GetFileSelectList(prefix) + ", " + prefix + ".format AS " + prefix + "_format" +
+	       GetFileCountsSelectList(prefix, "delete_count");
 }
 
 DuckLakeFileData DuckLakeMetadataManager::ReadFile(DuckLakeTableEntry &table, const QueryResultRow &row, idx_t &col_idx,
@@ -1512,6 +1522,11 @@ DuckLakeFileData DuckLakeMetadataManager::ReadFile(DuckLakeTableEntry &table, co
 	return data;
 }
 
+void DuckLakeMetadataManager::ReadFileCounts(const QueryResultRow &row, idx_t &col_idx, DuckLakeFileData &data) {
+	data.row_count = OptIdx(row, col_idx++);
+	data.row_group_count = OptIdx(row, col_idx++);
+}
+
 DuckLakeFileData DuckLakeMetadataManager::ReadDataFile(DuckLakeTableEntry &table, const QueryResultRow &row,
                                                        idx_t &col_idx, bool is_encrypted) {
 	auto data = ReadFile(table, row, col_idx, is_encrypted);
@@ -1522,6 +1537,7 @@ DuckLakeFileData DuckLakeMetadataManager::ReadDataFile(DuckLakeTableEntry &table
 		}
 	}
 	col_idx++;
+	ReadFileCounts(row, col_idx, data);
 	return data;
 }
 
@@ -1532,6 +1548,7 @@ DuckLakeFileData DuckLakeMetadataManager::ReadDeleteFile(DuckLakeTableEntry &tab
 		data.format = DeleteFileFormatFromString(row.GetValue<string>(col_idx));
 	}
 	col_idx++;
+	ReadFileCounts(row, col_idx, data);
 	return data;
 }
 
@@ -2432,7 +2449,8 @@ main_results AS (
 	// Main query: partial deletes from delete_file table and full file deletes
 	query += StringUtil::Format(R"(
 SELECT %s, current_delete.begin_snapshot, false AS file_deleted FROM (
-	SELECT data_file_id, begin_snapshot, path, path_is_relative, file_size_bytes, footer_size, encryption_key, format
+	SELECT data_file_id, begin_snapshot, path, path_is_relative, file_size_bytes, footer_size, encryption_key, format,
+		delete_count, {ROW_GROUP_COUNT}
 	FROM {METADATA_CATALOG}.ducklake_delete_file
 	WHERE table_id = %d AND begin_snapshot <= {SNAPSHOT_ID}
 ) AS current_delete
@@ -2444,7 +2462,9 @@ LEFT JOIN LATERAL (
 		file_size_bytes,
 		footer_size,
 		encryption_key,
-		format
+		format,
+		delete_count,
+		{ROW_GROUP_COUNT}
 	FROM {METADATA_CATALOG}.ducklake_delete_file
 	WHERE table_id = %d AND begin_snapshot < %d
 	ORDER BY data_file_id, begin_snapshot DESC
@@ -2472,7 +2492,9 @@ LEFT JOIN LATERAL (
 		file_size_bytes,
 		footer_size,
 		encryption_key,
-		format
+		format,
+		delete_count,
+		{ROW_GROUP_COUNT}
 	FROM {METADATA_CATALOG}.ducklake_delete_file
 	WHERE table_id = %d AND begin_snapshot <= data.end_snapshot
 	ORDER BY data_file_id, begin_snapshot DESC
@@ -2483,11 +2505,18 @@ USING (data_file_id), (
 		CAST(NULL AS BIGINT) AS file_size_bytes,
 		CAST(NULL AS BIGINT) AS footer_size,
 		CAST(NULL AS VARCHAR) AS encryption_key,
-		CAST(NULL AS VARCHAR) format
+		CAST(NULL AS VARCHAR) format,
+		CAST(NULL AS BIGINT) AS delete_count,
+		CAST(NULL AS BIGINT) AS row_group_count
 ) current_delete
 )",
 	                            select_list, table_id.index, table_id.index, start_snapshot.snapshot_id, table_id.index,
 	                            select_list, table_id.index, start_snapshot.snapshot_id, table_id.index);
+	// the row group count only exists in the metadata of DuckLake 1.1
+	query = StringUtil::Replace(query, "{ROW_GROUP_COUNT}",
+	                            transaction.GetCatalog().SupportsV1_1Metadata()
+	                                ? "row_group_count"
+	                                : "CAST(NULL AS BIGINT) AS row_group_count");
 
 	if (has_inlined_table) {
 		string null_file_cols = "CAST(NULL AS VARCHAR) AS path, CAST(NULL AS BOOLEAN) AS path_is_relative, CAST(NULL "
@@ -2495,7 +2524,7 @@ USING (data_file_id), (
 		if (IsEncrypted()) {
 			null_file_cols += ", CAST(NULL AS VARCHAR) AS encryption_key";
 		}
-		null_file_cols += ", NULL format";
+		null_file_cols += ", NULL format, CAST(NULL AS BIGINT) AS row_count, CAST(NULL AS BIGINT) AS row_group_count";
 		query += StringUtil::Format(R"(
 UNION ALL
 

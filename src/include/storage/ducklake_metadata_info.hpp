@@ -407,6 +407,9 @@ struct DuckLakeFileData {
 	idx_t file_size_bytes = 0;
 	optional_idx footer_size;
 	DeleteFileFormat format = DeleteFileFormat::PARQUET;
+	//! The number of rows (for delete files: the deleted rows) and of row groups, if the metadata has them
+	optional_idx row_count;
+	optional_idx row_group_count;
 };
 
 enum class DuckLakeDataType {

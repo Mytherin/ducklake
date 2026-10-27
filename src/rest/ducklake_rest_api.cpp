@@ -1317,6 +1317,12 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 		result.Add("footer_size", RESTWriteValue<RESTUInt64Codec>(writer, value.footer_size));
 	}
 	result.Add("format", RESTWriteValue<RESTFileFormatCodec>(writer, value.format));
+	if (!RESTIsNull(value.row_count)) {
+		result.Add("row_count", RESTWriteValue<RESTUInt64Codec>(writer, value.row_count));
+	}
+	if (!RESTIsNull(value.row_group_count)) {
+		result.Add("row_group_count", RESTWriteValue<RESTUInt64Codec>(writer, value.row_group_count));
+	}
 	return result;
 }
 
@@ -1355,6 +1361,18 @@ DuckLakeFileData DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 			RESTReadValue<RESTFileFormatCodec>(entry, result.format);
 		} else {
 			result.format = DeleteFileFormat::PARQUET;
+		}
+	}
+	{
+		auto entry = in.TryGet("row_count");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.row_count);
+		}
+	}
+	{
+		auto entry = in.TryGet("row_group_count");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTUInt64Codec>(entry, result.row_group_count);
 		}
 	}
 	return result;
