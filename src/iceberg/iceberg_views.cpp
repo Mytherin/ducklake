@@ -55,16 +55,24 @@ IcebergField FieldFromLogicalType(const string &name, const LogicalType &type, i
 		column.nulls_allowed = true;
 		column.type = type.ToString();
 		// the DuckLake names of the types are lowercase variants of the SQL names, so convert through the names
-		static const vector<pair<LogicalTypeId, string>> NAMES = {
-		    {LogicalTypeId::BOOLEAN, "boolean"},   {LogicalTypeId::TINYINT, "int8"},
-		    {LogicalTypeId::SMALLINT, "int16"},    {LogicalTypeId::INTEGER, "int32"},
-		    {LogicalTypeId::BIGINT, "int64"},      {LogicalTypeId::UTINYINT, "uint8"},
-		    {LogicalTypeId::USMALLINT, "uint16"},  {LogicalTypeId::UINTEGER, "uint32"},
-		    {LogicalTypeId::FLOAT, "float32"},     {LogicalTypeId::DOUBLE, "float64"},
-		    {LogicalTypeId::DATE, "date"},         {LogicalTypeId::TIME, "time"},
-		    {LogicalTypeId::TIMESTAMP, "timestamp"}, {LogicalTypeId::TIMESTAMP_TZ, "timestamptz"},
-		    {LogicalTypeId::TIMESTAMP_NS, "timestamp_ns"}, {LogicalTypeId::VARCHAR, "varchar"},
-		    {LogicalTypeId::UUID, "uuid"},         {LogicalTypeId::BLOB, "blob"}};
+		static const vector<pair<LogicalTypeId, string>> NAMES = {{LogicalTypeId::BOOLEAN, "boolean"},
+		                                                          {LogicalTypeId::TINYINT, "int8"},
+		                                                          {LogicalTypeId::SMALLINT, "int16"},
+		                                                          {LogicalTypeId::INTEGER, "int32"},
+		                                                          {LogicalTypeId::BIGINT, "int64"},
+		                                                          {LogicalTypeId::UTINYINT, "uint8"},
+		                                                          {LogicalTypeId::USMALLINT, "uint16"},
+		                                                          {LogicalTypeId::UINTEGER, "uint32"},
+		                                                          {LogicalTypeId::FLOAT, "float32"},
+		                                                          {LogicalTypeId::DOUBLE, "float64"},
+		                                                          {LogicalTypeId::DATE, "date"},
+		                                                          {LogicalTypeId::TIME, "time"},
+		                                                          {LogicalTypeId::TIMESTAMP, "timestamp"},
+		                                                          {LogicalTypeId::TIMESTAMP_TZ, "timestamptz"},
+		                                                          {LogicalTypeId::TIMESTAMP_NS, "timestamp_ns"},
+		                                                          {LogicalTypeId::VARCHAR, "varchar"},
+		                                                          {LogicalTypeId::UUID, "uuid"},
+		                                                          {LogicalTypeId::BLOB, "blob"}};
 		bool found = false;
 		for (auto &entry : NAMES) {
 			if (entry.first == type.id()) {
@@ -73,7 +81,8 @@ IcebergField FieldFromLogicalType(const string &name, const LogicalType &type, i
 			}
 		}
 		if (type.id() == LogicalTypeId::DECIMAL) {
-			column.type = StringUtil::Format("decimal(%d,%d)", DecimalType::GetWidth(type), DecimalType::GetScale(type));
+			column.type =
+			    StringUtil::Format("decimal(%d,%d)", DecimalType::GetWidth(type), DecimalType::GetScale(type));
 			found = true;
 		}
 		if (!found) {
@@ -140,8 +149,9 @@ string ViewMetadata(IcebergRequest &request, const vector<string> &ns, const Duc
 	writer.SetRoot(metadata);
 	auto text = writer.ToString();
 	auto &server = request.server;
-	metadata_location = IcebergUtil::JoinPath(IcebergUtil::JoinPath(IcebergUtil::JoinPath(server.MetadataPath(), view.uuid), "metadata"),
-	                                          StringUtil::Format("%016llx.metadata.json", std::hash<string>()(text)));
+	metadata_location = IcebergUtil::JoinPath(
+	    IcebergUtil::JoinPath(IcebergUtil::JoinPath(server.MetadataPath(), view.uuid), "metadata"),
+	    StringUtil::Format("%016llx.metadata.json", std::hash<string>()(text)));
 	if (!IcebergUtil::FileExists(*request.connection.context, metadata_location)) {
 		IcebergUtil::WriteFile(*request.connection.context, metadata_location, text);
 	}
@@ -256,8 +266,8 @@ void IcebergViewEndpoints::ReplaceView(IcebergRequest &request, const IcebergHtt
 	}
 	auto body = IcebergUtil::ParseBody(http);
 	auto root = body->Root();
-	for (auto &requirement : root.TryGet("requirements").IsArray() ? root.Get("requirements").Items()
-	                                                                  : vector<RESTJsonIn>()) {
+	for (auto &requirement :
+	     root.TryGet("requirements").IsArray() ? root.Get("requirements").Items() : vector<RESTJsonIn>()) {
 		if (requirement.Str("type") == "assert-view-uuid" &&
 		    !StringUtil::CIEquals(requirement.Str("uuid"), view->uuid)) {
 			throw IcebergException(409, "CommitFailedException", "Requirement failed: view UUID does not match");

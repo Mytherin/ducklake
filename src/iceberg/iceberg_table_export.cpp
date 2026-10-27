@@ -2,6 +2,7 @@
 
 #include "common/ducklake_types.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -169,8 +170,8 @@ bool IsSupportedIdentityType(const IcebergType &type) {
 	if (type.kind != IcebergType::Kind::PRIMITIVE) {
 		return false;
 	}
-	static const char *SUPPORTED[] = {"boolean", "int",  "long",        "float", "double",
-	                                  "date",    "time", "timestamp",   "timestamptz", "string", "uuid"};
+	static const char *SUPPORTED[] = {"boolean", "int",       "long",        "float",  "double", "date",
+	                                  "time",    "timestamp", "timestamptz", "string", "uuid"};
 	for (auto supported : SUPPORTED) {
 		if (type.primitive == supported) {
 			return true;
@@ -376,10 +377,9 @@ string ManifestSchema(const ExportSpec &spec, const IcebergSchema &schema) {
 		if (!partition_fields.empty()) {
 			partition_fields += ", ";
 		}
-		partition_fields +=
-		    StringUtil::Format("{\"name\": \"%s\", \"field-id\": %d, \"type\": [\"null\", %s], \"default\": null}",
-		                       AvroCompatibleName(field.name), field.field_id,
-		                       TransformResultSchema(field, source->type));
+		partition_fields += StringUtil::Format(
+		    "{\"name\": \"%s\", \"field-id\": %d, \"type\": [\"null\", %s], \"default\": null}",
+		    AvroCompatibleName(field.name), field.field_id, TransformResultSchema(field, source->type));
 	}
 	string result =
 	    "{\"type\": \"record\", \"name\": \"manifest_entry\", \"fields\": ["
@@ -490,6 +490,7 @@ private:
 	IcebergExportedSnapshot ExportSnapshot(idx_t index);
 	string WriteManifest(const vector<ManifestItem> &items, const ExportSpec &spec, idx_t snapshot_id,
 	                     const IcebergSchema &snapshot_schema, bool deletes, ManifestSummary &summary);
+	void ConvertDeleteFile(const ExportDeleteFile &file, const string &data_path, string &path, idx_t &file_size);
 	vector<const ExportDataFile *> VisibleDataFiles(idx_t snapshot_id);
 	vector<const ExportDeleteFile *> VisibleDeleteFiles(idx_t snapshot_id);
 	string FilePath(const string &path, bool relative_flag) const;
@@ -651,7 +652,8 @@ void TableExport::LoadSnapshots() {
 void TableExport::LoadFiles() {
 	auto files = request.MetadataQuery(StringUtil::Format(
 	    "SELECT data_file_id, begin_snapshot, end_snapshot, path, path_is_relative, record_count, file_size_bytes, "
-	    "partition_id, partial_max, encryption_key IS NOT NULL, row_id_start FROM {METADATA_CATALOG}.ducklake_data_file WHERE "
+	    "partition_id, partial_max, encryption_key IS NOT NULL, row_id_start FROM "
+	    "{METADATA_CATALOG}.ducklake_data_file WHERE "
 	    "table_id = %d AND begin_snapshot <= {SNAPSHOT_ID} AND (end_snapshot IS NULL OR end_snapshot > %d) ORDER BY "
 	    "begin_snapshot, file_order, data_file_id",
 	    table_id, table_begin));
@@ -1051,9 +1053,8 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 	load.last_partition_id = last_partition_id;
 	load.last_sequence_number = last_sequence_number;
 	load.schemas = schemas;
-	load.metadata_location =
-	    IcebergUtil::JoinPath(metadata_dir, StringUtil::Format("%05d-%s.metadata.json", latest_snapshot,
-	                                                           FormatHash(load.metadata_json)));
+	load.metadata_location = IcebergUtil::JoinPath(
+	    metadata_dir, StringUtil::Format("%05d-%s.metadata.json", latest_snapshot, FormatHash(load.metadata_json)));
 	if (!IcebergUtil::FileExists(context, load.metadata_location)) {
 		IcebergUtil::WriteFile(context, load.metadata_location, load.metadata_json);
 	}
@@ -1093,10 +1094,10 @@ void TableExport::LoadStatsAndPartitionValues(const vector<const ExportDataFile 
 		entry.contains_nan = !row.IsNull(7) && row.GetValue<bool>(7);
 		file_stats[row.GetValue<idx_t>(0)].push_back(std::move(entry));
 	}
-	auto values = request.MetadataQuery(StringUtil::Format(
-	    "SELECT data_file_id, partition_key_index, partition_value FROM {METADATA_CATALOG}.ducklake_file_partition_value "
-	    "WHERE table_id = %d AND data_file_id IN (%s)",
-	    table_id, id_list));
+	auto values = request.MetadataQuery(StringUtil::Format("SELECT data_file_id, partition_key_index, partition_value "
+	                                                       "FROM {METADATA_CATALOG}.ducklake_file_partition_value "
+	                                                       "WHERE table_id = %d AND data_file_id IN (%s)",
+	                                                       table_id, id_list));
 	for (auto &row : *values) {
 		if (!row.IsNull(2)) {
 			file_partition_values[row.GetValue<idx_t>(0)][row.GetValue<idx_t>(1)] = row.GetValue<string>(2);
@@ -1270,6 +1271,25 @@ string TableExport::WriteManifest(const vector<ManifestItem> &items, const Expor
 	return path;
 }
 
+//! The delete files of DuckLake have other field ids than the position delete files of Iceberg, so the delete file is
+//! rewritten with the ids and the path of the data file that Iceberg readers expect
+void TableExport::ConvertDeleteFile(const ExportDeleteFile &file, const string &data_path, string &path,
+                                    idx_t &file_size) {
+	auto converted = IcebergUtil::JoinPath(
+	    metadata_dir, StringUtil::Format("delete-%d-%s.parquet", file.id, FormatHash(data_path + file.path)));
+	auto &fs = FileSystem::GetFileSystem(context);
+	if (!IcebergUtil::FileExists(context, converted)) {
+		fs.CreateDirectoriesRecursive(metadata_dir);
+		request.MetadataQuery(StringUtil::Format(
+		    "COPY (SELECT %s AS file_path, pos FROM read_parquet(%s) ORDER BY pos) TO %s (FORMAT PARQUET, "
+		    "FIELD_IDS {'file_path': %d, 'pos': %d})",
+		    SQLString::ToString(data_path), SQLString::ToString(file.path), SQLString::ToString(converted),
+		    POSITION_DELETE_PATH_ID, POSITION_DELETE_PATH_ID - 1));
+	}
+	path = converted;
+	file_size = fs.OpenFile(converted, FileOpenFlags::FILE_FLAGS_READ)->GetFileSize();
+}
+
 vector<const ExportDataFile *> TableExport::VisibleDataFiles(idx_t snapshot_id) {
 	vector<const ExportDataFile *> result;
 	for (auto &file : data_files) {
@@ -1294,7 +1314,8 @@ IcebergExportedSnapshot TableExport::ExportSnapshot(idx_t index) {
 	auto snapshot_id = chosen[index];
 	auto &server = request.server;
 	string previous_text = index > 0 ? to_string(chosen[index - 1]) : "none";
-	auto cache_key = StringUtil::Format("%s:%d:%s:%d", metadata_dir, snapshot_id, previous_text, inlined->HasRows(snapshot_id) ? 1 : 0);
+	auto cache_key = StringUtil::Format("%s:%d:%s:%d", metadata_dir, snapshot_id, previous_text,
+	                                    inlined->HasRows(snapshot_id) ? 1 : 0);
 	IcebergExportedSnapshot result;
 	if (server.GetExportCache().Get(cache_key, result) && IcebergUtil::FileExists(context, result.manifest_list_path)) {
 		return result;
@@ -1374,6 +1395,7 @@ IcebergExportedSnapshot TableExport::ExportSnapshot(idx_t index) {
 		item.path = file->path;
 		item.record_count = file->delete_count;
 		item.file_size = file->file_size;
+		ConvertDeleteFile(*file, data_file->second->path, item.path, item.file_size);
 		item.partition_source = data_file->second;
 		item.referenced_path = data_file->second->path;
 		item.stats = nullptr;

@@ -30,6 +30,8 @@ struct DuckLakeAddDataFilesData : public TableFunctionData {
 	bool allow_missing = false;
 	bool ignore_extra_columns = false;
 	HivePartitioningType hive_partitioning = HivePartitioningType::AUTOMATIC;
+	//! The values of the partition keys of the files, if they do not come from the paths of the files
+	map<string, string> partition_values;
 };
 
 static unique_ptr<FunctionData> DuckLakeAddDataFilesBind(ClientContext &context, TableFunctionBindInput &input,
@@ -66,6 +68,17 @@ static unique_ptr<FunctionData> DuckLakeAddDataFilesBind(ClientContext &context,
 	}
 	if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "hive_partitioning", "boolean", option)) {
 		result->hive_partitioning = BooleanValue::Get(option) ? HivePartitioningType::YES : HivePartitioningType::NO;
+	}
+
+	auto partition_values = input.named_parameters.find(Identifier("partition_values"));
+	if (partition_values != input.named_parameters.end() && !partition_values->second.IsNull()) {
+		for (auto &entry : ListValue::GetChildren(partition_values->second)) {
+			auto &children = StructValue::GetChildren(entry);
+			if (children[0].IsNull() || children[1].IsNull()) {
+				throw InvalidInputException("The partition values cannot be NULL");
+			}
+			result->partition_values[StringValue::Get(children[0])] = StringValue::Get(children[1]);
+		}
 	}
 
 	names.emplace_back("filename");
@@ -141,6 +154,7 @@ public:
 	                      const DuckLakeAddDataFilesData &bind_data)
 	    : transaction(transaction), context(context), table(bind_data.table), allow_missing(bind_data.allow_missing),
 	      ignore_extra_columns(bind_data.ignore_extra_columns), hive_partitioning(bind_data.hive_partitioning),
+	      explicit_partition_values(bind_data.partition_values),
 	      skipped_fields(bind_data.table.GetSkippedStatsFields()) {
 		// the constraint is only enforced for the root columns, like it is for an insert
 		auto not_null_fields = table.GetNotNullFields();
@@ -200,6 +214,7 @@ private:
 	bool ignore_extra_columns;
 	map<string, string> hive_partitions;
 	HivePartitioningType hive_partitioning;
+	map<string, string> explicit_partition_values;
 	unordered_set<string> processed_files;
 	unordered_set<idx_t> skipped_fields;
 	//! The root columns of the table that do not allow NULL values, by field index
@@ -1147,7 +1162,9 @@ void DuckLakeFileProcessor::MarkVariantColumns(ParquetFileMetadata &file, const 
 }
 
 void DuckLakeFileProcessor::DetermineMapping(ParquetFileMetadata &file) {
-	if (hive_partitioning != HivePartitioningType::NO) {
+	if (!explicit_partition_values.empty()) {
+		hive_partitions = explicit_partition_values;
+	} else if (hive_partitioning != HivePartitioningType::NO) {
 		// we are mapping hive partitions - check if there are any hive partitioned columns
 		hive_partitions = HivePartitioning::Parse(file.filepath);
 	}
@@ -1259,6 +1276,7 @@ TableFunctionSet DuckLakeAddDataFilesFunction::GetFunctions() {
 			options.Add("allow_missing", LogicalType::BOOLEAN)
 			    .Add("ignore_extra_columns", LogicalType::BOOLEAN)
 			    .Add("hive_partitioning", LogicalType::BOOLEAN)
+			    .Add("partition_values", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))
 			    .Add("schema", LogicalType::VARCHAR);
 		});
 		set.AddFunction(function);

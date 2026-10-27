@@ -55,9 +55,8 @@ public:
 	                                       const string &directory);
 	//! Writes the inlined deletions that are visible at the snapshot to position delete files. The data files are
 	//! given by id with their path and the first row id.
-	vector<IcebergInlinedDeleteFile> MaterializeDeletes(idx_t snapshot_id,
-	                                                    const map<idx_t, pair<string, idx_t>> &data_files,
-	                                                    const string &directory);
+	vector<IcebergInlinedDeleteFile>
+	MaterializeDeletes(idx_t snapshot_id, const map<idx_t, pair<string, idx_t>> &data_files, const string &directory);
 
 private:
 	struct InlinedTable {

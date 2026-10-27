@@ -1,9 +1,11 @@
 #include "iceberg/iceberg_table_update.hpp"
 
 #include "common/ducklake_data_file.hpp"
+#include "common/ducklake_types.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "iceberg/iceberg_avro.hpp"
 #include "iceberg/iceberg_properties.hpp"
 #include "iceberg/iceberg_table_export.hpp"
@@ -51,6 +53,15 @@ struct IcebergFileEntry {
 	string path;
 	idx_t record_count = 0;
 	idx_t file_size = 0;
+	//! The values of the partition fields of the file
+	vector<AvroValue> partition;
+};
+
+//! A field of the partitioning of a table
+struct PartitionLayoutField {
+	string column_name;
+	string transform;
+	LogicalType column_type;
 };
 
 //! The files of a snapshot, read from its manifest list and manifests
@@ -74,10 +85,17 @@ vector<IcebergFileEntry> ReadSnapshotFiles(ClientContext &context, const string 
 			file.path = data_file.Get("file_path").AsString();
 			auto &format = data_file.Get("file_format").AsString();
 			if (!StringUtil::CIEquals(format, "parquet")) {
-				throw Unsupported(StringUtil::Format("The file format %s of \"%s\" is not supported", format, file.path));
+				throw Unsupported(
+				    StringUtil::Format("The file format %s of \"%s\" is not supported", format, file.path));
 			}
 			file.record_count = NumericCast<idx_t>(data_file.Get("record_count").AsLong());
 			file.file_size = NumericCast<idx_t>(data_file.Get("file_size_in_bytes").AsLong());
+			auto &partition = data_file.TryGet("partition").Unwrap();
+			if (partition.kind == AvroValueKind::RECORD) {
+				for (auto &field : partition.children) {
+					file.partition.push_back(field.Unwrap());
+				}
+			}
 			result.push_back(std::move(file));
 		}
 	}
@@ -87,6 +105,82 @@ vector<IcebergFileEntry> ReadSnapshotFiles(ClientContext &context, const string 
 //===--------------------------------------------------------------------===//
 // The state of a table
 //===--------------------------------------------------------------------===//
+//! The names of the keys of the partitions of DuckLake
+vector<string> PartitionKeyNames(const vector<PartitionLayoutField> &layout) {
+	vector<string> result;
+	case_insensitive_set_t used_names;
+	for (auto &field : layout) {
+		auto prefix = field.transform == "identity" ? field.column_name : field.transform;
+		string name = prefix;
+		if (used_names.find(name) != used_names.end()) {
+			string base_name = prefix + "_" + field.column_name;
+			name = base_name;
+			idx_t counter = 2;
+			while (used_names.find(name) != used_names.end()) {
+				name = base_name + "_" + to_string(counter++);
+			}
+		}
+		used_names.insert(name);
+		result.push_back(name);
+	}
+	return result;
+}
+
+//! The text of a value of a partition field of an Iceberg file, as DuckLake reads it from a partition key
+bool PartitionValueText(const AvroValue &value, const PartitionLayoutField &field, string &result) {
+	if (value.IsNull()) {
+		return false;
+	}
+	if (field.transform != "identity") {
+		result = to_string(value.AsLong());
+		return true;
+	}
+	switch (field.column_type.id()) {
+	case LogicalTypeId::DATE:
+		result = Value::DATE(date_t(NumericCast<int32_t>(value.AsLong()))).ToString();
+		return true;
+	case LogicalTypeId::TIME:
+		result = Value::TIME(dtime_t(value.AsLong())).ToString();
+		return true;
+	case LogicalTypeId::TIMESTAMP:
+		result = Value::TIMESTAMP(timestamp_t(value.AsLong())).ToString();
+		return true;
+	case LogicalTypeId::TIMESTAMP_TZ:
+		result = Value::TIMESTAMPTZ(timestamp_tz_t(value.AsLong())).ToString();
+		return true;
+	case LogicalTypeId::BOOLEAN:
+		result = value.AsBool() ? "true" : "false";
+		return true;
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE:
+		result = Value::DOUBLE(value.AsDouble()).ToString();
+		return true;
+	case LogicalTypeId::UUID: {
+		auto &bytes = value.AsString();
+		if (bytes.size() != 16) {
+			return false;
+		}
+		hugeint_t uuid;
+		uuid.upper = 0;
+		uuid.lower = 0;
+		for (idx_t i = 0; i < 8; i++) {
+			uuid.upper = (uuid.upper << 8) | static_cast<uint8_t>(bytes[i]);
+			uuid.lower = (uuid.lower << 8) | static_cast<uint8_t>(bytes[8 + i]);
+		}
+		uuid.upper ^= static_cast<int64_t>(static_cast<uint64_t>(1) << 63);
+		result = UUID::ToString(uuid);
+		return true;
+	}
+	default:
+		if (value.Unwrap().kind == AvroValueKind::STRING) {
+			result = value.AsString();
+		} else {
+			result = to_string(value.AsLong());
+		}
+		return true;
+	}
+}
+
 struct LiveDataFile {
 	idx_t id;
 	string path;
@@ -123,7 +217,8 @@ private:
 	void ApplySchema(const IcebergSchema &target);
 	void DiffFields(const vector<IcebergField> &current, const vector<IcebergField> &target, const string &parent_path);
 	void ApplyPartitionSpec(const IcebergSchema &schema, RESTJsonIn spec);
-	void ApplySnapshot(const string &manifest_list_path);
+	void ApplySnapshot(const string &manifest_list_path, const vector<PartitionLayoutField> &layout);
+	vector<PartitionLayoutField> GetPartitionLayout();
 	vector<LiveDataFile> GetLiveFiles();
 	string ResolvePath(const string &path, bool relative) const;
 	string ColumnPath(const string &parent, const string &child) const;
@@ -152,9 +247,9 @@ void TableUpdate::Reload() {
 	}
 	table = request.FindTable(*schema, name);
 	if (!table) {
-		throw IcebergException(404, "NoSuchTableException",
-		                       StringUtil::Format("Table does not exist: %s.%s", IcebergUtil::NamespaceToString(ns),
-		                                          name));
+		throw IcebergException(
+		    404, "NoSuchTableException",
+		    StringUtil::Format("Table does not exist: %s.%s", IcebergUtil::NamespaceToString(ns), name));
 	}
 	IcebergTableExporter exporter(request);
 	state = exporter.GetState(*schema, *table);
@@ -184,7 +279,8 @@ void TableUpdate::CheckRequirements(RESTJsonIn requirements) {
 			}
 			if (expected.IsNull()) {
 				if (actual.IsValid()) {
-					throw CommitFailed(StringUtil::Format("Requirement failed: branch %s was created concurrently", ref));
+					throw CommitFailed(
+					    StringUtil::Format("Requirement failed: branch %s was created concurrently", ref));
 				}
 			} else if (!actual.IsValid() || actual.GetIndex() != expected.UInt()) {
 				throw CommitFailed(StringUtil::Format("Requirement failed: branch %s has changed: expected id %llu",
@@ -238,8 +334,8 @@ void TableUpdate::DiffFields(const vector<IcebergField> &current, const vector<I
 	// drop the fields that are gone
 	for (auto &field : current) {
 		if (!FindById(target, field.id)) {
-			request.Query(StringUtil::Format("ALTER TABLE %s DROP COLUMN %s", table_sql,
-			                                 ColumnPath(parent_path, field.name)));
+			request.Query(
+			    StringUtil::Format("ALTER TABLE %s DROP COLUMN %s", table_sql, ColumnPath(parent_path, field.name)));
 		}
 	}
 	for (auto &field : target) {
@@ -394,10 +490,10 @@ vector<LiveDataFile> TableUpdate::GetLiveFiles() {
 		index_by_id[file.id] = result.size();
 		result.push_back(std::move(file));
 	}
-	auto deletes = request.MetadataQuery(StringUtil::Format(
-	    "SELECT delete_file_id, data_file_id, path, path_is_relative, format FROM "
-	    "{METADATA_CATALOG}.ducklake_delete_file WHERE table_id = %d AND end_snapshot IS NULL",
-	    table->id.index));
+	auto deletes = request.MetadataQuery(
+	    StringUtil::Format("SELECT delete_file_id, data_file_id, path, path_is_relative, format FROM "
+	                       "{METADATA_CATALOG}.ducklake_delete_file WHERE table_id = %d AND end_snapshot IS NULL",
+	                       table->id.index));
 	for (auto &row : *deletes) {
 		auto entry = index_by_id.find(row.GetValue<idx_t>(1));
 		if (entry == index_by_id.end()) {
@@ -425,7 +521,7 @@ static set<idx_t> ReadPositions(IcebergRequest &request, const string &delete_pa
 	return positions;
 }
 
-void TableUpdate::ApplySnapshot(const string &manifest_list_path) {
+void TableUpdate::ApplySnapshot(const string &manifest_list_path, const vector<PartitionLayoutField> &layout) {
 	auto files = ReadSnapshotFiles(context, manifest_list_path);
 	auto live = GetLiveFiles();
 	map<string, idx_t> live_by_path;
@@ -433,14 +529,14 @@ void TableUpdate::ApplySnapshot(const string &manifest_list_path) {
 		live_by_path[NormalizePath(live[i].path)] = i;
 	}
 	set<string> wanted_data;
-	vector<string> added_paths;
+	vector<const IcebergFileEntry *> added_files;
 	vector<IcebergFileEntry> delete_entries;
 	for (auto &file : files) {
 		if (file.content == 0) {
 			auto path = NormalizePath(file.path);
 			wanted_data.insert(path);
 			if (live_by_path.find(path) == live_by_path.end()) {
-				added_paths.push_back(path);
+				added_files.push_back(&file);
 			}
 		} else if (file.content == 1) {
 			delete_entries.push_back(file);
@@ -460,8 +556,8 @@ void TableUpdate::ApplySnapshot(const string &manifest_list_path) {
 	map<string, vector<string>> delete_paths_of_file;
 	for (auto &entry : delete_entries) {
 		auto delete_path = ReadablePath(entry.path);
-		auto rows = request.Query(StringUtil::Format("SELECT file_path, pos FROM read_parquet(%s)",
-		                                             SQLString(delete_path)));
+		auto rows =
+		    request.Query(StringUtil::Format("SELECT file_path, pos FROM read_parquet(%s)", SQLString(delete_path)));
 		for (auto &row : *rows) {
 			auto data_path = NormalizePath(row.GetValue<string>(0));
 			wanted_deletes[data_path].insert(row.GetValue<idx_t>(1));
@@ -491,8 +587,14 @@ void TableUpdate::ApplySnapshot(const string &manifest_list_path) {
 		if (existing == deletes.second) {
 			continue;
 		}
-		WriteDeleteFileInput input {context,   *request.transaction, fs, IcebergUtil::StripTrailingSlash(table->path) + "/",
-		                            string(),  file.path,             deletes.second, DeleteFileSource::REGULAR};
+		WriteDeleteFileInput input {context,
+		                            *request.transaction,
+		                            fs,
+		                            IcebergUtil::StripTrailingSlash(table->path) + "/",
+		                            string(),
+		                            file.path,
+		                            deletes.second,
+		                            DeleteFileSource::REGULAR};
 		auto delete_file = DuckLakeDeleteFileWriter::WriteDeleteFile(context, input);
 		delete_file.data_file_id = DataFileIndex(file.id);
 		if (file.delete_file_id.IsValid()) {
@@ -514,27 +616,71 @@ void TableUpdate::ApplySnapshot(const string &manifest_list_path) {
 	if (!new_deletes.empty()) {
 		request.transaction->AddDeletes(table->id, std::move(new_deletes));
 	}
-	if (!added_paths.empty()) {
-		vector<string> literals;
-		for (auto &path : added_paths) {
-			literals.push_back(SQLString::ToString(path));
+	// the files are added one by one when they have partition values
+	auto key_names = PartitionKeyNames(layout);
+	vector<string> unpartitioned_paths;
+	for (auto file : added_files) {
+		auto path = SQLString::ToString(NormalizePath(file->path));
+		if (layout.empty()) {
+			unpartitioned_paths.push_back(path);
+			continue;
 		}
+		if (file->partition.size() != layout.size()) {
+			throw BadRequest(StringUtil::Format("The partition of the file \"%s\" does not match the partitioning of "
+			                                    "the table",
+			                                    file->path));
+		}
+		vector<string> keys, texts;
+		for (idx_t i = 0; i < layout.size(); i++) {
+			string text;
+			if (!PartitionValueText(file->partition[i], layout[i], text)) {
+				continue;
+			}
+			keys.push_back(SQLString::ToString(key_names[i]));
+			texts.push_back(SQLString::ToString(text));
+		}
+		request.Query(StringUtil::Format(
+		    "CALL ducklake_add_data_files(%s, %s, %s, schema => %s, allow_missing => true, ignore_extra_columns => "
+		    "true, hive_partitioning => false, partition_values => MAP([%s], [%s]))",
+		    SQLString::ToString(request.catalog_name), SQLString::ToString(name), path,
+		    SQLString::ToString(schema->name), StringUtil::Join(keys, ", "), StringUtil::Join(texts, ", ")));
+	}
+	if (!unpartitioned_paths.empty()) {
 		request.Query(StringUtil::Format(
 		    "CALL ducklake_add_data_files(%s, %s, [%s], schema => %s, allow_missing => true, ignore_extra_columns => "
 		    "true)",
-		    SQLString(request.catalog_name), SQLString(name), StringUtil::Join(literals, ", "),
-		    SQLString(schema->name)));
+		    SQLString::ToString(request.catalog_name), SQLString::ToString(name),
+		    StringUtil::Join(unpartitioned_paths, ", "), SQLString::ToString(schema->name)));
 	}
-}
-
-void TableUpdate::ApplyManifestList(const string &manifest_list_path) {
-	Reload();
-	ApplySnapshot(manifest_list_path);
 }
 
 //===--------------------------------------------------------------------===//
 // Updates
 //===--------------------------------------------------------------------===//
+vector<PartitionLayoutField> TableUpdate::GetPartitionLayout() {
+	vector<PartitionLayoutField> result;
+	auto layout = request.MetadataQuery(StringUtil::Format(
+	    "SELECT col.column_name, col.column_type, c.transform FROM {METADATA_CATALOG}.ducklake_partition_info p JOIN "
+	    "{METADATA_CATALOG}.ducklake_partition_column c ON p.partition_id = c.partition_id AND p.table_id = "
+	    "c.table_id JOIN {METADATA_CATALOG}.ducklake_column col ON col.table_id = c.table_id AND col.column_id = "
+	    "c.column_id AND col.end_snapshot IS NULL WHERE p.table_id = %d AND p.end_snapshot IS NULL ORDER BY "
+	    "c.partition_key_index",
+	    table->id.index));
+	for (auto &row : *layout) {
+		PartitionLayoutField field;
+		field.column_name = row.GetValue<string>(0);
+		field.column_type = DuckLakeTypes::FromString(row.GetValue<string>(1));
+		field.transform = row.GetValue<string>(2);
+		result.push_back(std::move(field));
+	}
+	return result;
+}
+
+void TableUpdate::ApplyManifestList(const string &manifest_list_path) {
+	Reload();
+	ApplySnapshot(manifest_list_path, GetPartitionLayout());
+}
+
 void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 	Reload();
 	CheckRequirements(requirements);
@@ -630,7 +776,8 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 		} else if (action == "set-snapshot-ref") {
 			auto ref_name = update.Str("ref-name");
 			if (ref_name != "main") {
-				throw Unsupported(StringUtil::Format("The reference \"%s\": only the main branch is supported", ref_name));
+				throw Unsupported(
+				    StringUtil::Format("The reference \"%s\": only the main branch is supported", ref_name));
 			}
 			main_snapshot = update.UInt("snapshot-id");
 		} else {
@@ -649,13 +796,32 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 	if (main_snapshot.IsValid()) {
 		auto entry = added_snapshot_lists.find(main_snapshot.GetIndex());
 		if (entry == added_snapshot_lists.end()) {
-			if (state.current_snapshot_id.IsValid() && state.current_snapshot_id.GetIndex() == main_snapshot.GetIndex()) {
+			if (state.current_snapshot_id.IsValid() &&
+			    state.current_snapshot_id.GetIndex() == main_snapshot.GetIndex()) {
 				// the branch stays where it is
 			} else {
 				throw Unsupported("Moving the main branch to an existing snapshot is not supported");
 			}
 		} else {
-			ApplySnapshot(entry->second);
+			vector<PartitionLayoutField> layout;
+			if (has_default_spec) {
+				auto &layout_schema = has_current_schema ? current_schema : state.schemas.back();
+				for (auto &field : default_spec.Get("fields").Items()) {
+					auto source = layout_schema.FindField(field.UInt("source-id"));
+					auto transform = field.Str("transform");
+					PartitionLayoutField layout_field;
+					layout_field.column_name = source->name;
+					layout_field.column_type = IcebergTypes::ToLogicalType(source->type);
+					layout_field.transform = transform == "identity" ? "identity" : "epoch_" + transform;
+					if (StringUtil::StartsWith(transform, "bucket[")) {
+						layout_field.transform = "bucket";
+					}
+					layout.push_back(std::move(layout_field));
+				}
+			} else {
+				layout = GetPartitionLayout();
+			}
+			ApplySnapshot(entry->second, layout);
 		}
 	}
 	if (!property_updates.empty() || !property_removals.empty()) {
@@ -700,8 +866,8 @@ void CreateTableFromSchema(IcebergRequest &request, const vector<string> &ns, co
 		}
 		columns.push_back(std::move(column));
 	}
-	request.Query(StringUtil::Format("CREATE TABLE %s (%s)", request.EntrySQL(ns, name),
-	                                 StringUtil::Join(columns, ", ")));
+	request.Query(
+	    StringUtil::Format("CREATE TABLE %s (%s)", request.EntrySQL(ns, name), StringUtil::Join(columns, ", ")));
 	request.InvalidateCatalogInfo();
 }
 
@@ -722,9 +888,9 @@ void IcebergTableEndpoints::CreateTable(IcebergRequest &request, const IcebergHt
 		                       StringUtil::Format("Namespace does not exist: %s", IcebergUtil::NamespaceToString(ns)));
 	}
 	if (request.FindTable(*schema, name) || request.FindView(*schema, name)) {
-		throw IcebergException(409, "AlreadyExistsException",
-		                       StringUtil::Format("Table already exists: %s.%s", IcebergUtil::NamespaceToString(ns),
-		                                          name));
+		throw IcebergException(
+		    409, "AlreadyExistsException",
+		    StringUtil::Format("Table already exists: %s.%s", IcebergUtil::NamespaceToString(ns), name));
 	}
 	auto iceberg_schema = IcebergTypes::SchemaFromJson(root.Get("schema"));
 	CreateTableFromSchema(request, ns, name, iceberg_schema);
@@ -734,7 +900,8 @@ void IcebergTableEndpoints::CreateTable(IcebergRequest &request, const IcebergHt
 		request.Query(StringUtil::Format("ALTER TABLE %s SET PARTITIONED BY (%s)", request.EntrySQL(ns, name),
 		                                 StringUtil::Join(expressions, ", ")));
 	}
-	IcebergProperties::SetInitialTableProperties(request, ns, name, IcebergUtil::ReadStringMap(root.TryGet("properties")));
+	IcebergProperties::SetInitialTableProperties(request, ns, name,
+	                                             IcebergUtil::ReadStringMap(root.TryGet("properties")));
 	response.body = RespondWithTable(request, ns, name, true);
 }
 
@@ -791,9 +958,9 @@ void IcebergTableEndpoints::RegisterTable(IcebergRequest &request, const Iceberg
 		                       StringUtil::Format("Namespace does not exist: %s", IcebergUtil::NamespaceToString(ns)));
 	}
 	if (request.FindTable(*schema, name) || request.FindView(*schema, name)) {
-		throw IcebergException(409, "AlreadyExistsException",
-		                       StringUtil::Format("Table already exists: %s.%s", IcebergUtil::NamespaceToString(ns),
-		                                          name));
+		throw IcebergException(
+		    409, "AlreadyExistsException",
+		    StringUtil::Format("Table already exists: %s.%s", IcebergUtil::NamespaceToString(ns), name));
 	}
 	auto metadata_text = IcebergUtil::ReadFile(*request.connection.context, ReadablePath(metadata_location));
 	RESTJsonReader metadata_reader(metadata_text);

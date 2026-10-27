@@ -22,8 +22,9 @@ static IcebergException NoSuchNamespace(const vector<string> &ns) {
 }
 
 static IcebergException NoSuchTable(const vector<string> &ns, const string &name) {
-	return IcebergException(404, "NoSuchTableException",
-	                        StringUtil::Format("Table does not exist: %s.%s", IcebergUtil::NamespaceToString(ns), name));
+	return IcebergException(
+	    404, "NoSuchTableException",
+	    StringUtil::Format("Table does not exist: %s.%s", IcebergUtil::NamespaceToString(ns), name));
 }
 
 static const DuckLakeSchemaInfo &GetNamespaceOrThrow(IcebergRequest &request, const vector<string> &ns) {
@@ -48,31 +49,30 @@ static bool IsHead(const IcebergHttpRequest &http) {
 // Config / OAuth
 //===--------------------------------------------------------------------===//
 static const vector<string> &SupportedEndpoints() {
-	static const vector<string> endpoints = {
-	    "GET /v1/{prefix}/namespaces",
-	    "POST /v1/{prefix}/namespaces",
-	    "GET /v1/{prefix}/namespaces/{namespace}",
-	    "HEAD /v1/{prefix}/namespaces/{namespace}",
-	    "DELETE /v1/{prefix}/namespaces/{namespace}",
-	    "POST /v1/{prefix}/namespaces/{namespace}/properties",
-	    "GET /v1/{prefix}/namespaces/{namespace}/tables",
-	    "POST /v1/{prefix}/namespaces/{namespace}/tables",
-	    "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
-	    "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}",
-	    "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}",
-	    "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}",
-	    "POST /v1/{prefix}/namespaces/{namespace}/register",
-	    "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics",
-	    "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials",
-	    "POST /v1/{prefix}/tables/rename",
-	    "POST /v1/{prefix}/transactions/commit",
-	    "GET /v1/{prefix}/namespaces/{namespace}/views",
-	    "POST /v1/{prefix}/namespaces/{namespace}/views",
-	    "GET /v1/{prefix}/namespaces/{namespace}/views/{view}",
-	    "HEAD /v1/{prefix}/namespaces/{namespace}/views/{view}",
-	    "POST /v1/{prefix}/namespaces/{namespace}/views/{view}",
-	    "DELETE /v1/{prefix}/namespaces/{namespace}/views/{view}",
-	    "POST /v1/{prefix}/views/rename"};
+	static const vector<string> endpoints = {"GET /v1/{prefix}/namespaces",
+	                                         "POST /v1/{prefix}/namespaces",
+	                                         "GET /v1/{prefix}/namespaces/{namespace}",
+	                                         "HEAD /v1/{prefix}/namespaces/{namespace}",
+	                                         "DELETE /v1/{prefix}/namespaces/{namespace}",
+	                                         "POST /v1/{prefix}/namespaces/{namespace}/properties",
+	                                         "GET /v1/{prefix}/namespaces/{namespace}/tables",
+	                                         "POST /v1/{prefix}/namespaces/{namespace}/tables",
+	                                         "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+	                                         "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+	                                         "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+	                                         "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+	                                         "POST /v1/{prefix}/namespaces/{namespace}/register",
+	                                         "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics",
+	                                         "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials",
+	                                         "POST /v1/{prefix}/tables/rename",
+	                                         "POST /v1/{prefix}/transactions/commit",
+	                                         "GET /v1/{prefix}/namespaces/{namespace}/views",
+	                                         "POST /v1/{prefix}/namespaces/{namespace}/views",
+	                                         "GET /v1/{prefix}/namespaces/{namespace}/views/{view}",
+	                                         "HEAD /v1/{prefix}/namespaces/{namespace}/views/{view}",
+	                                         "POST /v1/{prefix}/namespaces/{namespace}/views/{view}",
+	                                         "DELETE /v1/{prefix}/namespaces/{namespace}/views/{view}",
+	                                         "POST /v1/{prefix}/views/rename"};
 	return endpoints;
 }
 
@@ -339,7 +339,8 @@ static void RenameEntry(IcebergRequest &request, const IcebergHttpRequest &http,
 		}
 		throw NoSuchTable(source_ns, source_name);
 	}
-	if (request.FindTable(destination_schema, destination_name) || request.FindView(destination_schema, destination_name)) {
+	if (request.FindTable(destination_schema, destination_name) ||
+	    request.FindView(destination_schema, destination_name)) {
 		throw IcebergException(409, "AlreadyExistsException",
 		                       StringUtil::Format("Table or view already exists: %s", destination_name));
 	}

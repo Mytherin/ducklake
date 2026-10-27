@@ -9,8 +9,7 @@
 
 namespace duckdb {
 
-unique_ptr<IcebergInlinedExport> IcebergInlinedExport::Create(IcebergRequest &request,
-                                                              const DuckLakeTableInfo &table) {
+unique_ptr<IcebergInlinedExport> IcebergInlinedExport::Create(IcebergRequest &request, const DuckLakeTableInfo &table) {
 	unique_ptr<IcebergInlinedExport> result(new IcebergInlinedExport(request, table));
 	auto &mm = request.GetMetadataManager();
 	auto col_names = mm.InlinedColNames();
@@ -25,9 +24,9 @@ unique_ptr<IcebergInlinedExport> IcebergInlinedExport::Create(IcebergRequest &re
 		InlinedTable inlined_table;
 		inlined_table.name = entry.first;
 		inlined_table.schema_version = entry.second;
-		auto rows = request.MetadataQuery(StringUtil::Format(
-		    "SELECT %s, %s FROM {METADATA_CATALOG}.%s", col_names.begin_snapshot, col_names.end_snapshot,
-		    KeywordHelper::WriteOptionallyQuoted(entry.first)));
+		auto rows = request.MetadataQuery(StringUtil::Format("SELECT %s, %s FROM {METADATA_CATALOG}.%s",
+		                                                     col_names.begin_snapshot, col_names.end_snapshot,
+		                                                     KeywordHelper::WriteOptionallyQuoted(entry.first)));
 		for (auto &row : *rows) {
 			optional_idx end;
 			if (!row.IsNull(1)) {
@@ -53,7 +52,8 @@ unique_ptr<IcebergInlinedExport> IcebergInlinedExport::Create(IcebergRequest &re
 bool IcebergInlinedExport::HasRows(idx_t snapshot_id) const {
 	for (auto &inlined_table : tables) {
 		for (auto &lifetime : inlined_table.lifetimes) {
-			if (lifetime.first <= snapshot_id && (!lifetime.second.IsValid() || lifetime.second.GetIndex() > snapshot_id)) {
+			if (lifetime.first <= snapshot_id &&
+			    (!lifetime.second.IsValid() || lifetime.second.GetIndex() > snapshot_id)) {
 				return true;
 			}
 		}
@@ -98,7 +98,8 @@ vector<IcebergInlinedFile> IcebergInlinedExport::Materialize(idx_t snapshot_id,
 	for (auto &inlined_table : tables) {
 		idx_t visible = 0;
 		for (auto &lifetime : inlined_table.lifetimes) {
-			if (lifetime.first <= snapshot_id && (!lifetime.second.IsValid() || lifetime.second.GetIndex() > snapshot_id)) {
+			if (lifetime.first <= snapshot_id &&
+			    (!lifetime.second.IsValid() || lifetime.second.GetIndex() > snapshot_id)) {
 				visible++;
 			}
 		}
@@ -106,9 +107,8 @@ vector<IcebergInlinedFile> IcebergInlinedExport::Materialize(idx_t snapshot_id,
 			continue;
 		}
 		IcebergInlinedFile file;
-		file.path = IcebergUtil::JoinPath(
-		    directory, StringUtil::Format("inlined-%d-%d-%s.parquet", snapshot_id, inlined_table.schema_version,
-		                                  table.uuid));
+		file.path = IcebergUtil::JoinPath(directory, StringUtil::Format("inlined-%d-%d-%s.parquet", snapshot_id,
+		                                                                inlined_table.schema_version, table.uuid));
 		file.record_count = visible;
 		// the columns of the inlined table by name
 		auto description = request.MetadataQuery(StringUtil::Format(
@@ -132,12 +132,12 @@ vector<IcebergInlinedFile> IcebergInlinedExport::Materialize(idx_t snapshot_id,
 			    "COPY (SELECT %s FROM {METADATA_CATALOG}.%s WHERE %d >= %s AND (%d < %s OR %s IS NULL)) TO %s "
 			    "(FORMAT PARQUET, FIELD_IDS {%s})",
 			    StringUtil::Join(select_list, ", "), inlined_table.name, snapshot_id, col_names.begin_snapshot,
-			    snapshot_id, col_names.end_snapshot, col_names.end_snapshot, SQLString(file.path),
-			    FieldIdsOf(columns));
+			    snapshot_id, col_names.end_snapshot, col_names.end_snapshot, SQLString(file.path), FieldIdsOf(columns));
 			FileSystem::GetFileSystem(context).CreateDirectoriesRecursive(directory);
 			request.MetadataQuery(query);
 		}
-		file.file_size = FileSystem::GetFileSystem(context).OpenFile(file.path, FileOpenFlags::FILE_FLAGS_READ)->GetFileSize();
+		file.file_size =
+		    FileSystem::GetFileSystem(context).OpenFile(file.path, FileOpenFlags::FILE_FLAGS_READ)->GetFileSize();
 		result.push_back(std::move(file));
 	}
 	return result;
@@ -152,9 +152,9 @@ IcebergInlinedExport::MaterializeDeletes(idx_t snapshot_id, const map<idx_t, pai
 		auto data_file_id = entry.first;
 		auto &path = entry.second.first;
 		auto row_id_start = entry.second.second;
-		auto counted = request.MetadataQuery(StringUtil::Format(
-		    "SELECT COUNT(*) FROM {METADATA_CATALOG}.%s WHERE file_id = %d AND begin_snapshot <= %d", delete_table,
-		    data_file_id, snapshot_id));
+		auto counted = request.MetadataQuery(
+		    StringUtil::Format("SELECT COUNT(*) FROM {METADATA_CATALOG}.%s WHERE file_id = %d AND begin_snapshot <= %d",
+		                       delete_table, data_file_id, snapshot_id));
 		idx_t count = 0;
 		for (auto &row : *counted) {
 			count = row.GetValue<idx_t>(0);
@@ -170,12 +170,14 @@ IcebergInlinedExport::MaterializeDeletes(idx_t snapshot_id, const map<idx_t, pai
 		if (!IcebergUtil::FileExists(context, file.path)) {
 			auto query = StringUtil::Format(
 			    "COPY (SELECT %s AS file_path, row_id - %d AS pos FROM {METADATA_CATALOG}.%s WHERE file_id = %d AND "
-			    "begin_snapshot <= %d ORDER BY row_id) TO %s (FORMAT PARQUET)",
+			    "begin_snapshot <= %d ORDER BY row_id) TO %s (FORMAT PARQUET, FIELD_IDS {'file_path': "
+			    "2147483546, 'pos': 2147483545})",
 			    SQLString(path), row_id_start, delete_table, data_file_id, snapshot_id, SQLString(file.path));
 			FileSystem::GetFileSystem(context).CreateDirectoriesRecursive(directory);
 			request.MetadataQuery(query);
 		}
-		file.file_size = FileSystem::GetFileSystem(context).OpenFile(file.path, FileOpenFlags::FILE_FLAGS_READ)->GetFileSize();
+		file.file_size =
+		    FileSystem::GetFileSystem(context).OpenFile(file.path, FileOpenFlags::FILE_FLAGS_READ)->GetFileSize();
 		result.push_back(std::move(file));
 	}
 	return result;

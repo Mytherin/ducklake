@@ -10,8 +10,8 @@ void IcebergProperties::UpdateTableProperties(IcebergRequest &request, const Duc
                                               const map<string, string> &updates, const vector<string> &removals) {
 }
 
-void IcebergProperties::SetInitialTableProperties(IcebergRequest &request, const vector<string> &ns,
-                                                  const string &name, const map<string, string> &properties) {
+void IcebergProperties::SetInitialTableProperties(IcebergRequest &request, const vector<string> &ns, const string &name,
+                                                  const map<string, string> &properties) {
 }
 
 } // namespace duckdb
