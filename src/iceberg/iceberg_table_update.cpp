@@ -222,6 +222,8 @@ public:
 	void ApplyManifestList(const string &manifest_list_path);
 	//! The expressions of the partitioning of the table that a spec describes
 	static vector<string> PartitionExpressions(const IcebergSchema &schema, RESTJsonIn spec);
+	//! The expressions of the sort order of a table that a sort order describes
+	static vector<string> SortExpressions(const IcebergSchema &schema, RESTJsonIn order, string &signature);
 
 	PendingProperties &Pending() {
 		return pending;
@@ -239,6 +241,7 @@ private:
 	void ApplySchema(const IcebergSchema &target);
 	void DiffFields(const vector<IcebergField> &current, const vector<IcebergField> &target, const string &parent_path);
 	void ApplyPartitionSpec(const IcebergSchema &schema, RESTJsonIn spec);
+	void ApplySortOrder(const IcebergSchema &schema, bool has_order, RESTJsonIn order, int64_t order_id);
 	void ApplySnapshot(const string &manifest_list_path, const vector<PartitionLayoutField> &layout);
 	vector<PartitionLayoutField> GetPartitionLayout();
 	vector<LiveDataFile> GetLiveFiles();
@@ -334,7 +337,7 @@ void TableUpdate::CheckRequirements(RESTJsonIn requirements) {
 				throw CommitFailed("Requirement failed: default partition spec changed");
 			}
 		} else if (type == "assert-default-sort-order-id") {
-			if (requirement.UInt("default-sort-order-id") != 0) {
+			if (requirement.UInt("default-sort-order-id") != state.default_sort_order_id) {
 				throw CommitFailed("Requirement failed: default sort order changed");
 			}
 		} else {
@@ -448,6 +451,46 @@ vector<string> TableUpdate::PartitionExpressions(const IcebergSchema &schema_p, 
 		}
 	}
 	return expressions;
+}
+
+vector<string> TableUpdate::SortExpressions(const IcebergSchema &schema_p, RESTJsonIn order, string &signature) {
+	vector<string> expressions;
+	for (auto &field : order.Get("fields").Items()) {
+		if (field.Str("transform") != "identity") {
+			throw Unsupported(StringUtil::Format("The sort transform \"%s\" is not supported", field.Str("transform")));
+		}
+		auto source = schema_p.FindField(field.UInt("source-id"));
+		if (!source) {
+			throw BadRequest("The sort field refers to an unknown field");
+		}
+		bool descending = field.Str("direction") == "desc";
+		bool nulls_first = field.Str("null-order") == "nulls-first";
+		expressions.push_back(StringUtil::Format("%s %s %s", KeywordHelper::WriteQuoted(source->name, '"'),
+		                                         descending ? "DESC" : "ASC",
+		                                         nulls_first ? "NULLS FIRST" : "NULLS LAST"));
+		signature += StringUtil::Format("%s:%s:%s;", source->name, descending ? "desc" : "asc",
+		                                nulls_first ? "nulls-first" : "nulls-last");
+	}
+	return expressions;
+}
+
+void TableUpdate::ApplySortOrder(const IcebergSchema &schema_p, bool has_order, RESTJsonIn order, int64_t order_id) {
+	vector<string> expressions;
+	string signature;
+	if (has_order) {
+		expressions = SortExpressions(schema_p, order, signature);
+	} else if (order_id != 0) {
+		throw BadRequest(StringUtil::Format("Unknown sort order id %lld", order_id));
+	}
+	if (signature == state.sort_signature) {
+		return;
+	}
+	if (expressions.empty()) {
+		request.Query(StringUtil::Format("ALTER TABLE %s RESET SORTED BY", request.EntrySQL(ns, name)));
+	} else {
+		request.Query(StringUtil::Format("ALTER TABLE %s SET SORTED BY (%s)", request.EntrySQL(ns, name),
+		                                 StringUtil::Join(expressions, ", ")));
+	}
 }
 
 void TableUpdate::ApplyPartitionSpec(const IcebergSchema &schema_p, RESTJsonIn spec) {
@@ -733,11 +776,15 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 	IcebergSchema current_schema;
 	bool has_default_spec = false;
 	RESTJsonIn default_spec;
+	vector<RESTJsonIn> added_sort_orders;
+	bool has_sort_order = false;
+	bool has_added_sort_order = false;
+	RESTJsonIn sort_order;
+	int64_t sort_order_id = -1;
 	for (auto &update : updates.Items()) {
 		auto action = update.Str("action");
 		if (action == "assign-uuid" || action == "upgrade-format-version" || action == "set-location" ||
-		    action == "add-sort-order" || action == "set-default-sort-order" || action == "set-statistics" ||
-		    action == "remove-statistics" || action == "set-partition-statistics" ||
+		    action == "set-statistics" || action == "remove-statistics" || action == "set-partition-statistics" ||
 		    action == "remove-partition-statistics" || action == "remove-snapshots" ||
 		    action == "remove-partition-specs" || action == "remove-schemas" || action == "enable-row-lineage") {
 			// no equivalent in DuckLake: the history of DuckLake is managed with its snapshot functions
@@ -770,6 +817,27 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 					current_schema = known->second;
 					has_current_schema = true;
 				}
+			}
+		} else if (action == "add-sort-order") {
+			added_sort_orders.push_back(update.Get("sort-order"));
+		} else if (action == "set-default-sort-order") {
+			auto order_id = update.Int("sort-order-id");
+			has_sort_order = true;
+			if (order_id == -1) {
+				if (added_sort_orders.empty()) {
+					throw BadRequest("set-default-sort-order -1 without an added sort order");
+				}
+				sort_order = added_sort_orders.back();
+				has_added_sort_order = true;
+			} else {
+				has_added_sort_order = false;
+				for (auto &added : added_sort_orders) {
+					if (NumericCast<int64_t>(added.UInt("order-id")) == order_id) {
+						sort_order = added;
+						has_added_sort_order = true;
+					}
+				}
+				sort_order_id = order_id;
 			}
 		} else if (action == "add-spec") {
 			added_specs.push_back(update.Get("spec"));
@@ -833,6 +901,10 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 	}
 	if (has_current_schema) {
 		ApplySchema(current_schema);
+	}
+	if (has_sort_order) {
+		ApplySortOrder(has_current_schema ? current_schema : state.schemas.back(), has_added_sort_order, sort_order,
+		               sort_order_id);
 	}
 	if (has_default_spec) {
 		ApplyPartitionSpec(has_current_schema ? current_schema : state.schemas.back(), default_spec);
@@ -910,7 +982,7 @@ string RespondWithTable(IcebergRequest &request, const vector<string> &ns, const
 	IcebergTableExporter exporter(fresh);
 	auto load = exporter.Export(*schema, *table, "all");
 	fresh.connection.Rollback();
-	return IcebergLoadTableResponse(load, include_config, {});
+	return IcebergLoadTableResponse(load, include_config, request.server.TableConfig());
 }
 
 void CreateTableFromSchema(IcebergRequest &request, const vector<string> &ns, const string &name,
@@ -955,6 +1027,14 @@ void IcebergTableEndpoints::CreateTable(IcebergRequest &request, const IcebergHt
 	if (spec.IsObject() && spec.TryGet("fields").IsArray() && !spec.Get("fields").Items().empty()) {
 		auto expressions = TableUpdate::PartitionExpressions(iceberg_schema, spec);
 		request.Query(StringUtil::Format("ALTER TABLE %s SET PARTITIONED BY (%s)", request.EntrySQL(ns, name),
+		                                 StringUtil::Join(expressions, ", ")));
+	}
+	auto write_order = root.TryGet("write-order");
+	if (write_order.IsObject() && write_order.TryGet("fields").IsArray() &&
+	    !write_order.Get("fields").Items().empty()) {
+		string signature;
+		auto expressions = TableUpdate::SortExpressions(iceberg_schema, write_order, signature);
+		request.Query(StringUtil::Format("ALTER TABLE %s SET SORTED BY (%s)", request.EntrySQL(ns, name),
 		                                 StringUtil::Join(expressions, ", ")));
 	}
 	PendingProperties pending;

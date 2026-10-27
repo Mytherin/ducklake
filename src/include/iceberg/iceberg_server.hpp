@@ -164,6 +164,13 @@ public:
 		return snapshot_limit;
 	}
 	void SetClientProperties(map<string, string> defaults, map<string, string> overrides);
+	//! The properties that clients get with every table, e.g. the configuration of the storage of the table
+	void SetTableConfig(map<string, string> config) {
+		table_config = std::move(config);
+	}
+	const map<string, string> &TableConfig() const {
+		return table_config;
+	}
 	const map<string, string> &ClientDefaults() const {
 		return client_defaults;
 	}
@@ -196,6 +203,7 @@ private:
 	map<string, ServedCatalog> catalogs;
 	map<string, string> client_defaults;
 	map<string, string> client_overrides;
+	map<string, string> table_config;
 	string token;
 	string metadata_path;
 	idx_t snapshot_limit = 100;

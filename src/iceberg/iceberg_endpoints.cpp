@@ -337,7 +337,56 @@ static void LoadTable(IcebergRequest &request, const IcebergHttpRequest &http, I
 	}
 	IcebergTableExporter exporter(request);
 	auto load = exporter.Export(schema, *table, http.GetQuery("snapshots", "all"));
-	response.body = IcebergLoadTableResponse(load, true, {});
+	response.body = IcebergLoadTableResponse(load, true, request.server.TableConfig());
+}
+
+static string PlanResponse(const string &plan_id, const string &plan) {
+	// the plan is a JSON object with the tasks: the status and the id of the plan are added to it
+	return "{\"status\": \"completed\", \"plan-id\": " + IcebergUtil::JsonString(plan_id) + ", " +
+	       plan.substr(plan.find('{') + 1);
+}
+
+static void PlanTable(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
+	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
+	auto &name = http.path_values[1];
+	auto &schema = GetNamespaceOrThrow(request, ns);
+	auto table = request.FindTable(schema, name);
+	if (!table) {
+		throw NoSuchTable(ns, name);
+	}
+	auto body = IcebergUtil::ParseBody(http);
+	auto root = body->Root();
+	optional_idx snapshot_id;
+	if (root.Has("snapshot-id") && !root.TryGet("snapshot-id").IsNull()) {
+		snapshot_id = root.UInt("snapshot-id");
+	}
+	if (root.Has("start-snapshot-id") && !root.TryGet("start-snapshot-id").IsNull()) {
+		throw IcebergException(501, "NotImplementedException", "Incremental scans are not supported");
+	}
+	IcebergTableExporter exporter(request);
+	auto plan = exporter.PlanScan(schema, *table, snapshot_id);
+	auto plan_id = IcebergUtil::RandomUUID();
+	request.server.GetExportCache().PutPlan(plan_id, plan);
+	response.body = PlanResponse(plan_id, plan);
+}
+
+static void FetchPlan(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
+	string plan;
+	if (!request.server.GetExportCache().GetPlan(http.path_values[2], plan)) {
+		throw IcebergException(404, "NoSuchPlanIdException",
+		                       StringUtil::Format("The plan %s does not exist", http.path_values[2]));
+	}
+	response.body = PlanResponse(http.path_values[2], plan);
+}
+
+static void CancelPlan(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
+	request.server.GetExportCache().RemovePlan(http.path_values[2]);
+	response.status = 204;
+}
+
+static void FetchScanTasks(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
+	// the plans of this server are complete and have no plan tasks that could be fetched
+	throw IcebergException(404, "NoSuchPlanTaskException", "The plan task does not exist");
 }
 
 static void DropTable(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
@@ -403,9 +452,25 @@ static void ReportMetrics(IcebergRequest &request, const IcebergHttpRequest &htt
 }
 
 static void GetCredentials(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
+	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
+	auto &name = http.path_values[1];
+	auto &schema = GetNamespaceOrThrow(request, ns);
+	auto table = request.FindTable(schema, name);
+	if (!table) {
+		throw NoSuchTable(ns, name);
+	}
 	RESTJsonWriter writer;
-	auto root = writer.writer.CreateObject();
-	root.Add("storage-credentials", writer.writer.CreateArray());
+	auto &w = writer.writer;
+	auto root = w.CreateObject();
+	auto credentials = w.CreateArray();
+	auto &config = request.server.TableConfig();
+	if (!config.empty()) {
+		auto entry = w.CreateObject();
+		entry.AddString("prefix", IcebergUtil::StripTrailingSlash(table->path));
+		entry.Add("config", IcebergUtil::StringMap(w, config));
+		credentials.Append(entry);
+	}
+	root.Add("storage-credentials", credentials);
 	SetJson(response, writer, root);
 }
 
@@ -442,6 +507,10 @@ const vector<IcebergRoute> &IcebergEndpoints::GetRoutes() {
 		add("POST", "/namespaces/{namespace}/tables/{table}", IcebergTableEndpoints::UpdateTable);
 		add("DELETE", "/namespaces/{namespace}/tables/{table}", DropTable);
 		add("POST", "/namespaces/{namespace}/register", IcebergTableEndpoints::RegisterTable);
+		add("POST", "/namespaces/{namespace}/tables/{table}/plan", PlanTable);
+		add("GET", "/namespaces/{namespace}/tables/{table}/plan/{plan-id}", FetchPlan);
+		add("DELETE", "/namespaces/{namespace}/tables/{table}/plan/{plan-id}", CancelPlan);
+		add("POST", "/namespaces/{namespace}/tables/{table}/tasks", FetchScanTasks);
 		add("POST", "/namespaces/{namespace}/tables/{table}/metrics", ReportMetrics);
 		add("GET", "/namespaces/{namespace}/tables/{table}/credentials", GetCredentials);
 		add("POST", "/tables/rename", RenameTable);

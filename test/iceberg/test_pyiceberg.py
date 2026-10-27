@@ -10,6 +10,7 @@ if HAVE_PYICEBERG:
     from pyiceberg.exceptions import NamespaceAlreadyExistsError, NoSuchNamespaceError, NoSuchTableError
     from pyiceberg.partitioning import PartitionField, PartitionSpec
     from pyiceberg.schema import Schema
+    from pyiceberg.table.sorting import NullOrder, SortDirection, SortField, SortOrder
     from pyiceberg.transforms import BucketTransform, DayTransform, IdentityTransform
     from pyiceberg.types import DoubleType, LongType, NestedField, StringType, TimestampType
 
@@ -187,6 +188,26 @@ class PyIcebergTest(IcebergTestCase):
         registered = cat.register_table('g.reg', table.metadata_location)
         self.assertEqual(registered.scan().to_arrow().sort_by('id')['id'].to_pylist(), [5, 6])
         self.assertEqual(self.shell.sql('SELECT id FROM dl.g.reg ORDER BY id'), ['5', '6'])
+
+
+    def test_sort_order(self):
+        cat = self.catalog()
+        cat.create_namespace_if_not_exists('so')
+        schema = Schema(NestedField(1, 'id', LongType(), required=False), NestedField(2, 'v', StringType(), required=False))
+        order = SortOrder(SortField(source_id=2, transform=IdentityTransform(), direction=SortDirection.DESC,
+                                    null_order=NullOrder.NULLS_LAST))
+        table = cat.create_table('so.t', schema, sort_order=order)
+        self.assertEqual(len(table.sort_order().fields), 1)
+        self.assertEqual(table.sort_order().fields[0].direction, SortDirection.DESC)
+        self.assertEqual(self.shell.sql("SELECT expression, sort_direction FROM __ducklake_metadata_dl.ducklake_sort_expression"),
+                         ['v,DESC'])
+        with table.update_sort_order() as update:
+            update.asc("id", IdentityTransform())
+        table = cat.load_table('so.t')
+        self.assertEqual([f.source_id for f in table.sort_order().fields], [1])
+        self.assertEqual(self.shell.sql("SELECT expression, sort_direction FROM __ducklake_metadata_dl.ducklake_sort_expression "
+                                        "WHERE sort_id = (SELECT max(sort_id) FROM __ducklake_metadata_dl.ducklake_sort_info)"),
+                         ['id,ASC'])
 
 
 if __name__ == '__main__':

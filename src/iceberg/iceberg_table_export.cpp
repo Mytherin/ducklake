@@ -25,6 +25,32 @@ bool IcebergExportCache::Get(const string &key, IcebergExportedSnapshot &result)
 	return true;
 }
 
+bool IcebergExportCache::GetPlan(const string &plan_id, string &result) {
+	lock_guard<mutex> guard(lock);
+	auto entry = plans.find(plan_id);
+	if (entry == plans.end()) {
+		return false;
+	}
+	result = entry->second;
+	return true;
+}
+
+void IcebergExportCache::PutPlan(const string &plan_id, string plan) {
+	lock_guard<mutex> guard(lock);
+	plans[plan_id] = std::move(plan);
+	plan_order.push_back(plan_id);
+	// the plans are kept for a while
+	while (plan_order.size() > 100) {
+		plans.erase(plan_order.front());
+		plan_order.erase(plan_order.begin());
+	}
+}
+
+void IcebergExportCache::RemovePlan(const string &plan_id) {
+	lock_guard<mutex> guard(lock);
+	plans.erase(plan_id);
+}
+
 void IcebergExportCache::Put(const string &key, IcebergExportedSnapshot value) {
 	lock_guard<mutex> guard(lock);
 	entries[key] = std::move(value);
@@ -95,6 +121,13 @@ struct ExportSpecField {
 	idx_t key_index;
 };
 
+struct ExportSortField {
+	idx_t source_id;
+	string name;
+	bool descending;
+	bool nulls_first;
+};
+
 struct ExportSpec {
 	idx_t spec_id;
 	vector<ExportSpecField> fields;
@@ -112,8 +145,23 @@ struct ManifestItem {
 	const ExportDataFile *partition_source = nullptr;
 	const vector<ExportStats> *stats = nullptr;
 	vector<ExportStats> owned_stats;
+
+	const vector<ExportStats> *Stats() const {
+		return stats ? stats : (owned_stats.empty() ? nullptr : &owned_stats);
+	}
 	//! The data file that a delete file refers to
 	string referenced_path;
+};
+
+//! The files of a snapshot, by the spec of their partition
+struct GatheredItems {
+	vector<const ExportDataFile *> data_list;
+	vector<const ExportDeleteFile *> delete_list;
+	vector<IcebergInlinedFile> inlined_files;
+	vector<IcebergInlinedDeleteFile> inlined_deletes;
+	map<idx_t, vector<ManifestItem>> data_items;
+	map<idx_t, vector<ManifestItem>> delete_items;
+	idx_t delete_rows = 0;
 };
 
 struct ManifestSummary {
@@ -319,6 +367,34 @@ bool TextToValue(const string &text, const IcebergType &type, Value &result) {
 	}
 }
 
+//! The JSON representation of a single value in the Iceberg REST API
+JSONMutableValue TypedValueToJson(JSONWriter &w, const Value &value, const IcebergType &type) {
+	if (value.IsNull() || type.kind != IcebergType::Kind::PRIMITIVE) {
+		return w.CreateNull();
+	}
+	auto &name = type.primitive;
+	idx_t precision, scale;
+	if (name == "boolean") {
+		return w.CreateBoolean(BooleanValue::Get(value));
+	} else if (name == "int") {
+		return w.CreateSignedInteger(value.GetValue<int32_t>());
+	} else if (name == "long") {
+		return w.CreateSignedInteger(value.GetValue<int64_t>());
+	} else if (name == "float" || name == "double") {
+		return w.CreateDouble(value.GetValue<double>());
+	} else if (name == "timestamp") {
+		return w.CreateString(StringUtil::Replace(value.ToString(), " ", "T"));
+	} else if (name == "timestamptz") {
+		return w.CreateString(
+		    StringUtil::Replace(Value::TIMESTAMP(timestamp_t(value.GetValue<int64_t>())).ToString(), " ", "T") +
+		    "+00:00");
+	} else if (IcebergTypes::ParseDecimal(name, precision, scale) || name == "date" || name == "time" ||
+	           name == "string" || name == "uuid") {
+		return w.CreateString(value.ToString());
+	}
+	return w.CreateNull();
+}
+
 //===--------------------------------------------------------------------===//
 // Avro schemas
 //===--------------------------------------------------------------------===//
@@ -476,6 +552,9 @@ public:
 	IcebergTableLoad Run(const string &snapshots_mode);
 	//! Only computes the state that requirements are checked against, without writing files
 	bool state_only = false;
+	//! Computes the scan of a snapshot, which is returned as the metadata JSON of the load
+	bool plan_scan = false;
+	optional_idx plan_snapshot;
 
 private:
 	void LoadColumns();
@@ -491,6 +570,8 @@ private:
 	string WriteManifest(const vector<ManifestItem> &items, const ExportSpec &spec, idx_t snapshot_id,
 	                     const IcebergSchema &snapshot_schema, bool deletes, ManifestSummary &summary);
 	void ConvertDeleteFile(const ExportDeleteFile &file, const string &data_path, string &path, idx_t &file_size);
+	void GatherItems(idx_t snapshot_id, GatheredItems &out);
+	string BuildPlan(optional_idx requested_snapshot);
 	vector<const ExportDataFile *> VisibleDataFiles(idx_t snapshot_id);
 	vector<const ExportDeleteFile *> VisibleDeleteFiles(idx_t snapshot_id);
 	string FilePath(const string &path, bool relative_flag) const;
@@ -938,6 +1019,42 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 		}
 		partition_to_spec[partition.partition_id] = spec_id;
 	}
+	// the sort order: the expressions that are columns
+	vector<ExportSortField> sort_fields;
+	{
+		auto sort = request.MetadataQuery(StringUtil::Format(
+		    "SELECT e.expression, e.sort_direction, e.null_order FROM {METADATA_CATALOG}.ducklake_sort_info s JOIN "
+		    "{METADATA_CATALOG}.ducklake_sort_expression e ON s.sort_id = e.sort_id AND s.table_id = e.table_id WHERE "
+		    "s.table_id = %d AND s.end_snapshot IS NULL ORDER BY e.sort_key_index",
+		    table_id));
+		bool representable = true;
+		for (auto &row : *sort) {
+			auto expression = row.GetValue<string>(0);
+			if (expression.size() >= 2 && expression.front() == '"' && expression.back() == '"') {
+				expression = StringUtil::Replace(expression.substr(1, expression.size() - 2), "\"\"", "\"");
+			}
+			auto source = current_schema.FindTopLevelByName(expression);
+			if (!source || source->type.kind != IcebergType::Kind::PRIMITIVE) {
+				representable = false;
+				continue;
+			}
+			ExportSortField field;
+			field.source_id = source->id;
+			field.name = source->name;
+			field.descending = StringUtil::CIEquals(row.GetValue<string>(1), "DESC");
+			field.nulls_first = StringUtil::CIEquals(row.GetValue<string>(2), "NULLS_FIRST");
+			sort_fields.push_back(std::move(field));
+		}
+		if (!representable) {
+			sort_fields.clear();
+		}
+	}
+	string sort_signature;
+	for (auto &field : sort_fields) {
+		sort_signature += StringUtil::Format("%s:%s:%s;", field.name, field.descending ? "desc" : "asc",
+		                                     field.nulls_first ? "nulls-first" : "nulls-last");
+	}
+	idx_t default_sort_order_id = sort_fields.empty() ? 0 : 1;
 	idx_t default_spec_id = 0;
 	for (auto &partition : partitions) {
 		if (!partition.end.IsValid()) {
@@ -945,6 +1062,11 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 		}
 	}
 
+	if (plan_scan) {
+		IcebergTableLoad plan;
+		plan.metadata_json = BuildPlan(plan_snapshot);
+		return plan;
+	}
 	if (state_only) {
 		IcebergTableLoad state;
 		state.table_uuid = table.uuid;
@@ -956,6 +1078,8 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 			state.last_column_id = MaxValue<idx_t>(state.last_column_id, row.id);
 		}
 		state.default_spec_id = default_spec_id;
+		state.default_sort_order_id = default_sort_order_id;
+		state.sort_signature = sort_signature;
 		state.last_partition_id = field_ids_by_key.empty() ? 999 : 999 + field_ids_by_key.size();
 		state.last_sequence_number = chosen.empty() ? 0 : chosen.back();
 		state.schemas = schemas;
@@ -1056,12 +1180,27 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 	metadata.Add("snapshot-log", snapshot_log);
 	metadata.Add("metadata-log", w.CreateArray());
 	auto sort_orders = w.CreateArray();
-	auto sort_order = w.CreateObject();
-	sort_order.Add("order-id", w.CreateSignedInteger(0));
-	sort_order.Add("fields", w.CreateArray());
-	sort_orders.Append(sort_order);
+	auto unsorted = w.CreateObject();
+	unsorted.Add("order-id", w.CreateSignedInteger(0));
+	unsorted.Add("fields", w.CreateArray());
+	sort_orders.Append(unsorted);
+	if (!sort_fields.empty()) {
+		auto sort_order = w.CreateObject();
+		sort_order.Add("order-id", w.CreateSignedInteger(1));
+		auto fields_json = w.CreateArray();
+		for (auto &field : sort_fields) {
+			auto field_json = w.CreateObject();
+			field_json.AddString("transform", "identity");
+			field_json.Add("source-id", w.CreateSignedInteger(NumericCast<int64_t>(field.source_id)));
+			field_json.AddString("direction", field.descending ? "desc" : "asc");
+			field_json.AddString("null-order", field.nulls_first ? "nulls-first" : "nulls-last");
+			fields_json.Append(field_json);
+		}
+		sort_order.Add("fields", fields_json);
+		sort_orders.Append(sort_order);
+	}
 	metadata.Add("sort-orders", sort_orders);
-	metadata.Add("default-sort-order-id", w.CreateSignedInteger(0));
+	metadata.Add("default-sort-order-id", w.CreateSignedInteger(NumericCast<int64_t>(default_sort_order_id)));
 	auto refs = w.CreateObject();
 	if (!chosen.empty()) {
 		auto main = w.CreateObject();
@@ -1085,12 +1224,15 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 	IcebergTableLoad load;
 	load.metadata_json = writer.ToString();
 	load.table_uuid = table.uuid;
+	load.location = table_location;
 	if (!chosen.empty()) {
 		load.current_snapshot_id = chosen.back();
 	}
 	load.current_schema_id = current_schema_id;
 	load.last_column_id = last_column_id;
 	load.default_spec_id = default_spec_id;
+	load.default_sort_order_id = default_sort_order_id;
+	load.sort_signature = sort_signature;
 	load.last_partition_id = last_partition_id;
 	load.last_sequence_number = last_sequence_number;
 	load.schemas = schemas;
@@ -1229,8 +1371,8 @@ string TableExport::WriteManifest(const vector<ManifestItem> &items, const Expor
 			lower_values.push_back(item.referenced_path);
 			uppers.emplace_back(POSITION_DELETE_PATH_ID, 0);
 			upper_values.push_back(item.referenced_path);
-		} else if (item.stats) {
-			for (auto &stat : *item.stats) {
+		} else if (item.Stats()) {
+			for (auto &stat : *item.Stats()) {
 				auto field = snapshot_schema.FindField(stat.column_id);
 				if (!field || field->type.kind != IcebergType::Kind::PRIMITIVE) {
 					continue;
@@ -1351,23 +1493,15 @@ vector<const ExportDeleteFile *> TableExport::VisibleDeleteFiles(idx_t snapshot_
 	return result;
 }
 
-IcebergExportedSnapshot TableExport::ExportSnapshot(idx_t index) {
-	auto snapshot_id = chosen[index];
-	auto &server = request.server;
-	string previous_text = index > 0 ? to_string(chosen[index - 1]) : "none";
-	auto cache_key = StringUtil::Format("%s:%d:%s:%d", metadata_dir, snapshot_id, previous_text,
-	                                    inlined->HasRows(snapshot_id) ? 1 : 0);
-	IcebergExportedSnapshot result;
-	if (server.GetExportCache().Get(cache_key, result) && IcebergUtil::FileExists(context, result.manifest_list_path)) {
-		return result;
-	}
-	auto data_list = VisibleDataFiles(snapshot_id);
-	auto delete_list = VisibleDeleteFiles(snapshot_id);
-	auto &snapshot_schema = schemas[SchemaIdAt(snapshot_id)];
+void TableExport::GatherItems(idx_t snapshot_id, GatheredItems &out) {
+	auto &data_list = out.data_list;
+	auto &delete_list = out.delete_list;
+	data_list = VisibleDataFiles(snapshot_id);
+	delete_list = VisibleDeleteFiles(snapshot_id);
 	LoadStatsAndPartitionValues(data_list);
 
 	// the rows of the table that are inlined in the catalog are written to a file
-	vector<IcebergInlinedFile> inlined_files;
+	auto &inlined_files = out.inlined_files;
 	if (inlined->HasRows(snapshot_id)) {
 		inlined_files = inlined->Materialize(snapshot_id, ColumnsAt(snapshot_id), metadata_dir);
 	}
@@ -1376,7 +1510,8 @@ IcebergExportedSnapshot TableExport::ExportSnapshot(idx_t index) {
 	for (auto file : data_list) {
 		data_by_id[file->id] = file;
 	}
-	map<idx_t, vector<ManifestItem>> data_items, delete_items;
+	auto &data_items = out.data_items;
+	auto &delete_items = out.delete_items;
 	for (auto file : data_list) {
 		ManifestItem item;
 		item.begin = file->begin;
@@ -1396,11 +1531,10 @@ IcebergExportedSnapshot TableExport::ExportSnapshot(idx_t index) {
 		item.file_size = inlined_file.file_size;
 		item.partition_source = nullptr;
 		item.owned_stats = inlined_file.stats;
-		item.stats = &item.owned_stats;
 		data_items[0].push_back(std::move(item));
 	}
-	idx_t delete_rows = 0;
-	vector<IcebergInlinedDeleteFile> inlined_deletes;
+	idx_t &delete_rows = out.delete_rows;
+	auto &inlined_deletes = out.inlined_deletes;
 	if (inlined->HasDeletes(snapshot_id)) {
 		map<idx_t, pair<string, idx_t>> file_info;
 		for (auto file : data_list) {
@@ -1443,6 +1577,169 @@ IcebergExportedSnapshot TableExport::ExportSnapshot(idx_t index) {
 		delete_rows += file->delete_count;
 		delete_items[SpecOfPartition(data_file->second->partition_id).spec_id].push_back(std::move(item));
 	}
+}
+
+string TableExport::BuildPlan(optional_idx requested_snapshot) {
+	if (chosen.empty()) {
+		return "{\"file-scan-tasks\": [], \"delete-files\": []}";
+	}
+	idx_t snapshot_id = chosen.back();
+	if (requested_snapshot.IsValid()) {
+		snapshot_id = requested_snapshot.GetIndex();
+		if (std::find(chosen.begin(), chosen.end(), snapshot_id) == chosen.end()) {
+			throw IcebergException(404, "NoSuchSnapshotException",
+			                       StringUtil::Format("The snapshot %d does not exist", snapshot_id));
+		}
+	}
+	GatheredItems gathered;
+	GatherItems(snapshot_id, gathered);
+	auto &snapshot_schema = schemas[SchemaIdAt(snapshot_id)];
+	RESTJsonWriter writer;
+	auto &w = writer.writer;
+
+	auto counts_json = [&](const vector<pair<idx_t, JSONMutableValue>> &entries) {
+		auto result = w.CreateObject();
+		auto keys = w.CreateArray();
+		auto values = w.CreateArray();
+		for (auto &entry : entries) {
+			keys.Append(w.CreateSignedInteger(NumericCast<int64_t>(entry.first)));
+			values.Append(entry.second);
+		}
+		result.Add("keys", keys);
+		result.Add("values", values);
+		return result;
+	};
+	auto content_file = [&](const ManifestItem &item, idx_t spec_id, bool deletes) {
+		auto &spec = specs[spec_id];
+		auto file = w.CreateObject();
+		file.Add("spec-id", w.CreateSignedInteger(NumericCast<int64_t>(spec_id)));
+		file.AddString("content", deletes ? "position-deletes" : "data");
+		file.AddString("file-path", item.path);
+		file.AddString("file-format", "parquet");
+		auto partition = w.CreateArray();
+		auto values =
+		    item.partition_source ? file_partition_values.find(item.partition_source->id) : file_partition_values.end();
+		for (auto &spec_field : spec.fields) {
+			auto source = snapshot_schema.FindField(spec_field.source_id);
+			JSONMutableValue json = w.CreateNull();
+			if (values != file_partition_values.end() && source) {
+				auto entry = values->second.find(spec_field.key_index);
+				if (entry != values->second.end()) {
+					if (spec_field.transform == "identity") {
+						Value typed;
+						if (TextToValue(entry->second, source->type, typed)) {
+							json = TypedValueToJson(w, typed, source->type);
+						}
+					} else {
+						try {
+							json = w.CreateSignedInteger(std::stoll(entry->second));
+						} catch (...) {
+						}
+					}
+				}
+			}
+			partition.Append(json);
+		}
+		file.Add("partition", partition);
+		file.Add("file-size-in-bytes", w.CreateSignedInteger(NumericCast<int64_t>(item.file_size)));
+		file.Add("record-count", w.CreateSignedInteger(NumericCast<int64_t>(item.record_count)));
+		if (!deletes && item.Stats()) {
+			vector<pair<idx_t, JSONMutableValue>> sizes, value_counts, null_counts, lowers, uppers;
+			for (auto &stat : *item.Stats()) {
+				auto field = snapshot_schema.FindField(stat.column_id);
+				if (!field || field->type.kind != IcebergType::Kind::PRIMITIVE) {
+					continue;
+				}
+				if (stat.column_size.IsValid()) {
+					sizes.emplace_back(stat.column_id,
+					                   w.CreateSignedInteger(NumericCast<int64_t>(stat.column_size.GetIndex())));
+				}
+				if (stat.value_count.IsValid()) {
+					value_counts.emplace_back(stat.column_id,
+					                          w.CreateSignedInteger(NumericCast<int64_t>(stat.value_count.GetIndex())));
+				}
+				if (stat.null_count.IsValid()) {
+					null_counts.emplace_back(stat.column_id,
+					                         w.CreateSignedInteger(NumericCast<int64_t>(stat.null_count.GetIndex())));
+				}
+				if (stat.contains_nan) {
+					continue;
+				}
+				Value typed;
+				if (stat.has_min && TextToValue(stat.min_value, field->type, typed)) {
+					lowers.emplace_back(stat.column_id, TypedValueToJson(w, typed, field->type));
+				}
+				if (stat.has_max && TextToValue(stat.max_value, field->type, typed)) {
+					uppers.emplace_back(stat.column_id, TypedValueToJson(w, typed, field->type));
+				}
+			}
+			file.Add("column-sizes", counts_json(sizes));
+			file.Add("value-counts", counts_json(value_counts));
+			file.Add("null-value-counts", counts_json(null_counts));
+			file.Add("lower-bounds", counts_json(lowers));
+			file.Add("upper-bounds", counts_json(uppers));
+		}
+		if (!deletes) {
+			file.Add("sort-order-id", w.CreateSignedInteger(0));
+		}
+		return file;
+	};
+
+	// the delete files, and the data files that they apply to
+	auto delete_files = w.CreateArray();
+	map<string, vector<idx_t>> delete_references;
+	idx_t delete_index = 0;
+	for (auto &entry : gathered.delete_items) {
+		for (auto &item : entry.second) {
+			delete_files.Append(content_file(item, entry.first, true));
+			delete_references[item.referenced_path].push_back(delete_index++);
+		}
+	}
+	auto tasks = w.CreateArray();
+	for (auto &entry : gathered.data_items) {
+		for (auto &item : entry.second) {
+			auto task = w.CreateObject();
+			task.Add("data-file", content_file(item, entry.first, false));
+			auto references = delete_references.find(item.path);
+			if (references != delete_references.end()) {
+				auto reference_list = w.CreateArray();
+				for (auto reference : references->second) {
+					reference_list.Append(w.CreateSignedInteger(NumericCast<int64_t>(reference)));
+				}
+				task.Add("delete-file-references", reference_list);
+			}
+			auto residual = w.CreateBoolean(true);
+			task.Add("residual-filter", residual);
+			tasks.Append(task);
+		}
+	}
+	auto root = w.CreateObject();
+	root.Add("file-scan-tasks", tasks);
+	root.Add("delete-files", delete_files);
+	writer.SetRoot(root);
+	return writer.ToString();
+}
+
+IcebergExportedSnapshot TableExport::ExportSnapshot(idx_t index) {
+	auto snapshot_id = chosen[index];
+	auto &server = request.server;
+	string previous_text = index > 0 ? to_string(chosen[index - 1]) : "none";
+	auto cache_key = StringUtil::Format("%s:%d:%s:%d", metadata_dir, snapshot_id, previous_text,
+	                                    inlined->HasRows(snapshot_id) ? 1 : 0);
+	IcebergExportedSnapshot result;
+	if (server.GetExportCache().Get(cache_key, result) && IcebergUtil::FileExists(context, result.manifest_list_path)) {
+		return result;
+	}
+	GatheredItems gathered;
+	GatherItems(snapshot_id, gathered);
+	auto &data_list = gathered.data_list;
+	auto &delete_list = gathered.delete_list;
+	auto &inlined_files = gathered.inlined_files;
+	auto &inlined_deletes = gathered.inlined_deletes;
+	auto &data_items = gathered.data_items;
+	auto &delete_items = gathered.delete_items;
+	idx_t delete_rows = gathered.delete_rows;
+	auto &snapshot_schema = schemas[SchemaIdAt(snapshot_id)];
 
 	vector<AvroValue> list_records;
 	idx_t added_files = 0, added_rows = 0, total_rows = 0, total_size = 0, data_file_count = 0;
@@ -1568,6 +1865,14 @@ IcebergTableLoad IcebergTableExporter::Export(const DuckLakeSchemaInfo &schema, 
 	return table_export.Run(snapshots);
 }
 
+string IcebergTableExporter::PlanScan(const DuckLakeSchemaInfo &schema, const DuckLakeTableInfo &table,
+                                      optional_idx snapshot_id) {
+	TableExport table_export(request, schema, table);
+	table_export.plan_scan = true;
+	table_export.plan_snapshot = snapshot_id;
+	return table_export.Run("all").metadata_json;
+}
+
 IcebergTableLoad IcebergTableExporter::GetState(const DuckLakeSchemaInfo &schema, const DuckLakeTableInfo &table) {
 	TableExport table_export(request, schema, table);
 	table_export.state_only = true;
@@ -1581,6 +1886,18 @@ string IcebergLoadTableResponse(const IcebergTableLoad &load, bool include_confi
 		RESTJsonWriter writer;
 		writer.SetRoot(IcebergUtil::StringMap(writer.writer, config));
 		result += ", \"config\": " + writer.ToString();
+		if (!config.empty()) {
+			// the configuration is for the storage of the table
+			RESTJsonWriter credentials_writer;
+			auto &w = credentials_writer.writer;
+			auto credentials = w.CreateArray();
+			auto entry = w.CreateObject();
+			entry.AddString("prefix", load.location);
+			entry.Add("config", IcebergUtil::StringMap(w, config));
+			credentials.Append(entry);
+			credentials_writer.SetRoot(credentials);
+			result += ", \"storage-credentials\": " + credentials_writer.ToString();
+		}
 	}
 	return result + "}";
 }

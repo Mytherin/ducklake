@@ -602,6 +602,10 @@ static unique_ptr<FunctionData> DuckLakeIcebergServeBind(ClientContext &context,
 		}
 		server->SetSnapshotLimit(limit);
 	}
+	auto table_config_val = GetNamedParameter(input, "table_config");
+	if (!table_config_val.IsNull()) {
+		server->SetTableConfig(ToStringMap(table_config_val));
+	}
 	if (!defaults_val.IsNull() || !overrides_val.IsNull()) {
 		server->SetClientProperties(ToStringMap(defaults_val), ToStringMap(overrides_val));
 	}
@@ -652,6 +656,7 @@ DuckLakeIcebergServeFunction::DuckLakeIcebergServeFunction()
 		    .Add("prefix", LogicalType::VARCHAR)
 		    .Add("metadata_path", LogicalType::VARCHAR)
 		    .Add("snapshot_limit", LogicalType::UBIGINT)
+		    .Add("table_config", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))
 		    .Add("defaults", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR))
 		    .Add("overrides", LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR));
 	});

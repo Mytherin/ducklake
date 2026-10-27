@@ -150,6 +150,44 @@ class RestApiTest(IcebergTestCase):
         status, error = request('POST', self.base + '/transactions/commit', {'table-changes': changes})
         self.assertEqual(status, 409)
 
+    def test_scan_planning(self):
+        self.shell.sql('CREATE TABLE dl.main.planned(i INTEGER, s VARCHAR)')
+        self.shell.sql("INSERT INTO dl.main.planned SELECT i, 'v' || i FROM range(10) t(i)")
+        self.shell.sql('INSERT INTO dl.main.planned SELECT i, NULL FROM range(10, 15) t(i)')
+        self.shell.sql('DELETE FROM dl.main.planned WHERE i = 3')
+        url = self.base + '/namespaces/main/tables/planned/plan'
+        status, plan = request('POST', url, {})
+        self.assertEqual(status, 200)
+        self.assertEqual(plan['status'], 'completed')
+        tasks = plan['file-scan-tasks']
+        self.assertEqual(sum(task['data-file']['record-count'] for task in tasks), 15)
+        self.assertEqual(len(plan['delete-files']), 1)
+        self.assertEqual(plan['delete-files'][0]['content'], 'position-deletes')
+        with_deletes = [task for task in tasks if task.get('delete-file-references')]
+        self.assertEqual(len(with_deletes), 1)
+        self.assertEqual(with_deletes[0]['delete-file-references'], [0])
+        first = tasks[0]['data-file']
+        self.assertEqual(first['content'], 'data')
+        self.assertEqual(first['file-format'], 'parquet')
+        self.assertEqual(sorted(first['lower-bounds']['values'][:1]), [0])
+        # the plan can be fetched and removed
+        status, fetched = request('GET', url + '/' + plan['plan-id'])
+        self.assertEqual(status, 200)
+        self.assertEqual(fetched['file-scan-tasks'], tasks)
+        status, _ = request('DELETE', url + '/' + plan['plan-id'])
+        self.assertEqual(status, 204)
+        status, error = request('GET', url + '/' + plan['plan-id'])
+        self.assertEqual(status, 404)
+        # a scan of a snapshot of the history
+        status, error = request('POST', url, {'snapshot-id': 9999})
+        self.assertEqual(status, 404)
+        status, loaded = request('GET', self.base + '/namespaces/main/tables/planned')
+        first_snapshot = loaded['metadata']['snapshots'][0]['snapshot-id']
+        status, old = request('POST', url, {'snapshot-id': first_snapshot})
+        self.assertEqual(status, 200)
+        self.assertEqual(sum(task['data-file']['record-count'] for task in old['file-scan-tasks']), 10)
+        self.assertEqual(old['delete-files'], [])
+
     def test_views(self):
         self.shell.sql('CREATE TABLE dl.main.base(i INTEGER)')
         self.shell.sql('INSERT INTO dl.main.base VALUES (1), (2), (3)')
