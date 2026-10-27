@@ -3,6 +3,7 @@
 #include "common/ducklake_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "iceberg/iceberg_properties.hpp"
 #include "iceberg/iceberg_table_export.hpp"
 #include "iceberg/iceberg_table_update.hpp"
 #include "iceberg/iceberg_types.hpp"
@@ -168,7 +169,7 @@ static void NamespaceResponse(IcebergHttpResponse &response, const vector<string
 }
 
 static map<string, string> GetNamespaceProperties(IcebergRequest &request, const DuckLakeSchemaInfo &schema) {
-	map<string, string> result;
+	auto result = IcebergProperties::Get(request, IcebergProperties::NAMESPACE, schema.uuid);
 	result["location"] = IcebergUtil::StripTrailingSlash(schema.path);
 	return result;
 }
@@ -190,14 +191,25 @@ static void CreateNamespace(IcebergRequest &request, const IcebergHttpRequest &h
 		GetNamespaceOrThrow(request, parent);
 	}
 	request.Query("CREATE SCHEMA " + request.SchemaSQL(ns));
-	request.InvalidateCatalogInfo();
-	auto properties = IcebergUtil::ReadStringMap(root.TryGet("properties"));
-	auto created = request.FindSchema(ns);
-	map<string, string> result_properties;
-	if (created) {
-		result_properties = GetNamespaceProperties(request, *created);
+	request.Commit();
+	{
+		IcebergRequest lookup(request.server, request.db, request.catalog_name, request.prefix);
+		auto created = lookup.FindSchema(ns);
+		if (!created) {
+			throw NoSuchNamespace(ns);
+		}
+		auto properties = IcebergUtil::ReadStringMap(root.TryGet("properties"));
+		properties.erase("location");
+		IcebergProperties::Update(lookup, IcebergProperties::NAMESPACE, created->uuid, properties, vector<string>());
+		lookup.connection.Rollback();
 	}
-	NamespaceResponse(response, ns, result_properties);
+	IcebergRequest fresh(request.server, request.db, request.catalog_name, request.prefix);
+	auto created = fresh.FindSchema(ns);
+	if (!created) {
+		throw NoSuchNamespace(ns);
+	}
+	NamespaceResponse(response, ns, GetNamespaceProperties(fresh, *created));
+	fresh.connection.Rollback();
 }
 
 static void GetNamespace(IcebergRequest &request, const IcebergHttpRequest &http, IcebergHttpResponse &response) {
@@ -228,32 +240,55 @@ static void DropNamespace(IcebergRequest &request, const IcebergHttpRequest &htt
 		throw IcebergException(409, "NamespaceNotEmptyException",
 		                       StringUtil::Format("Namespace %s is not empty", IcebergUtil::NamespaceToString(ns)));
 	}
+	auto uuid = schema.uuid;
 	request.Query("DROP SCHEMA " + request.SchemaSQL(ns));
-	request.InvalidateCatalogInfo();
+	request.Commit();
+	// the properties of the namespace go with it
+	IcebergRequest fresh(request.server, request.db, request.catalog_name, request.prefix);
+	vector<string> keys;
+	for (auto &property : IcebergProperties::Get(fresh, IcebergProperties::NAMESPACE, uuid)) {
+		keys.push_back(property.first);
+	}
+	IcebergProperties::Update(fresh, IcebergProperties::NAMESPACE, uuid, map<string, string>(), keys);
+	fresh.connection.Rollback();
 	response.status = 204;
 }
 
 static void UpdateNamespaceProperties(IcebergRequest &request, const IcebergHttpRequest &http,
                                       IcebergHttpResponse &response) {
 	auto ns = IcebergUtil::ParseNamespace(http.path_values[0]);
-	GetNamespaceOrThrow(request, ns);
+	auto &schema = GetNamespaceOrThrow(request, ns);
 	auto body = IcebergUtil::ParseBody(http);
 	auto root = body->Root();
+	auto current = GetNamespaceProperties(request, schema);
+	auto updates = IcebergUtil::ReadStringMap(root.TryGet("updates"));
+	if (updates.find("location") != updates.end() && updates["location"] != current["location"]) {
+		throw IcebergException(400, "BadRequestException", "The location of a namespace cannot be changed");
+	}
+	updates.erase("location");
+	vector<string> removals;
 	RESTJsonWriter writer;
 	auto &w = writer.writer;
 	auto result = w.CreateObject();
 	auto updated = w.CreateArray();
-	for (auto &update : IcebergUtil::ReadStringMap(root.TryGet("updates"))) {
+	for (auto &update : updates) {
 		updated.AppendString(update.first);
 	}
 	auto removed = w.CreateArray();
 	auto missing = w.CreateArray();
-	auto removals = root.TryGet("removals");
-	if (removals.IsArray()) {
-		for (auto &removal : removals.Items()) {
-			missing.AppendString(removal.Str());
+	auto removal_list = root.TryGet("removals");
+	if (removal_list.IsArray()) {
+		for (auto &removal : removal_list.Items()) {
+			auto key = removal.Str();
+			if (current.find(key) != current.end() && key != "location") {
+				removed.AppendString(key);
+				removals.push_back(key);
+			} else {
+				missing.AppendString(key);
+			}
 		}
 	}
+	IcebergProperties::Update(request, IcebergProperties::NAMESPACE, schema.uuid, updates, removals);
 	result.Add("updated", updated);
 	result.Add("removed", removed);
 	result.Add("missing", missing);

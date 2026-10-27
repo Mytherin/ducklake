@@ -125,6 +125,69 @@ class PyIcebergTest(IcebergTestCase):
         table = cat.load_table('e.t')
         self.assertEqual([f.name for f in table.schema().fields], ['id', 'nm'])
 
+    def test_properties(self):
+        cat = self.catalog()
+        cat.create_namespace('pp', {'owner': 'me'})
+        self.assertEqual(cat.load_namespace_properties('pp')['owner'], 'me')
+        summary = cat.update_namespace_properties('pp', removals={'owner', 'missing'}, updates={'k': 'v'})
+        self.assertEqual(summary.removed, ['owner'])
+        self.assertEqual(summary.missing, ['missing'])
+        self.assertEqual(cat.load_namespace_properties('pp')['k'], 'v')
+        schema = pa.schema([('id', pa.int64())])
+        table = cat.create_table('pp.t', schema, properties={'a': 'b'})
+        self.assertEqual(table.properties, {'a': 'b'})
+        with table.transaction() as txn:
+            txn.set_properties({'c': 'd'})
+            txn.remove_properties('a')
+        self.assertEqual(cat.load_table('pp.t').properties, {'c': 'd'})
+
+    def test_tags_and_branches(self):
+        cat = self.catalog()
+        cat.create_namespace_if_not_exists('tags')
+        schema = pa.schema([('id', pa.int64())])
+        table = cat.create_table('tags.t', schema)
+        table.append(pa.table({'id': [1]}, schema=schema))
+        table.append(pa.table({'id': [2]}, schema=schema))
+        table = cat.load_table('tags.t')
+        snapshots = table.snapshots()
+        self.assertEqual(len(snapshots), 2)
+        table.manage_snapshots().create_tag(snapshots[0].snapshot_id, 'v1').commit()
+        table = cat.load_table('tags.t')
+        self.assertEqual(table.metadata.refs['v1'].snapshot_id, snapshots[0].snapshot_id)
+        self.assertEqual(table.scan(snapshot_id=snapshots[0].snapshot_id).to_arrow()['id'].to_pylist(), [1])
+        table.manage_snapshots().remove_tag('v1').commit()
+        self.assertNotIn('v1', cat.load_table('tags.t').metadata.refs)
+
+    def test_nested_namespaces(self):
+        cat = self.catalog()
+        cat.create_namespace(('a',))
+        cat.create_namespace(('a', 'b'))
+        self.assertEqual(cat.list_namespaces(('a',)), [('a', 'b')])
+        schema = pa.schema([('id', pa.int64())])
+        table = cat.create_table(('a', 'b', 't'), schema)
+        table.append(pa.table({'id': [1]}, schema=schema))
+        self.assertEqual(cat.load_table(('a', 'b', 't')).scan().to_arrow()['id'].to_pylist(), [1])
+        self.assertEqual(self.shell.sql('SELECT * FROM dl.a.b.t'), ['1'])
+
+    def test_create_table_transaction(self):
+        cat = self.catalog()
+        cat.create_namespace_if_not_exists('g')
+        schema = pa.schema([('id', pa.int64()), ('name', pa.string())])
+        with cat.create_table_transaction('g.staged', schema) as txn:
+            txn.append(pa.table({'id': [1, 2], 'name': ['a', 'b']}, schema=schema))
+        self.assertEqual(cat.load_table('g.staged').scan().to_arrow().sort_by('id')['id'].to_pylist(), [1, 2])
+
+    def test_register_table(self):
+        cat = self.catalog()
+        cat.create_namespace_if_not_exists('g')
+        schema = pa.schema([('id', pa.int64())])
+        table = cat.create_table('g.orig', schema)
+        table.append(pa.table({'id': [5, 6]}, schema=schema))
+        table = cat.load_table('g.orig')
+        registered = cat.register_table('g.reg', table.metadata_location)
+        self.assertEqual(registered.scan().to_arrow().sort_by('id')['id'].to_pylist(), [5, 6])
+        self.assertEqual(self.shell.sql('SELECT id FROM dl.g.reg ORDER BY id'), ['5', '6'])
+
 
 if __name__ == '__main__':
     unittest.main()

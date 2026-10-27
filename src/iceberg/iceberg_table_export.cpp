@@ -529,6 +529,9 @@ private:
 	map<idx_t, bool> inlined_visible;
 	unique_ptr<IcebergInlinedExport> inlined;
 	map<string, idx_t> field_ids_by_key;
+	//! The references (branches and tags) of the table by name, as JSON, and the snapshots they refer to
+	map<string, string> references;
+	set<idx_t> reference_snapshots;
 };
 
 string TableExport::FilePath(const string &path, bool relative) const {
@@ -732,6 +735,9 @@ void TableExport::ChooseSnapshots() {
 			candidates.insert(file.end.GetIndex());
 		}
 	}
+	for (auto snapshot : reference_snapshots) {
+		candidates.insert(snapshot);
+	}
 	for (auto candidate : candidates) {
 		if (candidate >= table_begin && candidate <= latest_snapshot) {
 			chosen.push_back(candidate);
@@ -768,7 +774,15 @@ void TableExport::ChooseSnapshots() {
 	chosen = std::move(valid);
 	auto limit = request.server.SnapshotLimit();
 	if (chosen.size() > limit) {
-		chosen.erase(chosen.begin(), chosen.begin() + NumericCast<int64_t>(chosen.size() - limit));
+		// the snapshots of the references stay
+		vector<idx_t> kept;
+		idx_t first_recent = chosen.size() - limit;
+		for (idx_t i = 0; i < chosen.size(); i++) {
+			if (i >= first_recent || reference_snapshots.find(chosen[i]) != reference_snapshots.end()) {
+				kept.push_back(chosen[i]);
+			}
+		}
+		chosen = std::move(kept);
 	}
 }
 
@@ -819,6 +833,15 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 		}
 	}
 	inlined = IcebergInlinedExport::Create(request, table);
+	for (auto &reference : IcebergProperties::Get(request, IcebergProperties::REFERENCE, table.uuid)) {
+		try {
+			RESTJsonReader reader(reference.second);
+			references[reference.first] = reference.second;
+			reference_snapshots.insert(reader.Root().UInt("snapshot-id"));
+		} catch (std::exception &) {
+			// a reference that cannot be read is left out
+		}
+	}
 	ChooseSnapshots();
 
 	// the schemas: a new one for every change of the columns
@@ -981,7 +1004,7 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 	metadata.Add("partition-specs", specs_json);
 	metadata.Add("default-spec-id", w.CreateSignedInteger(NumericCast<int64_t>(default_spec_id)));
 	metadata.Add("last-partition-id", w.CreateSignedInteger(NumericCast<int64_t>(last_partition_id)));
-	auto properties = IcebergProperties::GetTableProperties(request, table);
+	auto properties = IcebergProperties::Get(request, IcebergProperties::TABLE, table.uuid);
 	metadata.Add("properties", IcebergUtil::StringMap(w, properties));
 	if (chosen.empty()) {
 		metadata.Add("current-snapshot-id", w.CreateSignedInteger(-1));
@@ -1035,6 +1058,14 @@ IcebergTableLoad TableExport::Run(const string &snapshots_mode) {
 		main.Add("snapshot-id", w.CreateSignedInteger(NumericCast<int64_t>(chosen.back())));
 		main.AddString("type", "branch");
 		refs.Add("main", main);
+	}
+	for (auto &reference : references) {
+		RESTJsonReader reader(reference.second);
+		auto snapshot_id = reader.Root().UInt("snapshot-id");
+		if (reference.first == "main" || std::find(chosen.begin(), chosen.end(), snapshot_id) == chosen.end()) {
+			continue;
+		}
+		refs.Add(reference.first, w.CreateCopy(reader.Root().val));
 	}
 	metadata.Add("refs", refs);
 	metadata.Add("statistics", w.CreateArray());

@@ -105,6 +105,16 @@ vector<IcebergFileEntry> ReadSnapshotFiles(ClientContext &context, const string 
 //===--------------------------------------------------------------------===//
 // The state of a table
 //===--------------------------------------------------------------------===//
+//! The schema argument of the table functions of DuckLake for a namespace: the levels are separated by dots, a dot in
+//! a name is written twice
+string SchemaFunctionArgument(const vector<string> &ns) {
+	vector<string> levels;
+	for (auto &level : ns) {
+		levels.push_back(StringUtil::Replace(level, ".", ".."));
+	}
+	return StringUtil::Join(levels, ".");
+}
+
 //! The names of the keys of the partitions of DuckLake
 vector<string> PartitionKeyNames(const vector<PartitionLayoutField> &layout) {
 	vector<string> result;
@@ -191,6 +201,15 @@ struct LiveDataFile {
 	string delete_format;
 };
 
+//! The properties and references that a request sets, which are written after the commit
+struct PendingProperties {
+	string table_uuid;
+	map<string, string> properties;
+	vector<string> property_removals;
+	map<string, string> references;
+	vector<string> reference_removals;
+};
+
 class TableUpdate {
 public:
 	TableUpdate(IcebergRequest &request_p, vector<string> ns_p, string name_p)
@@ -204,6 +223,9 @@ public:
 	//! The expressions of the partitioning of the table that a spec describes
 	static vector<string> PartitionExpressions(const IcebergSchema &schema, RESTJsonIn spec);
 
+	PendingProperties &Pending() {
+		return pending;
+	}
 	const vector<string> &Namespace() const {
 		return ns;
 	}
@@ -231,6 +253,7 @@ private:
 	optional_ptr<const DuckLakeSchemaInfo> schema;
 	optional_ptr<const DuckLakeTableInfo> table;
 	IcebergTableLoad state;
+	PendingProperties pending;
 };
 
 string TableUpdate::ColumnPath(const string &parent, const string &child) const {
@@ -253,6 +276,7 @@ void TableUpdate::Reload() {
 	}
 	IcebergTableExporter exporter(request);
 	state = exporter.GetState(*schema, *table);
+	pending.table_uuid = table->uuid;
 }
 
 void TableUpdate::CheckRequirements(RESTJsonIn requirements) {
@@ -276,6 +300,13 @@ void TableUpdate::CheckRequirements(RESTJsonIn requirements) {
 			optional_idx actual;
 			if (ref == "main") {
 				actual = state.current_snapshot_id;
+			} else {
+				auto references = IcebergProperties::Get(request, IcebergProperties::REFERENCE, state.table_uuid);
+				auto entry = references.find(ref);
+				if (entry != references.end()) {
+					RESTJsonReader reader(entry->second);
+					actual = reader.Root().UInt("snapshot-id");
+				}
 			}
 			if (expected.IsNull()) {
 				if (actual.IsValid()) {
@@ -643,14 +674,15 @@ void TableUpdate::ApplySnapshot(const string &manifest_list_path, const vector<P
 		    "CALL ducklake_add_data_files(%s, %s, %s, schema => %s, allow_missing => true, ignore_extra_columns => "
 		    "true, hive_partitioning => false, partition_values => MAP([%s], [%s]))",
 		    SQLString::ToString(request.catalog_name), SQLString::ToString(name), path,
-		    SQLString::ToString(schema->name), StringUtil::Join(keys, ", "), StringUtil::Join(texts, ", ")));
+		    SQLString::ToString(SchemaFunctionArgument(ns)), StringUtil::Join(keys, ", "),
+		    StringUtil::Join(texts, ", ")));
 	}
 	if (!unpartitioned_paths.empty()) {
 		request.Query(StringUtil::Format(
 		    "CALL ducklake_add_data_files(%s, %s, [%s], schema => %s, allow_missing => true, ignore_extra_columns => "
 		    "true)",
 		    SQLString::ToString(request.catalog_name), SQLString::ToString(name),
-		    StringUtil::Join(unpartitioned_paths, ", "), SQLString::ToString(schema->name)));
+		    StringUtil::Join(unpartitioned_paths, ", "), SQLString::ToString(SchemaFunctionArgument(ns))));
 	}
 }
 
@@ -693,8 +725,6 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 		known_schemas[known.schema_id] = known;
 	}
 	vector<RESTJsonIn> added_specs;
-	map<string, string> property_updates;
-	vector<string> property_removals;
 	optional_idx main_snapshot;
 	map<idx_t, string> added_snapshot_lists;
 	optional_idx last_added_snapshot;
@@ -709,8 +739,7 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 		    action == "add-sort-order" || action == "set-default-sort-order" || action == "set-statistics" ||
 		    action == "remove-statistics" || action == "set-partition-statistics" ||
 		    action == "remove-partition-statistics" || action == "remove-snapshots" ||
-		    action == "remove-snapshot-ref" || action == "remove-partition-specs" || action == "remove-schemas" ||
-		    action == "enable-row-lineage") {
+		    action == "remove-partition-specs" || action == "remove-schemas" || action == "enable-row-lineage") {
 			// no equivalent in DuckLake: the history of DuckLake is managed with its snapshot functions
 			continue;
 		} else if (action == "add-schema") {
@@ -762,22 +791,40 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 			}
 		} else if (action == "set-properties") {
 			for (auto &entry : IcebergUtil::ReadStringMap(update.Get("updates"))) {
-				property_updates[entry.first] = entry.second;
+				pending.properties[entry.first] = entry.second;
 			}
 		} else if (action == "remove-properties") {
 			for (auto &removal : update.Get("removals").Items()) {
-				property_removals.push_back(removal.Str());
+				pending.property_removals.push_back(removal.Str());
 			}
 		} else if (action == "add-snapshot") {
 			auto snapshot = update.Get("snapshot");
 			auto snapshot_id = snapshot.UInt("snapshot-id");
 			added_snapshot_lists[snapshot_id] = snapshot.Str("manifest-list");
 			last_added_snapshot = snapshot_id;
+		} else if (action == "remove-snapshot-ref") {
+			auto ref_name = update.Str("ref-name");
+			if (ref_name == "main") {
+				throw BadRequest("The main branch cannot be removed");
+			}
+			pending.reference_removals.push_back(ref_name);
 		} else if (action == "set-snapshot-ref") {
 			auto ref_name = update.Str("ref-name");
 			if (ref_name != "main") {
-				throw Unsupported(
-				    StringUtil::Format("The reference \"%s\": only the main branch is supported", ref_name));
+				// a reference to a snapshot of the table: new snapshots can only be added to the main branch
+				RESTJsonWriter ref_writer;
+				auto &w = ref_writer.writer;
+				auto ref = w.CreateObject();
+				ref.Add("snapshot-id", w.CreateSignedInteger(NumericCast<int64_t>(update.UInt("snapshot-id"))));
+				ref.AddString("type", update.Str("type", "branch"));
+				for (auto &key : {"min-snapshots-to-keep", "max-snapshot-age-ms", "max-ref-age-ms"}) {
+					if (update.Has(key) && !update.TryGet(key).IsNull()) {
+						ref.Add(key, w.CreateSignedInteger(update.Int(key)));
+					}
+				}
+				ref_writer.SetRoot(ref);
+				pending.references[ref_name] = ref_writer.ToString();
+				continue;
 			}
 			main_snapshot = update.UInt("snapshot-id");
 		} else {
@@ -824,14 +871,24 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 			ApplySnapshot(entry->second, layout);
 		}
 	}
-	if (!property_updates.empty() || !property_removals.empty()) {
-		IcebergProperties::UpdateTableProperties(request, *table, property_updates, property_removals);
-	}
 }
 
 //! Commits the transaction of the request and loads the table in a transaction of its own
-string RespondWithTable(IcebergRequest &request, const vector<string> &ns, const string &name, bool include_config) {
+string RespondWithTable(IcebergRequest &request, const vector<string> &ns, const string &name, bool include_config,
+                        PendingProperties *pending = nullptr) {
 	request.Commit();
+	if (pending) {
+		IcebergRequest lookup(request.server, request.db, request.catalog_name, request.prefix);
+		auto schema = lookup.FindSchema(ns);
+		auto table = schema ? lookup.FindTable(*schema, name) : nullptr;
+		if (table) {
+			IcebergProperties::Update(lookup, IcebergProperties::TABLE, table->uuid, pending->properties,
+			                          pending->property_removals);
+			IcebergProperties::Update(lookup, IcebergProperties::REFERENCE, table->uuid, pending->references,
+			                          pending->reference_removals);
+		}
+		lookup.connection.Rollback();
+	}
 	IcebergRequest fresh(request.server, request.db, request.catalog_name, request.prefix);
 	auto schema = fresh.FindSchema(ns);
 	if (!schema) {
@@ -900,9 +957,9 @@ void IcebergTableEndpoints::CreateTable(IcebergRequest &request, const IcebergHt
 		request.Query(StringUtil::Format("ALTER TABLE %s SET PARTITIONED BY (%s)", request.EntrySQL(ns, name),
 		                                 StringUtil::Join(expressions, ", ")));
 	}
-	IcebergProperties::SetInitialTableProperties(request, ns, name,
-	                                             IcebergUtil::ReadStringMap(root.TryGet("properties")));
-	response.body = RespondWithTable(request, ns, name, true);
+	PendingProperties pending;
+	pending.properties = IcebergUtil::ReadStringMap(root.TryGet("properties"));
+	response.body = RespondWithTable(request, ns, name, true, &pending);
 }
 
 void IcebergTableEndpoints::UpdateTable(IcebergRequest &request, const IcebergHttpRequest &http,
@@ -914,7 +971,7 @@ void IcebergTableEndpoints::UpdateTable(IcebergRequest &request, const IcebergHt
 	lock_guard<mutex> guard(request.server.TableLock(IcebergUtil::NamespaceToString(ns) + "." + name));
 	TableUpdate update(request, ns, name);
 	update.Apply(root.TryGet("requirements"), root.TryGet("updates"));
-	response.body = RespondWithTable(request, ns, name, false);
+	response.body = RespondWithTable(request, ns, name, false, &update.Pending());
 }
 
 void IcebergTableEndpoints::CommitTransaction(IcebergRequest &request, const IcebergHttpRequest &http,
@@ -942,6 +999,13 @@ void IcebergTableEndpoints::CommitTransaction(IcebergRequest &request, const Ice
 		updates.push_back(std::move(update));
 	}
 	request.Commit();
+	for (auto &update : updates) {
+		auto &pending = update->Pending();
+		IcebergProperties::Update(request, IcebergProperties::TABLE, pending.table_uuid, pending.properties,
+		                          pending.property_removals);
+		IcebergProperties::Update(request, IcebergProperties::REFERENCE, pending.table_uuid, pending.references,
+		                          pending.reference_removals);
+	}
 	response.status = 204;
 }
 

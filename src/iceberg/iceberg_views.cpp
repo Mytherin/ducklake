@@ -2,6 +2,7 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "iceberg/iceberg_properties.hpp"
 #include "iceberg/iceberg_types.hpp"
 #include "iceberg/iceberg_util.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
@@ -145,7 +146,8 @@ string ViewMetadata(IcebergRequest &request, const vector<string> &ns, const Duc
 	log_entry.Add("version-id", w.CreateSignedInteger(1));
 	version_log.Append(log_entry);
 	metadata.Add("version-log", version_log);
-	metadata.Add("properties", w.CreateObject());
+	metadata.Add("properties",
+	             IcebergUtil::StringMap(w, IcebergProperties::Get(request, IcebergProperties::VIEW, view.uuid)));
 	writer.SetRoot(metadata);
 	auto text = writer.ToString();
 	auto &server = request.server;
@@ -245,6 +247,17 @@ void IcebergViewEndpoints::CreateView(IcebergRequest &request, const IcebergHttp
 	auto sql = GetViewSQL(root.Get("view-version"), dialect);
 	request.Query(StringUtil::Format("CREATE VIEW %s AS %s", request.EntrySQL(ns, name), sql));
 	request.Commit();
+	{
+		IcebergRequest lookup(request.server, request.db, request.catalog_name, request.prefix);
+		auto &lookup_schema = GetSchemaOrThrow(lookup, ns);
+		auto view = lookup.FindView(lookup_schema, name);
+		if (!view) {
+			throw NoSuchView(ns, name);
+		}
+		IcebergProperties::Update(lookup, IcebergProperties::VIEW, view->uuid,
+		                          IcebergUtil::ReadStringMap(root.TryGet("properties")), vector<string>());
+		lookup.connection.Rollback();
+	}
 	IcebergRequest fresh(request.server, request.db, request.catalog_name, request.prefix);
 	auto &fresh_schema = GetSchemaOrThrow(fresh, ns);
 	auto view = fresh.FindView(fresh_schema, name);
@@ -274,7 +287,21 @@ void IcebergViewEndpoints::ReplaceView(IcebergRequest &request, const IcebergHtt
 		}
 	}
 	auto updates = root.TryGet("updates");
+	map<string, string> property_updates;
+	vector<string> property_removals;
 	if (updates.IsArray()) {
+		for (auto &update : updates.Items()) {
+			auto action = update.Str("action");
+			if (action == "set-properties") {
+				for (auto &entry : IcebergUtil::ReadStringMap(update.Get("updates"))) {
+					property_updates[entry.first] = entry.second;
+				}
+			} else if (action == "remove-properties") {
+				for (auto &removal : update.Get("removals").Items()) {
+					property_removals.push_back(removal.Str());
+				}
+			}
+		}
 		map<int64_t, RESTJsonIn> versions;
 		optional_idx current_version;
 		int64_t last_added = -1;
@@ -302,6 +329,16 @@ void IcebergViewEndpoints::ReplaceView(IcebergRequest &request, const IcebergHtt
 		}
 	}
 	request.Commit();
+	{
+		IcebergRequest lookup(request.server, request.db, request.catalog_name, request.prefix);
+		auto &lookup_schema = GetSchemaOrThrow(lookup, ns);
+		auto updated = lookup.FindView(lookup_schema, name);
+		if (!updated) {
+			throw NoSuchView(ns, name);
+		}
+		IcebergProperties::Update(lookup, IcebergProperties::VIEW, updated->uuid, property_updates, property_removals);
+		lookup.connection.Rollback();
+	}
 	IcebergRequest fresh(request.server, request.db, request.catalog_name, request.prefix);
 	auto &fresh_schema = GetSchemaOrThrow(fresh, ns);
 	auto updated = fresh.FindView(fresh_schema, name);
