@@ -738,10 +738,20 @@ void TableExport::ChooseSnapshots() {
 	for (auto snapshot : reference_snapshots) {
 		candidates.insert(snapshot);
 	}
+	// snapshots that were expired are gone
+	set<idx_t> existing_snapshots;
+	for (auto &snapshot : all_snapshots) {
+		existing_snapshots.insert(snapshot.id);
+	}
 	for (auto candidate : candidates) {
-		if (candidate >= table_begin && candidate <= latest_snapshot) {
+		if (candidate >= table_begin && candidate <= latest_snapshot &&
+		    existing_snapshots.find(candidate) != existing_snapshots.end()) {
 			chosen.push_back(candidate);
 		}
+	}
+	if (chosen.empty() && !data_files.empty()) {
+		// every snapshot that changed the files was expired: the latest snapshot has the files
+		chosen.push_back(latest_snapshot);
 	}
 	// the snapshots in which the files are only partially visible cannot be expressed
 	vector<idx_t> valid;
