@@ -173,7 +173,7 @@ bind shapes to the C++ classes of DuckLake; they do not change the JSON of the A
 | `double`       | `Double`         | a number                                                                     |
 | `path`         | `DataPath`       | a path of a file or directory, which clients map between their data path and the data path of the server |
 | `timestamp`    | `Timestamp`      | a timestamp with time zone as a string, e.g. `"2025-01-01 00:00:00+00"`      |
-| `text`         | `Text`           | a value as a string, with the text of a value of DuckLake; the member is absent for `NULL` |
+| `text`         | `Text`           | a value as a string, in the [text format of DuckLake](https://ducklake.select/docs/stable/specification/data_types#type-encoding-for-statistics); the member is absent for `NULL` |
 | `logical_type` | `LogicalType`    | a [type](#types)                                                             |
 | `json`         | `Document`       | any JSON value, specified by the description                                 |
 | `list of T`    | `list`           | an array                                                                     |

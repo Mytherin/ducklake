@@ -107,7 +107,8 @@ long UInt64
 @wireType("timestamp")
 string Timestamp
 
-/// A value as text, which is the text of the value of a column of DuckLake. It is absent if the value is `NULL`.
+/// A value as text, in the [text format of DuckLake](https://ducklake.select/docs/stable/specification/data_types#type-encoding-for-statistics).
+/// It is absent if the value is `NULL`.
 @wireType("text")
 string Text
 
