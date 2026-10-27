@@ -930,7 +930,7 @@ A delete file written by a client, which replaces the previous delete file of it
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `data_file_id` | `uint64` (optional) | The data file whose rows are deleted. |
+| `data_file_id` | `uint64` (optional) | The data file whose rows are deleted. If it has a delete file at the snapshot of the transaction, the new delete file replaces that file: it has the deletes of the old delete file as well. |
 | `data_file_path` | `path` (default `""`) | The path of the data file. |
 | `path` | `path` | The path of the delete file. |
 | `format` | [`FileFormat`](#fileformat) (default `"parquet"`) | The format of the delete file. |
@@ -939,9 +939,6 @@ A delete file written by a client, which replaces the previous delete file of it
 | `footer_size` | `uint64` (default `0`) | The size of the footer of the delete file. |
 | `row_group_count` | `uint64` (optional) | The number of row groups of the delete file. |
 | `encryption_key` | `string` (default `""`) | The key the file is encrypted with, if any. |
-| `overwrites_existing_delete` | `bool` (default `false`) | Whether the delete file replaces a delete file of the data file. |
-| `overwritten_delete_file_id` | `uint64` (optional) | The delete file that is replaced. |
-| `overwritten_delete_file_path` | `path` (default `""`) | The path of the delete file that is replaced. |
 | `begin_snapshot` | `uint64` (optional) | The snapshot of the deletes, if it is not the snapshot of the commit. |
 | `max_snapshot` | `uint64` (optional) | The last snapshot whose deletes the file holds, for partial delete files. |
 

@@ -1181,6 +1181,22 @@ void DuckLakeRESTCommit::DeleteData(RESTDeleteDataRequest &parameters) {
 	auto &table = GetTable(GetTableId(parameters.table_id));
 	auto table_id = table.GetTableId();
 	if (!parameters.delete_files.empty()) {
+		// a delete file replaces the delete file that its data file has
+		set<idx_t> data_file_ids;
+		for (auto &file : parameters.delete_files) {
+			if (file.data_file_id.IsValid() && !DuckLakeTransaction::IsTransactionLocal(file.data_file_id.index)) {
+				data_file_ids.insert(file.data_file_id.index);
+			}
+		}
+		auto existing_delete_files =
+		    transaction.GetMetadataManager().GetDeleteFiles(table, transaction.GetSnapshot(), data_file_ids);
+		for (auto &file : parameters.delete_files) {
+			auto existing = existing_delete_files.find(file.data_file_id.index);
+			if (existing != existing_delete_files.end()) {
+				file.overwrites_existing_delete = true;
+				file.overwritten_delete_file = existing->second;
+			}
+		}
 		transaction.AddDeletes(table_id, std::move(parameters.delete_files));
 	}
 	if (!parameters.inlined_row_ids.empty()) {

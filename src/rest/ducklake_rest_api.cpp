@@ -1021,13 +1021,6 @@ JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLak
 		result.Add("row_group_count", RESTWriteValue<RESTUInt64Codec>(writer, value.row_group_count));
 	}
 	result.Add("encryption_key", RESTWriteValue<RESTStringCodec>(writer, value.encryption_key));
-	result.Add("overwrites_existing_delete", RESTWriteValue<RESTBoolCodec>(writer, value.overwrites_existing_delete));
-	if (!RESTIsNull(value.overwritten_delete_file.delete_file_id)) {
-		result.Add("overwritten_delete_file_id",
-		           RESTWriteValue<RESTUInt64Codec>(writer, value.overwritten_delete_file.delete_file_id));
-	}
-	result.Add("overwritten_delete_file_path",
-	           RESTWriteValue<RESTPathCodec>(writer, value.overwritten_delete_file.path));
 	if (!RESTIsNull(value.begin_snapshot)) {
 		result.Add("begin_snapshot", RESTWriteValue<RESTUInt64Codec>(writer, value.begin_snapshot));
 	}
@@ -1088,28 +1081,6 @@ DuckLakeDeleteFile DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 			RESTReadValue<RESTStringCodec>(entry, result.encryption_key);
 		} else {
 			result.encryption_key = string("");
-		}
-	}
-	{
-		auto entry = in.TryGet("overwrites_existing_delete");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTBoolCodec>(entry, result.overwrites_existing_delete);
-		} else {
-			result.overwrites_existing_delete = false;
-		}
-	}
-	{
-		auto entry = in.TryGet("overwritten_delete_file_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.overwritten_delete_file.delete_file_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("overwritten_delete_file_path");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTPathCodec>(entry, result.overwritten_delete_file.path);
-		} else {
-			result.overwritten_delete_file.path = string("");
 		}
 	}
 	{

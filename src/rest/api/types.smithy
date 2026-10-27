@@ -692,7 +692,8 @@ structure FileListExtendedEntry {
 /// A delete file written by a client, which replaces the previous delete file of its data file.
 @cppClass("DuckLakeDeleteFile")
 structure DeleteFile {
-    /// The data file whose rows are deleted.
+    /// The data file whose rows are deleted. If it has a delete file at the snapshot of the transaction, the new delete
+    /// file replaces that file: it has the deletes of the old delete file as well.
     data_file_id: UInt64
 
     /// The path of the data file.
@@ -722,17 +723,6 @@ structure DeleteFile {
 
     /// The key the file is encrypted with, if any.
     encryption_key: String = ""
-
-    /// Whether the delete file replaces a delete file of the data file.
-    overwrites_existing_delete: Boolean = false
-
-    /// The delete file that is replaced.
-    @cppMember("overwritten_delete_file.delete_file_id")
-    overwritten_delete_file_id: UInt64
-
-    /// The path of the delete file that is replaced.
-    @cppMember("overwritten_delete_file.path")
-    overwritten_delete_file_path: DataPath = ""
 
     /// The snapshot of the deletes, if it is not the snapshot of the commit.
     begin_snapshot: UInt64

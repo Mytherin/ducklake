@@ -3711,6 +3711,36 @@ void DuckLakeMetadataManager::ClearInlinedTableCaches() {
 	delete_inlined_table_cache.clear();
 }
 
+map<idx_t, DuckLakeOverwrittenDeleteFile> DuckLakeMetadataManager::GetDeleteFiles(DuckLakeTableEntry &table,
+                                                                                  DuckLakeSnapshot snapshot,
+                                                                                  const set<idx_t> &data_file_ids) {
+	map<idx_t, DuckLakeOverwrittenDeleteFile> result;
+	if (data_file_ids.empty()) {
+		return result;
+	}
+	vector<string> ids;
+	for (auto id : data_file_ids) {
+		ids.push_back(to_string(id));
+	}
+	auto query =
+	    StringUtil::Format(R"(
+SELECT del.data_file_id, del.delete_file_id, %s
+FROM {METADATA_CATALOG}.ducklake_delete_file del
+WHERE del.table_id=%d AND del.data_file_id IN (%s) AND {SNAPSHOT_ID} >= del.begin_snapshot
+  AND ({SNAPSHOT_ID} < del.end_snapshot OR del.end_snapshot IS NULL))",
+	                       GetDeleteFileSelectList("del"), table.GetTableId().index, StringUtil::Join(ids, ", "));
+	auto query_result = Query(snapshot, query);
+	query_result->ThrowIfError("Failed to get the delete files of the data files from DuckLake: ");
+	for (auto &row : *query_result) {
+		idx_t col_idx = 2;
+		DuckLakeOverwrittenDeleteFile delete_file;
+		delete_file.delete_file_id = DataFileIndex(row.GetValue<idx_t>(1));
+		delete_file.path = ReadDeleteFile(table, row, col_idx, IsEncrypted()).path;
+		result[row.GetValue<idx_t>(0)] = std::move(delete_file);
+	}
+	return result;
+}
+
 void DuckLakeMetadataManager::ReadFilePartitions(TableIndex table_id, DuckLakeSnapshot snapshot,
                                                  vector<DuckLakeFileListEntry> &files) {
 	if (files.empty()) {
