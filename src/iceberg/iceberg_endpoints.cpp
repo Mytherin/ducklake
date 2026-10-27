@@ -117,6 +117,20 @@ static void OAuthToken(DuckLakeIcebergServer &server, const IcebergHttpRequest &
 			}
 			auto key = param.substr(0, equals);
 			auto value = param.substr(equals + 1);
+			// the form is URL encoded
+			string decoded;
+			for (idx_t i = 0; i < value.size(); i++) {
+				if (value[i] == '+') {
+					decoded += ' ';
+				} else if (value[i] == '%' && i + 2 < value.size() + 0 && std::isxdigit(value[i + 1]) &&
+				           std::isxdigit(value[i + 2])) {
+					decoded += static_cast<char>(std::stoi(value.substr(i + 1, 2), nullptr, 16));
+					i += 2;
+				} else {
+					decoded += value[i];
+				}
+			}
+			value = decoded;
 			if (key == "client_secret" && value == server.Token()) {
 				valid = true;
 			}

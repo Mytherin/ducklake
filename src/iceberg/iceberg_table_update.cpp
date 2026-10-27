@@ -12,6 +12,7 @@
 #include "iceberg/iceberg_types.hpp"
 #include "iceberg/iceberg_util.hpp"
 #include "storage/ducklake_delete.hpp"
+#include "storage/ducklake_delete_filter.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
 #include "storage/ducklake_transaction.hpp"
 
@@ -445,8 +446,11 @@ vector<string> TableUpdate::PartitionExpressions(const IcebergSchema &schema_p, 
 		} else if (transform == "year" || transform == "month" || transform == "day" || transform == "hour") {
 			expressions.push_back("epoch_" + transform + "(" + column + ")");
 		} else if (StringUtil::StartsWith(transform, "bucket[") && StringUtil::EndsWith(transform, "]")) {
-			expressions.push_back(
-			    StringUtil::Format("bucket(%s, %s)", transform.substr(7, transform.size() - 8), column));
+			auto buckets = transform.substr(7, transform.size() - 8);
+			if (buckets.empty() || buckets.size() > 9 || buckets.find_first_not_of("0123456789") != string::npos) {
+				throw BadRequest(StringUtil::Format("Invalid partition transform \"%s\"", transform));
+			}
+			expressions.push_back(StringUtil::Format("bucket(%s, %s)", buckets, column));
 		} else {
 			throw Unsupported(StringUtil::Format("The partition transform \"%s\" is not supported", transform));
 		}
@@ -607,6 +611,15 @@ void TableUpdate::ApplySnapshot(const string &manifest_list_path, const vector<P
 	vector<const IcebergFileEntry *> added_files;
 	vector<IcebergFileEntry> delete_entries;
 	for (auto &file : files) {
+		// the files that the server generated for the metadata are not data of the table
+		if (!request.server.MetadataPath().empty() &&
+		    StringUtil::StartsWith(NormalizePath(file.path), NormalizePath(request.server.MetadataPath())) &&
+		    (file.content == 0 || NormalizePath(file.path).find("/inlined-delete-") != string::npos)) {
+			if (file.content == 0) {
+				wanted_data.insert(NormalizePath(file.path));
+			}
+			continue;
+		}
 		if (file.content == 0) {
 			auto path = NormalizePath(file.path);
 			wanted_data.insert(path);
@@ -654,10 +667,16 @@ void TableUpdate::ApplySnapshot(const string &manifest_list_path, const vector<P
 		}
 		set<idx_t> existing;
 		if (file.delete_file_id.IsValid()) {
-			if (file.delete_format != "parquet") {
-				throw Unsupported("Data files with deletion vectors cannot be changed");
+			if (file.delete_format == "puffin") {
+				DuckLakeFileData delete_file;
+				delete_file.path = file.delete_path;
+				delete_file.format = DeleteFileFormat::PUFFIN;
+				for (auto position : DuckLakeDeleteFilter::ScanDeletionVectorFile(context, delete_file).deleted_rows) {
+					existing.insert(position);
+				}
+			} else {
+				existing = ReadPositions(request, file.delete_path, file.path, false);
 			}
-			existing = ReadPositions(request, file.delete_path, file.path, false);
 		}
 		if (existing == deletes.second) {
 			continue;
@@ -860,6 +879,10 @@ void TableUpdate::Apply(RESTJsonIn requirements, RESTJsonIn updates) {
 						default_spec = added;
 						has_default_spec = true;
 					}
+				}
+				if (!has_default_spec && NumericCast<idx_t>(spec_id) != state.default_spec_id) {
+					throw Unsupported(
+					    "Switching to a partition spec that is not added in the same commit is not supported");
 				}
 			}
 		} else if (action == "set-properties") {

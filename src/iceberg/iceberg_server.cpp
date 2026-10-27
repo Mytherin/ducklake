@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
@@ -594,6 +595,10 @@ static unique_ptr<FunctionData> DuckLakeIcebergServeBind(ClientContext &context,
 	}
 	if (!metadata_path_val.IsNull()) {
 		server->SetMetadataPath(StringValue::Get(metadata_path_val));
+	} else if (server->MetadataPath().empty()) {
+		auto temp = DBConfig::GetConfig(context).options.temporary_directory;
+		server->SetMetadataPath((temp.empty() ? string("/tmp") : temp) + "/ducklake_iceberg_" +
+		                        UUID::ToString(UUID::GenerateRandomUUID()));
 	}
 	if (!snapshot_limit_val.IsNull()) {
 		auto limit = snapshot_limit_val.GetValue<idx_t>();

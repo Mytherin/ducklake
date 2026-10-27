@@ -261,7 +261,14 @@ void IcebergViewEndpoints::CreateView(IcebergRequest &request, const IcebergHttp
 	}
 	string dialect;
 	auto sql = GetViewSQL(root.Get("view-version"), dialect);
-	request.Query(StringUtil::Format("CREATE VIEW %s AS %s", request.EntrySQL(ns, name), sql));
+	try {
+		request.Query(StringUtil::Format("CREATE VIEW %s AS %s", request.EntrySQL(ns, name), sql));
+	} catch (std::exception &ex) {
+		throw IcebergException(400, "BadRequestException",
+		                       StringUtil::Format("DuckDB cannot create a view with the %s SQL of the request: %s",
+		                                          dialect.empty() ? "unspecified" : dialect,
+		                                          ErrorData(ex).RawMessage()));
+	}
 	request.Commit();
 	{
 		IcebergRequest lookup(request.server, request.db, request.catalog_name, request.prefix);
