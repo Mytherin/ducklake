@@ -73,7 +73,6 @@ service DuckLake {
         GetSnapshotAt
         Select
         ListSnapshots
-        TableSizes
         Compact
         TableChanges
         CommitTransaction

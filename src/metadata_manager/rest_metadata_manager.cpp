@@ -654,17 +654,46 @@ bool RESTMetadataManager::ResetConfigOption(const DuckLakeConfigOption &option) 
 }
 
 vector<DuckLakeTableSizeInfo> RESTMetadataManager::GetTableSizes(DuckLakeSnapshot snapshot) {
-	RESTTableSizesRequest request;
-	request.snapshot = snapshot;
+	// the sizes are the sizes of the files of the tables
+	auto data = GetSnapshotData(snapshot, true, false);
 	vector<DuckLakeTableSizeInfo> result;
-	while (true) {
-		auto page = GetClient().TableSizes(request);
-		std::move(page.tables.begin(), page.tables.end(), std::back_inserter(result));
-		if (page.next_page_token.empty()) {
-			return result;
-		}
-		request.page_token = std::move(page.next_page_token);
+	if (!data.catalog) {
+		return result;
 	}
+	auto &client = GetClient();
+	for (auto &table : data.catalog->tables) {
+		DuckLakeTableSizeInfo size;
+		size.schema_id = table.schema_id;
+		size.table_id = table.id;
+		size.table_name = table.name;
+		size.table_uuid = table.uuid;
+		auto add_files = [&](const vector<DuckLakeFileListExtendedEntry> &files) {
+			for (auto &file : files) {
+				size.file_count++;
+				size.file_size_bytes += file.file.file_size_bytes;
+				if (!file.delete_file.path.empty()) {
+					size.delete_file_count++;
+					size.delete_file_size_bytes += file.delete_file.file_size_bytes;
+				}
+			}
+		};
+		RESTSelectRequest request;
+		request.snapshot = snapshot;
+		request.table_id = table.id.index;
+		request.extended = true;
+		// no columns of the inlined rows are needed
+		request.columns = RESTOptional<vector<RESTColumnIdentifier>>(vector<RESTColumnIdentifier>());
+		auto response = client.Select(request);
+		add_files(response.extended_files);
+		for (auto &page_token : response.page_tokens) {
+			RESTSelectRequest page_request;
+			page_request.table_id = table.id.index;
+			page_request.page_token = page_token;
+			add_files(client.Select(page_request).extended_files);
+		}
+		result.push_back(std::move(size));
+	}
+	return result;
 }
 
 vector<DuckLakeColumnMappingInfo> RESTMetadataManager::GetColumnMappings(optional_idx start_from) {

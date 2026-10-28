@@ -835,35 +835,6 @@ structure DeleteScanEntry {
     inlined_file_deletions: InlinedFileDeletionsEntryList = []
 }
 
-/// The storage used by a table.
-@cppClass("DuckLakeTableSizeInfo")
-structure TableSize {
-    /// The schema of the table.
-    schema_id: UInt64
-
-    /// The table.
-    table_id: UInt64
-
-    /// The name of the table.
-    @required
-    table_name: String
-
-    /// The uuid of the table.
-    table_uuid: String = ""
-
-    /// The size of the data files.
-    file_size_bytes: UInt64 = 0
-
-    /// The size of the delete files.
-    delete_file_size_bytes: UInt64 = 0
-
-    /// The number of data files.
-    file_count: UInt64 = 0
-
-    /// The number of delete files.
-    delete_file_count: UInt64 = 0
-}
-
 /// A column of a name map: maps a column of a file to a field of the table.
 @cppClass("DuckLakeNameMapColumnInfo")
 structure NameMapColumn {
@@ -1187,10 +1158,6 @@ list TableInfoList {
 
 list TableSettingList {
     member: TableSetting
-}
-
-list TableSizeList {
-    member: TableSize
 }
 
 list TagList {

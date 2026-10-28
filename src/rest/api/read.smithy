@@ -236,29 +236,6 @@ operation ListSnapshots {
     }
 }
 
-/// Returns the storage used by each table at a snapshot.
-@http(method: "POST", uri: "/v1/table-sizes")
-@readonly
-operation TableSizes {
-    input := with [SnapshotReference] {
-        /// The maximum number of entries to return. The server picks a number if absent, and can return fewer entries.
-        @httpQuery("page_size")
-        page_size: UInt64
-
-        /// The `next_page_token` of the previous page. The first page if absent.
-        @httpQuery("page_token")
-        page_token: String
-    }
-
-    output := {
-        /// The tables, ordered by their ids.
-        tables: TableSizeList = []
-
-        /// The token of the next page, absent on the last page.
-        next_page_token: String
-    }
-}
-
 /// Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 ///
 /// `inlined_data` holds the inlined rows that were inserted (`insertions`) or deleted

@@ -87,9 +87,8 @@ client directly, so the data path has to be accessible from both the client and 
   requests with a JSON object as body (reads that take a snapshot, filters or projections, and `POST
   /v1/transactions/commit`). Responses are JSON objects. The parameters of the URL are not part of the body.
 * Each request runs in a transaction of its own on the server.
-* Lists that grow with the data are returned in pages: `snapshots` and
-  `table-sizes` take a `page_size` and a `page_token`, and return a `next_page_token` if there are more
-  entries. The first page has no token, a page token is only valid for the request that returned it, and the server
+* Lists that grow with the data are returned in pages: `snapshots` takes a `page_size` and a `page_token`, and returns a
+  `next_page_token` if there are more entries. The first page has no token, a page token is only valid for the request that returned it, and the server
   picks the number of entries (and can return fewer than the `page_size`, and at most 10000). A response without
   `next_page_token` is the last page.
 * The files of `scan` and `changes` are split into pages if there are many. The response has the first page of files and
@@ -396,33 +395,6 @@ Response:
 | `inlined_data` | Arrow table (optional) | Sent as the Arrow IPC stream of the part `inlined_data`, see [Arrow](#arrow). The inlined rows that changed, absent if the table has no inlined data. |
 | `page_tokens` | list of `string` (default `[]`) | The tokens of the other pages of the files, see `scan`. |
 | `column_mappings` | list of [`NameMap`](#namemap) (default `[]`) | The column mappings that the files of the response refer to (by their `mapping_id`), and that the client does not have. They map the columns of files that were added with `ducklake_add_data_files` by name. |
-
-### `table_sizes`
-
-Returns the storage used by each table at a snapshot.
-
-`POST /v1/table-sizes`
-
-Parameters in the URL (the other fields of the request are the JSON body):
-
-| Parameter | In | Type | Description |
-|-----------|----|------|-------------|
-| `page_size` | query | `uint64` | The maximum number of entries to return. The server picks a number if absent, and can return fewer entries. |
-| `page_token` | query | `string` | The `next_page_token` of the previous page. The first page if absent. |
-
-Request:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `snapshot` | [`Snapshot`](#snapshot) (optional) | The snapshot, as returned by `snapshots/latest` and `snapshots/at`. |
-| `snapshot_id` | `uint64` (optional) | The id of the snapshot. |
-
-Response:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `tables` | list of [`TableSize`](#tablesize) (default `[]`) | The tables, ordered by their ids. |
-| `next_page_token` | `string` (optional) | The token of the next page, absent on the last page. |
 
 ## Server Commands
 
@@ -1537,21 +1509,6 @@ An option of the DuckLake that is set for a table.
 | `table_id` | `uint64` (optional) | The table. |
 | `key` | `string` | The option. |
 | `value` | `string` (default `""`) | The value of the option. |
-
-### `TableSize`
-
-The storage used by a table.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `schema_id` | `uint64` (optional) | The schema of the table. |
-| `table_id` | `uint64` (optional) | The table. |
-| `table_name` | `string` | The name of the table. |
-| `table_uuid` | `string` (default `""`) | The uuid of the table. |
-| `file_size_bytes` | `uint64` (default `0`) | The size of the data files. |
-| `delete_file_size_bytes` | `uint64` (default `0`) | The size of the delete files. |
-| `file_count` | `uint64` (default `0`) | The number of data files. |
-| `delete_file_count` | `uint64` (default `0`) | The number of delete files. |
 
 ### `Tag`
 

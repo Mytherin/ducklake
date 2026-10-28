@@ -651,16 +651,6 @@ RESTListSnapshotsResponse DuckLakeRESTEndpoints::ListSnapshots(DuckLakeRESTReque
 	return result;
 }
 
-RESTTableSizesResponse DuckLakeRESTEndpoints::TableSizes(DuckLakeRESTRequest &request,
-                                                         const RESTTableSizesRequest &parameters) {
-	RESTTableSizesResponse result;
-	result.tables = request.GetMetadataManager().GetTableSizes(request.GetSnapshot(parameters));
-	GetKeyPage(
-	    request, result.tables, [](const DuckLakeTableSizeInfo &table) { return table.table_id.index; },
-	    parameters.page_size, parameters.page_token, result.next_page_token);
-	return result;
-}
-
 RESTTableChangesResponse DuckLakeRESTEndpoints::TableChanges(DuckLakeRESTRequest &request,
                                                              const RESTTableChangesRequest &parameters) {
 	if (!parameters.page_token.empty()) {

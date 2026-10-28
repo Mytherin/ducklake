@@ -164,8 +164,6 @@ struct RESTSelectRequest;
 struct RESTSelectResponse;
 struct RESTTableChangesRequest;
 struct RESTTableChangesResponse;
-struct RESTTableSizesRequest;
-struct RESTTableSizesResponse;
 struct RESTCompactRequest;
 struct RESTCompactResponse;
 struct RESTCommitTransactionRequest;
@@ -297,7 +295,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeSortInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeTableInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeTableSetting &value);
-	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeTableSizeInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeTag &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeViewColumnTag &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeViewInfo &value);
@@ -312,8 +309,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const RESTSelectResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableChangesRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTTableChangesResponse &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesRequest &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTTableSizesResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCompactRequest &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCompactResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTCommitTransactionRequest &value);
@@ -467,8 +462,6 @@ DuckLakeTableInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeTableSetting DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
-DuckLakeTableSizeInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
 DuckLakeTag DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeViewColumnTag DuckLakeRESTSerializer::Read(RESTJsonIn in);
@@ -496,10 +489,6 @@ template <>
 RESTTableChangesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTTableChangesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTTableSizesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTTableSizesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTCompactRequest DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -1173,20 +1162,6 @@ struct RESTTableChangesResponse {
 	vector<DuckLakeColumnMappingInfo> column_mappings;
 };
 
-struct RESTTableSizesRequest : public RESTSnapshotReference {
-	//! The maximum number of entries to return. The server picks a number if absent, and can return fewer entries.
-	optional_idx page_size;
-	//! The `next_page_token` of the previous page. The first page if absent.
-	string page_token;
-};
-
-struct RESTTableSizesResponse {
-	//! The tables, ordered by their ids.
-	vector<DuckLakeTableSizeInfo> tables;
-	//! The token of the next page, absent on the last page.
-	string next_page_token;
-};
-
 struct RESTCompactRequest {
 	//! The type of the compaction.
 	string type;
@@ -1443,8 +1418,6 @@ struct DuckLakeRESTEndpoints {
 	//! Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 	static RESTTableChangesResponse TableChanges(DuckLakeRESTRequest &request,
 	                                             const RESTTableChangesRequest &parameters);
-	//! Returns the storage used by each table at a snapshot.
-	static RESTTableSizesResponse TableSizes(DuckLakeRESTRequest &request, const RESTTableSizesRequest &parameters);
 	//! Compacts the DuckLake on the server.
 	static RESTCompactResponse Compact(DuckLakeRESTRequest &request, const RESTCompactRequest &parameters);
 	//! Commits a set of changes atomically.
@@ -1545,8 +1518,6 @@ public:
 	RESTSelectResponse Select(const RESTSelectRequest &request);
 	//! Returns the files that hold the changes of a table between two snapshots, for change data feeds.
 	RESTTableChangesResponse TableChanges(const RESTTableChangesRequest &request);
-	//! Returns the storage used by each table at a snapshot.
-	RESTTableSizesResponse TableSizes(const RESTTableSizesRequest &request);
 	//! Compacts the DuckLake on the server.
 	RESTCompactResponse Compact(const RESTCompactRequest &request);
 	//! Commits a set of changes atomically.

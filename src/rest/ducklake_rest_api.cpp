@@ -3055,85 +3055,6 @@ DuckLakeTableSetting DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeTableSizeInfo &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.schema_id)) {
-		result.Add("schema_id", RESTWriteValue<RESTUInt64Codec>(writer, value.schema_id));
-	}
-	if (!RESTIsNull(value.table_id)) {
-		result.Add("table_id", RESTWriteValue<RESTUInt64Codec>(writer, value.table_id));
-	}
-	result.Add("table_name", RESTWriteValue<RESTStringCodec>(writer, value.table_name));
-	result.Add("table_uuid", RESTWriteValue<RESTStringCodec>(writer, value.table_uuid));
-	result.Add("file_size_bytes", RESTWriteValue<RESTUInt64Codec>(writer, value.file_size_bytes));
-	result.Add("delete_file_size_bytes", RESTWriteValue<RESTUInt64Codec>(writer, value.delete_file_size_bytes));
-	result.Add("file_count", RESTWriteValue<RESTUInt64Codec>(writer, value.file_count));
-	result.Add("delete_file_count", RESTWriteValue<RESTUInt64Codec>(writer, value.delete_file_count));
-	return result;
-}
-
-template <>
-DuckLakeTableSizeInfo DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for TableSize");
-	}
-	DuckLakeTableSizeInfo result;
-	{
-		auto entry = in.TryGet("schema_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.schema_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("table_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.table_id);
-		}
-	}
-	RESTReadValue<RESTStringCodec>(in.Get("table_name"), result.table_name);
-	{
-		auto entry = in.TryGet("table_uuid");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.table_uuid);
-		} else {
-			result.table_uuid = string("");
-		}
-	}
-	{
-		auto entry = in.TryGet("file_size_bytes");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.file_size_bytes);
-		} else {
-			result.file_size_bytes = 0;
-		}
-	}
-	{
-		auto entry = in.TryGet("delete_file_size_bytes");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.delete_file_size_bytes);
-		} else {
-			result.delete_file_size_bytes = 0;
-		}
-	}
-	{
-		auto entry = in.TryGet("file_count");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.file_count);
-		} else {
-			result.file_count = 0;
-		}
-	}
-	{
-		auto entry = in.TryGet("delete_file_count");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.delete_file_count);
-		} else {
-			result.delete_file_count = 0;
-		}
-	}
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeTag &value) {
 	auto result = writer.CreateObject();
 	result.Add("key", RESTWriteValue<RESTStringCodec>(writer, value.key));
@@ -3814,86 +3735,6 @@ RESTTableChangesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		auto entry = in.TryGet("column_mappings");
 		if (!entry.IsNull()) {
 			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeColumnMappingInfo>>>(entry, result.column_mappings);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTableSizesRequest &value) {
-	auto result = writer.CreateObject();
-	if (!RESTIsNull(value.snapshot)) {
-		result.Add("snapshot", RESTWriteValue<RESTObjectCodec<DuckLakeSnapshot>>(writer, value.snapshot));
-	}
-	if (!RESTIsNull(value.snapshot_id)) {
-		result.Add("snapshot_id", RESTWriteValue<RESTUInt64Codec>(writer, value.snapshot_id));
-	}
-	if (!RESTIsNull(value.page_size)) {
-		result.Add("page_size", RESTWriteValue<RESTUInt64Codec>(writer, value.page_size));
-	}
-	if (!RESTIsNull(value.page_token)) {
-		result.Add("page_token", RESTWriteValue<RESTStringCodec>(writer, value.page_token));
-	}
-	return result;
-}
-
-template <>
-RESTTableSizesRequest DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for TableSizesRequest");
-	}
-	RESTTableSizesRequest result;
-	{
-		auto entry = in.TryGet("snapshot");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTObjectCodec<DuckLakeSnapshot>>(entry, result.snapshot);
-		}
-	}
-	{
-		auto entry = in.TryGet("snapshot_id");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.snapshot_id);
-		}
-	}
-	{
-		auto entry = in.TryGet("page_size");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTUInt64Codec>(entry, result.page_size);
-		}
-	}
-	{
-		auto entry = in.TryGet("page_token");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.page_token);
-		}
-	}
-	return result;
-}
-
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTTableSizesResponse &value) {
-	auto result = writer.CreateObject();
-	result.Add("tables", RESTWriteValue<RESTListCodec<RESTObjectCodec<DuckLakeTableSizeInfo>>>(writer, value.tables));
-	if (!RESTIsNull(value.next_page_token)) {
-		result.Add("next_page_token", RESTWriteValue<RESTStringCodec>(writer, value.next_page_token));
-	}
-	return result;
-}
-
-template <>
-RESTTableSizesResponse DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for TableSizesResponse");
-	}
-	RESTTableSizesResponse result;
-	{
-		auto entry = in.TryGet("tables");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<DuckLakeTableSizeInfo>>>(entry, result.tables);
-		}
-	}
-	{
-		auto entry = in.TryGet("next_page_token");
-		if (!entry.IsNull()) {
-			RESTReadValue<RESTStringCodec>(entry, result.next_page_token);
 		}
 	}
 	return result;
@@ -4894,12 +4735,6 @@ static string TableChangesEndpoint(DuckLakeRESTRequest &request, const string &b
 	return DuckLakeRESTSerializer::ToResponse(request, result);
 }
 
-static string TableSizesEndpoint(DuckLakeRESTRequest &request, const string &body) {
-	auto parameters = DuckLakeRESTSerializer::ReadRequest<RESTTableSizesRequest>(request, body);
-	auto result = DuckLakeRESTEndpoints::TableSizes(request, parameters);
-	return DuckLakeRESTSerializer::ToResponse(request, result);
-}
-
 static string CompactEndpoint(DuckLakeRESTRequest &request, const string &body) {
 	auto parameters = DuckLakeRESTSerializer::ReadRequest<RESTCompactRequest>(request, body);
 	auto result = DuckLakeRESTEndpoints::Compact(request, parameters);
@@ -4921,7 +4756,6 @@ const unordered_map<string, rest_endpoint_t> &DuckLakeRESTAPI::GetEndpoints() {
 	    {"list_snapshots", ListSnapshotsEndpoint},
 	    {"select", SelectEndpoint},
 	    {"table_changes", TableChangesEndpoint},
-	    {"table_sizes", TableSizesEndpoint},
 	    {"compact", CompactEndpoint},
 	    {"commit_transaction", CommitTransactionEndpoint},
 	};
@@ -4960,11 +4794,6 @@ const vector<RESTRoute> &DuckLakeRESTAPI::GetRoutes() {
 	      {"page_token", RESTParameterType::STRING, "page_token"}}},
 	    {"select", "POST", "/v1/tables/{table_id}/scan", {{"table_id", RESTParameterType::UINT, ""}}},
 	    {"table_changes", "POST", "/v1/tables/{table_id}/changes", {{"table_id", RESTParameterType::UINT, ""}}},
-	    {"table_sizes",
-	     "POST",
-	     "/v1/table-sizes",
-	     {{"page_size", RESTParameterType::UINT, "page_size"},
-	      {"page_token", RESTParameterType::STRING, "page_token"}}},
 	    {"compact", "POST", "/v1/compactions", {}},
 	    {"commit_transaction", "POST", "/v1/transactions/commit", {}},
 	};
@@ -5051,16 +4880,6 @@ RESTTableChangesResponse DuckLakeRESTClientAPI::TableChanges(const RESTTableChan
 	auto response = Call("table_changes", DuckLakeRESTSerializer::ToJSON(request), true, parts);
 	response.context = context.get();
 	return DuckLakeRESTSerializer::ReadResponse<RESTTableChangesResponse>(response);
-}
-
-RESTTableSizesResponse DuckLakeRESTClientAPI::TableSizes(const RESTTableSizesRequest &request) {
-	RESTPathScope paths(GetPathMapper());
-	auto context = GetContext();
-	vector<RESTBodyPart> parts;
-	DuckLakeRESTSerializer::AddParts(*context, request, parts);
-	auto response = Call("table_sizes", DuckLakeRESTSerializer::ToJSON(request), true, parts);
-	response.context = context.get();
-	return DuckLakeRESTSerializer::ReadResponse<RESTTableSizesResponse>(response);
 }
 
 RESTCompactResponse DuckLakeRESTClientAPI::Compact(const RESTCompactRequest &request) {
