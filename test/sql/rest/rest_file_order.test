@@ -1,5 +1,5 @@
 # name: test/sql/rest/rest_file_order.test
-# description: The files of a scan are ordered by an order_by list of SQL ordering terms
+# description: The files of a scan are ordered by an order_by list of min/max terms with a sort_order
 # group: [rest]
 
 include test/template/rest_setup.test_template
@@ -23,7 +23,7 @@ INSERT INTO dl.t SELECT i, 'c' FROM range(50, 60) t(i)
 query I
 SELECT column_min_max[1].max
 FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan',
-'{"filters": {"order_by": ["max(i) DESC"], "runtime_filter_columns": [1]}}', part := 'files')
+'{"filters": {"order_by": [{"function": "max", "column_id": 1, "sort_order": "DESC"}], "runtime_filter_columns": [1]}}', part := 'files')
 ----
 109
 59
@@ -33,7 +33,7 @@ FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan',
 query I
 SELECT column_min_max[1].min
 FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan',
-'{"filters": {"order_by": ["min(i) ASC"], "runtime_filter_columns": [1]}}', part := 'files')
+'{"filters": {"order_by": [{"function": "min", "column_id": 1}], "runtime_filter_columns": [1]}}', part := 'files')
 ----
 0
 50
@@ -43,7 +43,7 @@ FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan',
 query I
 SELECT column_min_max[1].min
 FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan',
-'{"filters": {"order_by": ["min(i) DESC"], "runtime_filter_columns": [1]}}', part := 'files')
+'{"filters": {"order_by": [{"function": "min", "column_id": 1, "sort_order": "DESC"}], "runtime_filter_columns": [1]}}', part := 'files')
 ----
 100
 50
@@ -53,7 +53,7 @@ FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan',
 query I
 SELECT column_min_max[1].max
 FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan',
-'{"filters": {"order_by": ["max(i) DESC", "min(i)"], "runtime_filter_columns": [1]}}', part := 'files')
+'{"filters": {"order_by": [{"function": "max", "column_id": 1, "sort_order": "DESC"}, {"function": "min", "column_id": 1}], "runtime_filter_columns": [1]}}', part := 'files')
 ----
 109
 59
@@ -63,7 +63,7 @@ FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan',
 query I
 SELECT count(*)
 FROM ducklake_rest_rows('{rest_server}', 'POST', '/v1/tables/1/scan',
-'{"filters": {"order_by": ["max(nope)", "i + 1", "i", "this is not SQL"]}}', part := 'files')
+'{"filters": {"order_by": [{"function": "max", "column_id": 99}, {"function": "count", "column_id": 1}]}}', part := 'files')
 ----
 3
 

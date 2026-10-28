@@ -357,6 +357,34 @@ void RESTSortDirectionCodec::Read(RESTJsonIn in, OrderType &result) {
 	result = FromString(in.Str());
 }
 
+const char *RESTSortOrderCodec::ToString(const string &value) {
+	if (value == "ASC") {
+		return "ASC";
+	}
+	if (value == "DESC") {
+		return "DESC";
+	}
+	throw InternalException("\"%s\" is not a value of the REST API type SortOrder", value);
+}
+
+string RESTSortOrderCodec::FromString(const string &value) {
+	if (value == "ASC") {
+		return value;
+	}
+	if (value == "DESC") {
+		return value;
+	}
+	throw InvalidInputException("DuckLake REST: \"%s\" is not a valid SortOrder (expected one of ASC, DESC)", value);
+}
+
+JSONMutableValue RESTSortOrderCodec::Write(JSONWriter &writer, const string &value) {
+	return writer.CreateString(ToString(value));
+}
+
+void RESTSortOrderCodec::Read(RESTJsonIn in, string &result) {
+	result = FromString(in.Str());
+}
+
 const char *RESTTableChangeTypeCodec::ToString(const string &value) {
 	if (value == "insertions") {
 		return "insertions";
@@ -1586,6 +1614,33 @@ DuckLakeFileListExtendedEntry DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
+JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTFileOrder &value) {
+	auto result = writer.CreateObject();
+	result.Add("function", RESTWriteValue<RESTAggregateFunctionCodec>(writer, value.function));
+	result.Add("column_id", RESTWriteValue<RESTUInt64Codec>(writer, value.column_id));
+	result.Add("sort_order", RESTWriteValue<RESTSortOrderCodec>(writer, value.sort_order));
+	return result;
+}
+
+template <>
+RESTFileOrder DuckLakeRESTSerializer::Read(RESTJsonIn in) {
+	if (!in.IsNull() && !in.IsObject()) {
+		throw InvalidInputException("DuckLake REST: expected a JSON object for FileOrder");
+	}
+	RESTFileOrder result;
+	RESTReadValue<RESTAggregateFunctionCodec>(in.Get("function"), result.function);
+	RESTReadValue<RESTUInt64Codec>(in.Get("column_id"), result.column_id);
+	{
+		auto entry = in.TryGet("sort_order");
+		if (!entry.IsNull()) {
+			RESTReadValue<RESTSortOrderCodec>(entry, result.sort_order);
+		} else {
+			result.sort_order = string("ASC");
+		}
+	}
+	return result;
+}
+
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const DuckLakeFilePartition &value) {
 	auto result = writer.CreateObject();
 	result.Add("partition_key_index", RESTWriteValue<RESTUInt64Codec>(writer, value.partition_column_idx));
@@ -2376,7 +2431,7 @@ RESTRowSet DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTScanFilters &value) {
 	auto result = writer.CreateObject();
 	result.Add("expressions", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.expressions));
-	result.Add("order_by", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.order_by));
+	result.Add("order_by", RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTFileOrder>>>(writer, value.order_by));
 	result.Add("runtime_filter_columns",
 	           RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.runtime_filter_columns));
 	return result;
@@ -2397,7 +2452,7 @@ RESTScanFilters DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	{
 		auto entry = in.TryGet("order_by");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.order_by);
+			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTFileOrder>>>(entry, result.order_by);
 		}
 	}
 	{

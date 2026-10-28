@@ -323,22 +323,22 @@ enum SnapshotBound {
 /// constants, `IS [NOT] NULL`, and `AND` / `OR` combinations of those. The server ignores the other parts, and leaves
 /// out an `OR` entirely if it does not understand one of its parts.
 ///
-/// `order_by` is the order of the files, as SQL ordering terms over the minimum or the maximum of a column in a file
-/// (`min(i) ASC`, `max(i) DESC`). The files without statistics come last. A top-N uses it to read the files with the
-/// best values first, so that its bound prunes the other files early. For `runtime_filter_columns` the server returns
-/// the min/max statistics of the files in `column_min_max`, so the client can prune files at runtime.
+/// `order_by` is the order of the files: by the `min` or `max` of a column in a file, in the format of the `aggregates`.
+/// The files without statistics come last. A top-N uses it to read the files with the best values first, so that its
+/// bound prunes the other files early. For `runtime_filter_columns` the server returns the min/max statistics of the
+/// files in `column_min_max`, so the client can prune files at runtime.
 ///
 /// ```json
 /// {"expressions": ["i >= 150", "s = 'a' OR st.a IN (1, 2)"],
-///  "order_by": ["max(i) DESC"],
+///  "order_by": [{"function": "max", "column_id": 1, "sort_order": "DESC"}],
 ///  "runtime_filter_columns": [1]}
 /// ```
 structure ScanFilters {
     /// SQL expressions that hold for all rows of the scan.
     expressions: StringList = []
 
-    /// The order of the files, e.g. `max(i) DESC`.
-    order_by: StringList = []
+    /// The order of the files. The terms that are not a `min` or `max` of a column are ignored.
+    order_by: FileOrderList = []
 
     /// The columns to return the min/max statistics of.
     runtime_filter_columns: UInt64List = []
@@ -367,6 +367,33 @@ structure Aggregate {
 
     /// The column, as its field id. For aggregates other than `count_star`: a top-level column.
     column_id: UInt64
+}
+
+/// The direction of an order.
+enum SortOrder {
+    /// Smallest first.
+    ASC = "ASC"
+
+    /// Largest first.
+    DESC = "DESC"
+}
+
+/// An order of the files of a scan: by the `min` or `max` of a column in the file.
+structure FileOrder {
+    /// The function: `min` or `max`.
+    @required
+    function: AggregateFunction
+
+    /// The column, as its field id.
+    @required
+    column_id: UInt64
+
+    /// The direction.
+    sort_order: SortOrder = "ASC"
+}
+
+list FileOrderList {
+    member: FileOrder
 }
 
 /// The result of an aggregate of a scan.

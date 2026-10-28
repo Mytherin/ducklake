@@ -1044,6 +1044,16 @@ A data file of a table with the ids of its files, used to plan deletes and updat
 | `delete_count` | `uint64` (default `0`) | The number of deleted rows of the file. |
 | `mapping_id` | `uint64` (optional) | The name map of the file. |
 
+### `FileOrder`
+
+An order of the files of a scan: by the `min` or `max` of a column in the file.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `function` | [`AggregateFunction`](#aggregatefunction) | The function: `min` or `max`. |
+| `column_id` | `uint64` | The column, as its field id. |
+| `sort_order` | [`SortOrder`](#sortorder) (default `"ASC"`) | The direction. |
+
 ### `FilePartitionValue`
 
 The value of a partition key for the rows of a file.
@@ -1283,21 +1293,21 @@ columns with the parts of the expressions it understands: comparisons of a colum
 constants, `IS [NOT] NULL`, and `AND` / `OR` combinations of those. The server ignores the other parts, and leaves
 out an `OR` entirely if it does not understand one of its parts.
 
-`order_by` is the order of the files, as SQL ordering terms over the minimum or the maximum of a column in a file
-(`min(i) ASC`, `max(i) DESC`). The files without statistics come last. A top-N uses it to read the files with the
-best values first, so that its bound prunes the other files early. For `runtime_filter_columns` the server returns
-the min/max statistics of the files in `column_min_max`, so the client can prune files at runtime.
+`order_by` is the order of the files: by the `min` or `max` of a column in a file, in the format of the `aggregates`.
+The files without statistics come last. A top-N uses it to read the files with the best values first, so that its
+bound prunes the other files early. For `runtime_filter_columns` the server returns the min/max statistics of the
+files in `column_min_max`, so the client can prune files at runtime.
 
 ```json
 {"expressions": ["i >= 150", "s = 'a' OR st.a IN (1, 2)"],
- "order_by": ["max(i) DESC"],
+ "order_by": [{"function": "max", "column_id": 1, "sort_order": "DESC"}],
  "runtime_filter_columns": [1]}
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `expressions` | list of `string` (default `[]`) | SQL expressions that hold for all rows of the scan. |
-| `order_by` | list of `string` (default `[]`) | The order of the files, e.g. `max(i) DESC`. |
+| `order_by` | list of [`FileOrder`](#fileorder) (default `[]`) | The order of the files. The terms that are not a `min` or `max` of a column are ignored. |
 | `runtime_filter_columns` | list of `uint64` (default `[]`) | The columns to return the min/max statistics of. |
 
 ### `SchemaInfo`
@@ -1466,6 +1476,15 @@ The sort order of a table.
 | `sort_id` | `uint64` (optional) | The id of the sort order. |
 | `table_id` | `uint64` (optional) | The table. |
 | `fields` | list of [`SortField`](#sortfield) (default `[]`) | The sort keys. |
+
+### `SortOrder`
+
+The direction of an order.
+
+| Value | Description |
+|-------|-------------|
+| `ASC` | Smallest first. |
+| `DESC` | Largest first. |
 
 ### `TableChangeType`
 

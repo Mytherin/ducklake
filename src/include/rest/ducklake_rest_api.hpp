@@ -104,6 +104,14 @@ struct RESTSortDirectionCodec : public RESTCodec<RESTSortDirectionCodec> {
 	static void Read(RESTJsonIn in, OrderType &result);
 };
 
+//! The direction of an order.
+struct RESTSortOrderCodec : public RESTCodec<RESTSortOrderCodec> {
+	static const char *ToString(const string &value);
+	static string FromString(const string &value);
+	static JSONMutableValue Write(JSONWriter &writer, const string &value);
+	static void Read(RESTJsonIn in, string &result);
+};
+
 //! The changes that `table_changes` returns.
 struct RESTTableChangeTypeCodec : public RESTCodec<RESTTableChangeTypeCodec> {
 	static const char *ToString(const string &value);
@@ -128,6 +136,7 @@ struct RESTDropNotNull;
 struct RESTDroppedFile;
 struct RESTErrorInfo;
 struct RESTErrorResponse;
+struct RESTFileOrder;
 struct RESTFileRowDeletes;
 struct RESTInlinedRows;
 struct RESTOptionSetting;
@@ -250,6 +259,7 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileData &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileListEntry &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileListExtendedEntry &value);
+	static JSONMutableValue Write(JSONWriter &writer, const RESTFileOrder &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFilePartition &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTFileRowDeletes &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeGlobalColumnStatsInfo &value);
@@ -371,6 +381,8 @@ template <>
 DuckLakeFileListEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeFileListExtendedEntry DuckLakeRESTSerializer::Read(RESTJsonIn in);
+template <>
+RESTFileOrder DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 DuckLakeFilePartition DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -788,6 +800,16 @@ struct RESTErrorResponse {
 	RESTErrorInfo error;
 };
 
+//! An order of the files of a scan: by the `min` or `max` of a column in the file.
+struct RESTFileOrder {
+	//! The function: `min` or `max`.
+	string function;
+	//! The column, as its field id.
+	idx_t column_id = 0;
+	//! The direction.
+	string sort_order = string("ASC");
+};
+
 //! Deletes of rows of a data file that are inlined in the catalog.
 struct RESTFileRowDeletes {
 	//! The data file.
@@ -923,8 +945,8 @@ struct RESTRetryConfig {
 struct RESTScanFilters {
 	//! SQL expressions that hold for all rows of the scan.
 	vector<string> expressions;
-	//! The order of the files, e.g. `max(i) DESC`.
-	vector<string> order_by;
+	//! The order of the files. The terms that are not a `min` or `max` of a column are ignored.
+	vector<RESTFileOrder> order_by;
 	//! The columns to return the min/max statistics of.
 	vector<idx_t> runtime_filter_columns;
 };

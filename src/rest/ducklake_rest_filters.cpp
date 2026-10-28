@@ -234,14 +234,16 @@ RESTScanFilters DuckLakeRESTFilters::Write(const FilterPushdownInfo &filters, co
 			comparison_type = dynamic_filter_data->comparison_type;
 		}
 		// a top-N reads the files with the best values first
-		auto column_sql = ColumnSQL(table, filter.column_field_index);
 		bool seeking_high_values = comparison_type == ExpressionType::COMPARE_GREATERTHAN ||
 		                           comparison_type == ExpressionType::COMPARE_GREATERTHANOREQUALTO;
 		bool seeking_low_values = comparison_type == ExpressionType::COMPARE_LESSTHAN ||
 		                          comparison_type == ExpressionType::COMPARE_LESSTHANOREQUALTO;
-		if (!column_sql.empty() && result.order_by.empty() && (seeking_high_values || seeking_low_values)) {
-			result.order_by.push_back(seeking_high_values ? "max(" + column_sql + ") DESC"
-			                                              : "min(" + column_sql + ") ASC");
+		if (result.order_by.empty() && (seeking_high_values || seeking_low_values)) {
+			RESTFileOrder order;
+			order.function = seeking_high_values ? "max" : "min";
+			order.column_id = filter.column_field_index;
+			order.sort_order = seeking_high_values ? "DESC" : "ASC";
+			result.order_by.push_back(std::move(order));
 		}
 		result.runtime_filter_columns.push_back(filter.column_field_index);
 	}
@@ -481,27 +483,16 @@ static void AddColumnFilter(FilterPushdownInfo &filters, ColumnFilterInfo filter
 	existing.table_filter = make_uniq<ExpressionFilter>(std::move(combined));
 }
 
-//! An order of the files: the minimum or the maximum of a column in the file, with a direction (e.g. `max(i) DESC`)
-static void ReadFileOrder(const DuckLakeTableEntry &table, const OrderByNode &node, FilterPushdownInfo &filters) {
-	if (node.expression->GetExpressionClass() != ExpressionClass::FUNCTION) {
+//! An order of the files: the minimum or the maximum of a column in the file, with a direction
+static void ReadFileOrder(const DuckLakeTableEntry &table, const RESTFileOrder &order, FilterPushdownInfo &filters) {
+	if (order.function != "min" && order.function != "max") {
 		return;
 	}
-	auto function = StringUtil::Lower(node.expression->Cast<FunctionExpression>().FunctionName().GetIdentifierName());
-	if (function != "min" && function != "max") {
-		return;
-	}
-	vector<reference<const ParsedExpression>> arguments;
-	ParsedExpressionIterator::EnumerateChildren(*node.expression,
-	                                            [&](const ParsedExpression &child) { arguments.push_back(child); });
-	if (arguments.size() != 1 || arguments[0].get().GetExpressionClass() != ExpressionClass::COLUMN_REF) {
-		return;
-	}
-	auto field = ResolveColumn(table, arguments[0].get().Cast<ColumnRefExpression>());
+	auto field = table.GetFieldData().GetByFieldIndex(FieldIndex(order.column_id));
 	if (!field) {
 		return;
 	}
-	filters.file_order.push_back(
-	    {field->GetFieldIndex().index, function == "max", node.type == OrderType::DESCENDING, field->Type()});
+	filters.file_order.push_back({order.column_id, order.function == "max", order.sort_order == "DESC", field->Type()});
 }
 
 unique_ptr<FilterPushdownInfo> DuckLakeRESTFilters::Read(ClientContext &context, const RESTScanFilters &filters,
@@ -535,14 +526,8 @@ unique_ptr<FilterPushdownInfo> DuckLakeRESTFilters::Read(ClientContext &context,
 		}
 	}
 	result->runtime_filter_columns = filters.runtime_filter_columns;
-	for (auto &order_by : filters.order_by) {
-		try {
-			for (auto &node : Parser::GetBuiltinParser().ParseOrderList(order_by)) {
-				ReadFileOrder(table, node, *result);
-			}
-		} catch (std::exception &) {
-			// filters are optional
-		}
+	for (auto &order : filters.order_by) {
+		ReadFileOrder(table, order, *result);
 	}
 	return result;
 }
