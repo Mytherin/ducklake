@@ -362,11 +362,11 @@ string PostgresMetadataManager::GetLatestSnapshotQuery() const {
 }
 
 string PostgresMetadataManager::GenerateFileListQuery(DuckLakeTableEntry &table, const FilterPushdownInfo *filter_info,
-                                                      const vector<DuckLakeFileListDynamicFilter> &dynamic_filters,
+                                                      const vector<DuckLakeFileListOrder> &file_order,
                                                       const vector<idx_t> &runtime_filter_stats_columns,
                                                       FileListType file_list_type, const string &) {
 	auto remote_query = DuckLakeMetadataManager::GenerateFileListQuery(
-	    table, filter_info, dynamic_filters, runtime_filter_stats_columns, file_list_type, "{METADATA_SCHEMA_ESCAPED}");
+	    table, filter_info, file_order, runtime_filter_stats_columns, file_list_type, "{METADATA_SCHEMA_ESCAPED}");
 
 	return StringUtil::Format("SELECT * FROM postgres_query({METADATA_CATALOG_NAME_LITERAL}, %s)",
 	                          SQLString(remote_query));

@@ -1187,26 +1187,6 @@ RESTDroppedFile DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 	return result;
 }
 
-JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTDynamicFilter &value) {
-	auto result = writer.CreateObject();
-	result.Add("column_id", RESTWriteValue<RESTUInt64Codec>(writer, value.column_id));
-	result.Add("comparison_type", RESTWriteValue<RESTStringCodec>(writer, value.comparison_type));
-	result.Add("type", RESTWriteValue<RESTLogicalTypeCodec>(writer, value.type));
-	return result;
-}
-
-template <>
-RESTDynamicFilter DuckLakeRESTSerializer::Read(RESTJsonIn in) {
-	if (!in.IsNull() && !in.IsObject()) {
-		throw InvalidInputException("DuckLake REST: expected a JSON object for DynamicFilter");
-	}
-	RESTDynamicFilter result;
-	RESTReadValue<RESTUInt64Codec>(in.Get("column_id"), result.column_id);
-	RESTReadValue<RESTStringCodec>(in.Get("comparison_type"), result.comparison_type);
-	RESTReadValue<RESTLogicalTypeCodec>(in.Get("type"), result.type);
-	return result;
-}
-
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTErrorInfo &value) {
 	auto result = writer.CreateObject();
 	result.Add("type", RESTWriteValue<RESTStringCodec>(writer, value.type));
@@ -2396,8 +2376,7 @@ RESTRowSet DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 JSONMutableValue DuckLakeRESTSerializer::Write(JSONWriter &writer, const RESTScanFilters &value) {
 	auto result = writer.CreateObject();
 	result.Add("expressions", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.expressions));
-	result.Add("dynamic_filters",
-	           RESTWriteValue<RESTListCodec<RESTObjectCodec<RESTDynamicFilter>>>(writer, value.dynamic_filters));
+	result.Add("order_by", RESTWriteValue<RESTListCodec<RESTStringCodec>>(writer, value.order_by));
 	result.Add("runtime_filter_columns",
 	           RESTWriteValue<RESTListCodec<RESTUInt64Codec>>(writer, value.runtime_filter_columns));
 	return result;
@@ -2416,9 +2395,9 @@ RESTScanFilters DuckLakeRESTSerializer::Read(RESTJsonIn in) {
 		}
 	}
 	{
-		auto entry = in.TryGet("dynamic_filters");
+		auto entry = in.TryGet("order_by");
 		if (!entry.IsNull()) {
-			RESTReadValue<RESTListCodec<RESTObjectCodec<RESTDynamicFilter>>>(entry, result.dynamic_filters);
+			RESTReadValue<RESTListCodec<RESTStringCodec>>(entry, result.order_by);
 		}
 	}
 	{

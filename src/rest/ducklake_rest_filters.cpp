@@ -8,6 +8,7 @@
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -232,11 +233,16 @@ RESTScanFilters DuckLakeRESTFilters::Write(const FilterPushdownInfo &filters, co
 			annotated_shared_lock<annotated_shared_mutex> guard(dynamic_filter_data->lock);
 			comparison_type = dynamic_filter_data->comparison_type;
 		}
-		RESTDynamicFilter dynamic_filter;
-		dynamic_filter.column_id = filter.column_field_index;
-		dynamic_filter.comparison_type = EnumUtil::ToString(comparison_type);
-		dynamic_filter.type = filter.column_type;
-		result.dynamic_filters.push_back(std::move(dynamic_filter));
+		// a top-N reads the files with the best values first
+		auto column_sql = ColumnSQL(table, filter.column_field_index);
+		bool seeking_high_values = comparison_type == ExpressionType::COMPARE_GREATERTHAN ||
+		                           comparison_type == ExpressionType::COMPARE_GREATERTHANOREQUALTO;
+		bool seeking_low_values = comparison_type == ExpressionType::COMPARE_LESSTHAN ||
+		                          comparison_type == ExpressionType::COMPARE_LESSTHANOREQUALTO;
+		if (!column_sql.empty() && result.order_by.empty() && (seeking_high_values || seeking_low_values)) {
+			result.order_by.push_back(seeking_high_values ? "max(" + column_sql + ") DESC"
+			                                              : "min(" + column_sql + ") ASC");
+		}
 		result.runtime_filter_columns.push_back(filter.column_field_index);
 	}
 	return result;
@@ -475,6 +481,29 @@ static void AddColumnFilter(FilterPushdownInfo &filters, ColumnFilterInfo filter
 	existing.table_filter = make_uniq<ExpressionFilter>(std::move(combined));
 }
 
+//! An order of the files: the minimum or the maximum of a column in the file, with a direction (e.g. `max(i) DESC`)
+static void ReadFileOrder(const DuckLakeTableEntry &table, const OrderByNode &node, FilterPushdownInfo &filters) {
+	if (node.expression->GetExpressionClass() != ExpressionClass::FUNCTION) {
+		return;
+	}
+	auto function = StringUtil::Lower(node.expression->Cast<FunctionExpression>().FunctionName().GetIdentifierName());
+	if (function != "min" && function != "max") {
+		return;
+	}
+	vector<reference<const ParsedExpression>> arguments;
+	ParsedExpressionIterator::EnumerateChildren(*node.expression,
+	                                            [&](const ParsedExpression &child) { arguments.push_back(child); });
+	if (arguments.size() != 1 || arguments[0].get().GetExpressionClass() != ExpressionClass::COLUMN_REF) {
+		return;
+	}
+	auto field = ResolveColumn(table, arguments[0].get().Cast<ColumnRefExpression>());
+	if (!field) {
+		return;
+	}
+	filters.file_order.push_back(
+	    {field->GetFieldIndex().index, function == "max", node.type == OrderType::DESCENDING, field->Type()});
+}
+
 unique_ptr<FilterPushdownInfo> DuckLakeRESTFilters::Read(ClientContext &context, const RESTScanFilters &filters,
                                                          const DuckLakeTableEntry &table) {
 	auto result = make_uniq<FilterPushdownInfo>();
@@ -506,10 +535,14 @@ unique_ptr<FilterPushdownInfo> DuckLakeRESTFilters::Read(ClientContext &context,
 		}
 	}
 	result->runtime_filter_columns = filters.runtime_filter_columns;
-	for (auto &dynamic_filter : filters.dynamic_filters) {
-		result->dynamic_filters.push_back({dynamic_filter.column_id,
-		                                   EnumUtil::FromString<ExpressionType>(dynamic_filter.comparison_type),
-		                                   dynamic_filter.type});
+	for (auto &order_by : filters.order_by) {
+		try {
+			for (auto &node : Parser::GetBuiltinParser().ParseOrderList(order_by)) {
+				ReadFileOrder(table, node, *result);
+			}
+		} catch (std::exception &) {
+			// filters are optional
+		}
 	}
 	return result;
 }

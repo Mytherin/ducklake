@@ -168,9 +168,12 @@ struct DuckLakeFilterTree {
 	}
 };
 
-struct DuckLakeFileListDynamicFilter {
+//! An order of the files: by the minimum or by the maximum of a column in the files
+struct DuckLakeFileListOrder {
 	idx_t column_field_index;
-	ExpressionType comparison_type;
+	//! Order by the maximum of the column in the file instead of the minimum
+	bool use_max;
+	bool descending;
 	LogicalType column_type;
 };
 
@@ -181,8 +184,8 @@ struct FilterPushdownInfo {
 	vector<DuckLakeFilterTree> filter_trees;
 	//! Columns whose file min/max statistics are returned with the files, for filters evaluated at runtime
 	vector<idx_t> runtime_filter_columns;
-	//! Dynamic filters whose state is not available, the files are ordered to make them prune early
-	vector<DuckLakeFileListDynamicFilter> dynamic_filters;
+	//! The order of the files, e.g. to make the dynamic filters of a top-N prune early
+	vector<DuckLakeFileListOrder> file_order;
 
 	FilterPushdownInfo() = default;
 
@@ -199,7 +202,7 @@ struct FilterPushdownInfo {
 			result->filter_trees.push_back(tree.Copy());
 		}
 		result->runtime_filter_columns = runtime_filter_columns;
-		result->dynamic_filters = dynamic_filters;
+		result->file_order = file_order;
 		return result;
 	}
 };
@@ -677,7 +680,7 @@ protected:
 	static string GenerateFileColumnStatsCTEBody(const CTERequirement &req, TableIndex table_id,
 	                                             const string &metadata_table_prefix);
 	virtual string GenerateFileListQuery(DuckLakeTableEntry &table, const FilterPushdownInfo *filter_info,
-	                                     const vector<DuckLakeFileListDynamicFilter> &dynamic_filters,
+	                                     const vector<DuckLakeFileListOrder> &file_order,
 	                                     const vector<idx_t> &runtime_filter_stats_columns,
 	                                     FileListType file_list_type = FileListType::SCAN,
 	                                     const string &metadata_table_prefix = "{METADATA_CATALOG}");

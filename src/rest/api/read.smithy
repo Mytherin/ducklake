@@ -314,21 +314,6 @@ enum SnapshotBound {
     LOWER = "lower"
 }
 
-/// A filter whose value is only known while the scan runs (e.g. of a top-N).
-structure DynamicFilter {
-    /// The column.
-    @required
-    column_id: UInt64
-
-    /// The comparison, as a DuckDB `ExpressionType` (e.g. `COMPARE_GREATERTHAN`).
-    @required
-    comparison_type: String
-
-    /// The type of the column.
-    @required
-    type: LogicalType
-}
-
 /// Filters of a scan. Filters are optional: a server may ignore them, and a client applies them to the scanned rows
 /// regardless.
 ///
@@ -338,21 +323,22 @@ structure DynamicFilter {
 /// constants, `IS [NOT] NULL`, and `AND` / `OR` combinations of those. The server ignores the other parts, and leaves
 /// out an `OR` entirely if it does not understand one of its parts.
 ///
-/// `dynamic_filters` let the server order the files so that these filters can prune files early. For
-/// `runtime_filter_columns` the server returns the min/max statistics of the files in `column_min_max`, so the client
-/// can prune files at runtime.
+/// `order_by` is the order of the files, as SQL ordering terms over the minimum or the maximum of a column in a file
+/// (`min(i) ASC`, `max(i) DESC`). The files without statistics come last. A top-N uses it to read the files with the
+/// best values first, so that its bound prunes the other files early. For `runtime_filter_columns` the server returns
+/// the min/max statistics of the files in `column_min_max`, so the client can prune files at runtime.
 ///
 /// ```json
 /// {"expressions": ["i >= 150", "s = 'a' OR st.a IN (1, 2)"],
-///  "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "int32"}}],
+///  "order_by": ["max(i) DESC"],
 ///  "runtime_filter_columns": [1]}
 /// ```
 structure ScanFilters {
     /// SQL expressions that hold for all rows of the scan.
     expressions: StringList = []
 
-    /// Filters whose value is only known while the scan runs.
-    dynamic_filters: DynamicFilterList = []
+    /// The order of the files, e.g. `max(i) DESC`.
+    order_by: StringList = []
 
     /// The columns to return the min/max statistics of.
     runtime_filter_columns: UInt64List = []

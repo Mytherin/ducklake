@@ -949,16 +949,6 @@ A data file that is deleted entirely.
 | `record_count` | `uint64` | The number of rows of the file. |
 | `file_size_bytes` | `uint64` | The size of the file. |
 
-### `DynamicFilter`
-
-A filter whose value is only known while the scan runs (e.g. of a top-N).
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `column_id` | `uint64` | The column. |
-| `comparison_type` | `string` | The comparison, as a DuckDB `ExpressionType` (e.g. `COMPARE_GREATERTHAN`). |
-| `type` | `logical_type` | The type of the column. |
-
 ### `ErrorInfo`
 
 The details of an error.
@@ -1293,20 +1283,21 @@ columns with the parts of the expressions it understands: comparisons of a colum
 constants, `IS [NOT] NULL`, and `AND` / `OR` combinations of those. The server ignores the other parts, and leaves
 out an `OR` entirely if it does not understand one of its parts.
 
-`dynamic_filters` let the server order the files so that these filters can prune files early. For
-`runtime_filter_columns` the server returns the min/max statistics of the files in `column_min_max`, so the client
-can prune files at runtime.
+`order_by` is the order of the files, as SQL ordering terms over the minimum or the maximum of a column in a file
+(`min(i) ASC`, `max(i) DESC`). The files without statistics come last. A top-N uses it to read the files with the
+best values first, so that its bound prunes the other files early. For `runtime_filter_columns` the server returns
+the min/max statistics of the files in `column_min_max`, so the client can prune files at runtime.
 
 ```json
 {"expressions": ["i >= 150", "s = 'a' OR st.a IN (1, 2)"],
- "dynamic_filters": [{"column_id": 1, "comparison_type": "COMPARE_GREATERTHAN", "type": {"id": "int32"}}],
+ "order_by": ["max(i) DESC"],
  "runtime_filter_columns": [1]}
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `expressions` | list of `string` (default `[]`) | SQL expressions that hold for all rows of the scan. |
-| `dynamic_filters` | list of [`DynamicFilter`](#dynamicfilter) (default `[]`) | Filters whose value is only known while the scan runs. |
+| `order_by` | list of `string` (default `[]`) | The order of the files, e.g. `max(i) DESC`. |
 | `runtime_filter_columns` | list of `uint64` (default `[]`) | The columns to return the min/max statistics of. |
 
 ### `SchemaInfo`

@@ -126,7 +126,6 @@ struct RESTCompactionResult;
 struct RESTCreatedEntry;
 struct RESTDropNotNull;
 struct RESTDroppedFile;
-struct RESTDynamicFilter;
 struct RESTErrorInfo;
 struct RESTErrorResponse;
 struct RESTFileRowDeletes;
@@ -245,7 +244,6 @@ struct DuckLakeRESTSerializer {
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeDeleteScanEntry &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDropNotNull &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTDroppedFile &value);
-	static JSONMutableValue Write(JSONWriter &writer, const RESTDynamicFilter &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTErrorInfo &value);
 	static JSONMutableValue Write(JSONWriter &writer, const RESTErrorResponse &value);
 	static JSONMutableValue Write(JSONWriter &writer, const DuckLakeFileColumnStats &value);
@@ -361,8 +359,6 @@ template <>
 RESTDropNotNull DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTDroppedFile DuckLakeRESTSerializer::Read(RESTJsonIn in);
-template <>
-RESTDynamicFilter DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
 RESTErrorInfo DuckLakeRESTSerializer::Read(RESTJsonIn in);
 template <>
@@ -776,16 +772,6 @@ struct RESTDroppedFile {
 	idx_t file_size_bytes = 0;
 };
 
-//! A filter whose value is only known while the scan runs (e.g. of a top-N).
-struct RESTDynamicFilter {
-	//! The column.
-	idx_t column_id = 0;
-	//! The comparison, as a DuckDB `ExpressionType` (e.g. `COMPARE_GREATERTHAN`).
-	string comparison_type;
-	//! The type of the column.
-	LogicalType type;
-};
-
 //! The details of an error.
 struct RESTErrorInfo {
 	//! The type of the DuckDB exception, e.g. `Catalog`.
@@ -937,8 +923,8 @@ struct RESTRetryConfig {
 struct RESTScanFilters {
 	//! SQL expressions that hold for all rows of the scan.
 	vector<string> expressions;
-	//! Filters whose value is only known while the scan runs.
-	vector<RESTDynamicFilter> dynamic_filters;
+	//! The order of the files, e.g. `max(i) DESC`.
+	vector<string> order_by;
 	//! The columns to return the min/max statistics of.
 	vector<idx_t> runtime_filter_columns;
 };

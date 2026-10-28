@@ -2161,11 +2161,11 @@ string DuckLakeMetadataManager::BuildBucketPartitionPruningClause(DuckLakeTableE
 }
 
 string DuckLakeMetadataManager::GenerateFileListQuery(DuckLakeTableEntry &table, const FilterPushdownInfo *filter_info,
-                                                      const vector<DuckLakeFileListDynamicFilter> &dynamic_filters,
+                                                      const vector<DuckLakeFileListOrder> &file_order,
                                                       const vector<idx_t> &runtime_filter_stats_columns,
                                                       FileListType file_list_type,
                                                       const string &metadata_table_prefix) {
-	D_ASSERT(file_list_type == FileListType::SCAN || dynamic_filters.empty());
+	D_ASSERT(file_list_type == FileListType::SCAN || file_order.empty());
 	D_ASSERT(file_list_type == FileListType::SCAN || runtime_filter_stats_columns.empty());
 	FilterSQLResult filter_result;
 	if (filter_info && !filter_info->Empty()) {
@@ -2190,6 +2190,12 @@ string DuckLakeMetadataManager::GenerateFileListQuery(DuckLakeTableEntry &table,
 		entry->second.referenced_stats.insert("max_value");
 		entry->second.referenced_stats.insert("contains_nan");
 	}
+	for (auto &order : file_order) {
+		auto entry =
+		    filter_result.required_ctes.emplace(order.column_field_index, CTERequirement(order.column_field_index, {}))
+		        .first;
+		entry->second.referenced_stats.insert(order.use_max ? "max_value" : "min_value");
+	}
 	string query = GenerateCTESectionFromRequirements(filter_result.required_ctes, table_id, metadata_table_prefix);
 	// one join per column serves both the filter conditions and the runtime stats below
 	string stats_join_list = GenerateStatsJoinList(filter_result.required_ctes);
@@ -2203,32 +2209,19 @@ string DuckLakeMetadataManager::GenerateFileListQuery(DuckLakeTableEntry &table,
 		    cte_name, StatsColumn(cte_name, "max_value"), cte_name, StatsColumn(cte_name, "contains_nan"), cte_name);
 	}
 
-	for (const auto &dynamic_filter : dynamic_filters) {
-		auto cte_name = StatsCteName(dynamic_filter.column_field_index);
-		// Generate ORDER BY clause to optimize Top-N queries - order files by their min/max stats
-		// so we find satisfying rows early and can skip remaining files via dynamic filter pruning.
-		// We only order by the first dynamic filter column: Top-N typically has a single ordering column,
-		// and multiple columns would have conflicting requirements (e.g., ORDER BY a DESC, b ASC).
-		if (order_by_clause.empty()) {
-			const bool seeking_high_values =
-			    dynamic_filter.comparison_type == ExpressionType::COMPARE_GREATERTHAN ||
-			    dynamic_filter.comparison_type == ExpressionType::COMPARE_GREATERTHANOREQUALTO;
-			const bool seeking_low_values = dynamic_filter.comparison_type == ExpressionType::COMPARE_LESSTHAN ||
-			                                dynamic_filter.comparison_type == ExpressionType::COMPARE_LESSTHANOREQUALTO;
-			if (seeking_high_values) {
-				// For DESC Top-N (seeking high values), order by max_value DESC so files with highest values come first
-				auto cast_expr = CastStatsToTarget(StatsColumn(cte_name, "max_value"), dynamic_filter.column_type);
-				if (!cast_expr.empty()) {
-					order_by_clause = StringUtil::Format("\nORDER BY %s DESC NULLS LAST", cast_expr);
-				}
-			} else if (seeking_low_values) {
-				// For ASC Top-N (seeking low values), order by min_value ASC so files with lowest values come first
-				auto cast_expr = CastStatsToTarget(StatsColumn(cte_name, "min_value"), dynamic_filter.column_type);
-				if (!cast_expr.empty()) {
-					order_by_clause = StringUtil::Format("\nORDER BY %s ASC NULLS LAST", cast_expr);
-				}
-			}
+	// the order of the files, e.g. the files with the highest values of a top-N come first, so that the bound of the
+	// top-N prunes the other files early
+	vector<string> order_terms;
+	for (const auto &order : file_order) {
+		auto cte_name = StatsCteName(order.column_field_index);
+		auto cast_expr =
+		    CastStatsToTarget(StatsColumn(cte_name, order.use_max ? "max_value" : "min_value"), order.column_type);
+		if (!cast_expr.empty()) {
+			order_terms.push_back(cast_expr + (order.descending ? " DESC" : " ASC") + " NULLS LAST");
 		}
+	}
+	if (!order_terms.empty()) {
+		order_by_clause = "\nORDER BY " + StringUtil::Join(order_terms, ", ");
 	}
 
 	string select_list;
@@ -2271,7 +2264,7 @@ DuckLakeMetadataManager::GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSna
 	auto table_id = table.GetTableId();
 
 	// Runtime filters are evaluated against file-level min/max stats before opening the file.
-	vector<DuckLakeFileListDynamicFilter> dynamic_filter_columns;
+	vector<DuckLakeFileListOrder> file_order;
 	vector<idx_t> runtime_filter_stats_columns;
 	if (filter_info) {
 		for (auto &entry : filter_info->column_filters) {
@@ -2285,15 +2278,24 @@ DuckLakeMetadataManager::GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSna
 					annotated_shared_lock<annotated_shared_mutex> l(dynamic_filter_data->lock);
 					comparison_type = dynamic_filter_data->comparison_type;
 				}
-				dynamic_filter_columns.push_back(
-				    {col_filter.column_field_index, comparison_type, col_filter.column_type});
+				// only one column orders the files: a top-N typically has a single ordering column, and several
+				// columns would have conflicting requirements (e.g. ORDER BY a DESC, b ASC)
+				const bool seeking_high_values = comparison_type == ExpressionType::COMPARE_GREATERTHAN ||
+				                                 comparison_type == ExpressionType::COMPARE_GREATERTHANOREQUALTO;
+				const bool seeking_low_values = comparison_type == ExpressionType::COMPARE_LESSTHAN ||
+				                                comparison_type == ExpressionType::COMPARE_LESSTHANOREQUALTO;
+				if (file_order.empty() && (seeking_high_values || seeking_low_values)) {
+					// the files with the highest maximum (or the lowest minimum) come first
+					file_order.push_back({col_filter.column_field_index, seeking_high_values, seeking_high_values,
+					                      col_filter.column_type});
+				}
 			}
 			if (dynamic_filter_data || has_prefix_range_filter) {
 				runtime_filter_stats_columns.push_back(col_filter.column_field_index);
 			}
 		}
-		for (auto &dynamic_filter : filter_info->dynamic_filters) {
-			dynamic_filter_columns.push_back(dynamic_filter);
+		for (auto &order : filter_info->file_order) {
+			file_order.push_back(order);
 		}
 		for (auto column_field_index : filter_info->runtime_filter_columns) {
 			if (std::find(runtime_filter_stats_columns.begin(), runtime_filter_stats_columns.end(),
@@ -2303,7 +2305,7 @@ DuckLakeMetadataManager::GetFilesForTable(DuckLakeTableEntry &table, DuckLakeSna
 		}
 	}
 
-	auto query = GenerateFileListQuery(table, filter_info, dynamic_filter_columns, runtime_filter_stats_columns);
+	auto query = GenerateFileListQuery(table, filter_info, file_order, runtime_filter_stats_columns);
 	auto result = Query(snapshot, query);
 	result->ThrowIfError("Failed to get data file list from DuckLake: ");
 

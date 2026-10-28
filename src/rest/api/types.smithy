@@ -1048,10 +1048,6 @@ list DroppedFileList {
     member: DroppedFile
 }
 
-list DynamicFilterList {
-    member: DynamicFilter
-}
-
 list FileColumnStatsEntryList {
     member: FileColumnStatsEntry
 }
