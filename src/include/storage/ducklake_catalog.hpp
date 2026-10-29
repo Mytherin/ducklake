@@ -29,6 +29,9 @@
 #include <mutex>
 
 namespace duckdb {
+class DuckLakeRESTClient;
+struct CreateMacroInfo;
+struct DuckLakeMacroInfo;
 struct DuckLakeCopyInput;
 struct DuckLakeGlobalStatsInfo;
 class DuckLakeCatalog;
@@ -135,6 +138,10 @@ private:
 
 enum class InlinedDeletionCacheResult { EXISTS, DOES_NOT_EXIST, UNKNOWN };
 
+//! The CREATE MACRO info of a macro stored in DuckLake
+unique_ptr<CreateMacroInfo> CreateMacroInfoFromDucklake(ClientContext &context, DuckLakeMacroInfo &macro,
+                                                        string schema_name);
+
 class DuckLakeCatalog : public Catalog {
 public:
 	// default target file size: 512MB
@@ -165,6 +172,10 @@ public:
 	}
 	const string &MetadataType() const {
 		return metadata_type;
+	}
+	//! Whether the catalog attaches a metadata database, rather than reading its metadata from a REST server
+	bool OwnsMetadataDatabase() const {
+		return metadata_type != "rest";
 	}
 	bool IsInitialized() const {
 		return initialized;
@@ -256,6 +267,9 @@ public:
 	//! The committed table at the snapshot, without the changes of the transaction
 	optional_ptr<CatalogEntry> GetEntryById(DuckLakeTransaction &transaction, DuckLakeSnapshot snapshot,
 	                                        TableIndex table_id);
+	//! The committed macro at the snapshot
+	optional_ptr<CatalogEntry> GetEntryById(DuckLakeTransaction &transaction, DuckLakeSnapshot snapshot,
+	                                        MacroIndex macro_id);
 	string GeneratePathFromName(const string &uuid, const string &name);
 
 	bool InMemory() override;
@@ -350,6 +364,22 @@ public:
 		return metadata_query_lock;
 	}
 
+	//! Connects to the REST server that serves the metadata, for REST catalogs
+	void ConnectREST();
+	//! Whether the metadata is served by a REST server
+	bool IsREST() const {
+		return rest_client != nullptr;
+	}
+	//! The ids of the name maps that are loaded
+	set<idx_t> GetLoadedNameMapIds();
+	//! Adds name maps that are not loaded yet, e.g. the ones that a REST server returns with a scan
+	void AddNameMaps(vector<DuckLakeColumnMappingInfo> column_mappings);
+	//! The client of the REST server that serves the metadata, for REST catalogs
+	DuckLakeRESTClient &GetRESTClient();
+	DuckLakeOptions &GetOptions() {
+		return options;
+	}
+
 	shared_ptr<const DuckLakeNameMap> TryGetMappingById(DuckLakeTransaction &transaction, MappingIndex mapping_id);
 	MappingIndex TryGetCompatibleNameMap(DuckLakeTransaction &transaction, const DuckLakeNameMap &name_map);
 	idx_t GetBeginSnapshotForTable(TableIndex table_id, DuckLakeTransaction &transaction);
@@ -435,6 +465,8 @@ private:
 	atomic<idx_t> last_uncommitted_catalog_version;
 	//! The metadata server type
 	string metadata_type;
+	//! The client of the REST server that serves the metadata, for REST catalogs
+	unique_ptr<DuckLakeRESTClient> rest_client;
 	//! The resolved DuckLake spec version of the attached catalog
 	DuckLakeVersion ducklake_version = DuckLakeVersion::V1_0;
 	//! A per-instance identifier used to scope ObjectCache keys.

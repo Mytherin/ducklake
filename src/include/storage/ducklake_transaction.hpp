@@ -108,6 +108,8 @@ public:
 	LocalTableChangeIterationHelper Changes() const;
 	void CleanupFiles(DatabaseInstance &db);
 	void CleanupFiles(ClientContext &context, TableIndex table_id);
+	//! Forgets the changes of a table, the files stay
+	void Forget(TableIndex table_id);
 	void GetWrittenFiles(vector<string> &result) const;
 	bool HasTransactionLocalInserts(TableIndex table_id) const;
 	bool HasTransactionInlinedData(TableIndex table_id) const;
@@ -217,6 +219,14 @@ public:
 	void PinSchemaCacheEntry(shared_ptr<DuckLakeSchemaCacheEntry> entry);
 
 	DuckLakeSnapshot GetSnapshot();
+	//! Pins the snapshot that the transaction operates on
+	void SetSnapshot(DuckLakeSnapshot new_snapshot);
+	//! The snapshot written by the commit of this transaction, invalid if it did not write one
+	DuckLakeSnapshot GetCommittedSnapshot() const;
+	//! The ids that the commit gave the tables and views the transaction created, by their transaction-local id
+	const ducklake_entry_oids_t &GetCommittedEntryOids() const;
+	//! The options that the commit gave the tables the transaction created or altered
+	const vector<DuckLakeConfigOption> &GetCommittedTableOptions() const;
 	DuckLakeSnapshot GetSnapshot(optional_ptr<BoundAtClause> at_clause,
 	                             SnapshotBound bound = SnapshotBound::UPPER_BOUND);
 	//! The newest snapshot that the transaction sees, also when the catalog is opened at a fixed snapshot
@@ -292,6 +302,10 @@ public:
 	bool InlinedFileDeletionsFlushed(TableIndex table_id);
 
 	bool ChangesMade() const;
+	//! The files of the transaction were written by a client of a REST server, which cleans them up itself
+	void SetFilesOwnedByClient() {
+		files_owned_by_client = true;
+	}
 	bool SchemaChangesMade() const;
 	idx_t GetLocalCatalogId();
 	static bool IsTransactionLocal(idx_t id) {
@@ -402,6 +416,8 @@ private:
 	//! catalog is opened at a fixed snapshot
 	mutex snapshot_lock;
 	unique_ptr<DuckLakeSnapshot> snapshot;
+	//! The snapshot written by the commit of this transaction
+	DuckLakeSnapshot committed_snapshot;
 	idx_t local_catalog_id;
 	//! Set when this transaction inlines into a table that does not yet have an inlined-data table
 	atomic<bool> requires_new_inlined_table {false};
@@ -421,6 +437,9 @@ private:
 	vector<DuckLakeConfigOptionUndo> config_option_undo;
 
 	atomic<idx_t> catalog_version;
+
+private:
+	bool files_owned_by_client = false;
 };
 
 } // namespace duckdb

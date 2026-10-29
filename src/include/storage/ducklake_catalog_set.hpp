@@ -35,7 +35,9 @@ public:
 	optional_ptr<CatalogEntry> GetEntry(const string &name);
 	unique_ptr<CatalogEntry> DropEntry(const string &name);
 	optional_ptr<CatalogEntry> GetEntryById(SchemaIndex index);
+	//! Tables and views
 	optional_ptr<CatalogEntry> GetEntryById(TableIndex index);
+	optional_ptr<CatalogEntry> GetEntryById(MacroIndex index);
 	void AddEntry(DuckLakeSchemaEntry &schema, TableIndex id, unique_ptr<CatalogEntry> entry);
 	void AddEntry(DuckLakeSchemaEntry &schema, MacroIndex id, unique_ptr<CatalogEntry> entry);
 	void MoveEntriesTo(vector<unique_ptr<CatalogEntry>> &result);
