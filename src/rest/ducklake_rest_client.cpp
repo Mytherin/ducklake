@@ -59,6 +59,7 @@ unique_ptr<duckdb_httplib::Client> DuckLakeRESTClient::GetConnection(bool &reuse
 	reused = false;
 	auto connection = make_uniq<duckdb_httplib::Client>(server_url);
 	connection->set_keep_alive(true);
+	connection->set_tcp_nodelay(true);
 	connection->set_read_timeout(300, 0);
 	connection->set_write_timeout(300, 0);
 	return connection;

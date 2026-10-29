@@ -243,6 +243,7 @@ int32_t DuckLakeRESTServer::HandleRequest(const RESTRoute &route, optional_ptr<c
 
 idx_t DuckLakeRESTServer::Start(const string &host, idx_t port, idx_t thread_count) {
 	server = make_uniq<duckdb_httplib::Server>();
+	server->set_tcp_nodelay(true);
 	if (thread_count > 0) {
 		server->new_task_queue = [thread_count]() {
 			return new duckdb_httplib::ThreadPool(thread_count);
