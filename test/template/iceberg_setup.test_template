@@ -1,0 +1,13 @@
+# Starts an Iceberg REST server for a DuckLake in a database of its own and exposes its address as {iceberg_server}
+
+require ducklake
+
+require parquet
+
+statement ok iceberg_db:iceberg_server_con
+ATTACH 'ducklake:{TEST_DIR}/{BASE_TEST_NAME}_iceberg_server.db' AS iceberg_lake (DATA_PATH '{TEST_DIR}/{BASE_TEST_NAME}_iceberg_files', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok iceberg_db:iceberg_server_con
+SET VARIABLE iceberg_listen_uri = (SELECT listen_uri FROM ducklake_iceberg_serve('iceberg_lake', metadata_path := '{TEST_DIR}/{BASE_TEST_NAME}_iceberg_metadata'))
+
+set variable iceberg_server <variable:iceberg_server_con:iceberg_listen_uri>

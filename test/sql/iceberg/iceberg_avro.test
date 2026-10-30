@@ -1,0 +1,68 @@
+# name: test/sql/iceberg/iceberg_avro.test
+# description: Test the Avro object container file reader (ducklake_avro_read / ducklake_avro_schema)
+# group: [iceberg]
+
+require ducklake
+
+# manifest list written by pyiceberg (deflate codec)
+query I
+SELECT count(*) FROM ducklake_avro_read('test/data/iceberg/avro/manifest_list.avro')
+----
+1
+
+query IIII
+SELECT regexp_extract(record, '"manifest_length":(\d+)', 1), regexp_extract(record, '"added_files_count":(\d+)', 1),
+       regexp_extract(record, '"sequence_number":(\d+)', 1), regexp_extract(record, '"added_snapshot_id":(\d+)', 1)
+FROM ducklake_avro_read('test/data/iceberg/avro/manifest_list.avro')
+----
+5114	3	1	3226565289557663512
+
+# partition summaries: bytes are rendered as hex
+query I
+SELECT record LIKE '%"partitions":[{"contains_null":false,"contains_nan":false,"lower_bound":"78","upper_bound":"79"}%'
+FROM ducklake_avro_read('test/data/iceberg/avro/manifest_list.avro')
+----
+true
+
+# manifest with a partitioned data file (nested records, maps encoded as arrays, unions)
+query I
+SELECT count(*) FROM ducklake_avro_read('test/data/iceberg/avro/manifest_partitioned.avro')
+----
+3
+
+query III
+SELECT regexp_extract(record, '"record_count":(\d+)', 1), regexp_extract(record, '"partition":(\{[^}]*\})', 1),
+       regexp_extract(record, '"file_format":"(\w+)"', 1)
+FROM ducklake_avro_read('test/data/iceberg/avro/manifest_partitioned.avro')
+ORDER BY 2
+LIMIT 1
+----
+1	{"cat":"x","id_p":1}	PARQUET
+
+# header metadata and writer schema
+query I
+SELECT value FROM ducklake_avro_schema('test/data/iceberg/avro/manifest_partitioned.avro') WHERE key = 'format-version'
+----
+2
+
+query I
+SELECT value FROM ducklake_avro_schema('test/data/iceberg/avro/manifest_partitioned.avro') WHERE key = 'avro.codec'
+----
+deflate
+
+query I
+SELECT value LIKE '{"type": "record"%' FROM ducklake_avro_schema('test/data/iceberg/avro/manifest_partitioned.avro')
+WHERE key = 'avro.schema'
+----
+true
+
+# errors
+statement error
+SELECT * FROM ducklake_avro_read('test/data/iceberg/avro/does_not_exist.avro')
+----
+IO Error
+
+statement error
+SELECT * FROM ducklake_avro_read('test/data/iceberg/avro/manifest_list.avro', 1)
+----
+Binder Error

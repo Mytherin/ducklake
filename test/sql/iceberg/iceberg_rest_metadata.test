@@ -1,0 +1,146 @@
+# name: test/sql/iceberg/iceberg_rest_metadata.test
+# description: The Iceberg metadata of DuckLake tables: schema history, partitioning, inlined data and snapshots
+# group: [iceberg]
+
+require json
+
+include test/template/iceberg_setup.test_template
+
+statement ok iceberg_db:iceberg_server_con
+CREATE TABLE iceberg_lake.main.evolving(a INTEGER, b VARCHAR)
+
+statement ok iceberg_db:iceberg_server_con
+INSERT INTO iceberg_lake.main.evolving VALUES (1, 'x')
+
+statement ok iceberg_db:iceberg_server_con
+ALTER TABLE iceberg_lake.main.evolving ADD COLUMN c DOUBLE
+
+statement ok iceberg_db:iceberg_server_con
+ALTER TABLE iceberg_lake.main.evolving RENAME COLUMN b TO bb
+
+statement ok iceberg_db:iceberg_server_con
+INSERT INTO iceberg_lake.main.evolving VALUES (2, 'y', 1.5)
+
+statement ok
+SET VARIABLE evolving = (SELECT response FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces/main/tables/evolving', ''))
+
+# the history of the schema is part of the table metadata, with the field ids of DuckLake
+query I
+SELECT json_array_length(getvariable('evolving')->'$.metadata.schemas')
+----
+3
+
+query IIII
+SELECT getvariable('evolving')->>'$.metadata."current-schema-id"', getvariable('evolving')->>'$.metadata."last-column-id"',
+       getvariable('evolving')->>'$.metadata.schemas[2].fields[1].name', getvariable('evolving')->>'$.metadata.schemas[2].fields[2].id'
+----
+2	3	bb	3
+
+# the snapshots refer to the schema that was current
+query II
+SELECT getvariable('evolving')->>'$.metadata.snapshots[0]."schema-id"', getvariable('evolving')->>'$.metadata.snapshots[1]."schema-id"'
+----
+0	2
+
+# a partitioned table
+statement ok iceberg_db:iceberg_server_con
+CREATE TABLE iceberg_lake.main.partitioned(id BIGINT, ts TIMESTAMP, cat VARCHAR)
+
+statement ok iceberg_db:iceberg_server_con
+ALTER TABLE iceberg_lake.main.partitioned SET PARTITIONED BY (epoch_day(ts), cat, bucket(4, id))
+
+statement ok iceberg_db:iceberg_server_con
+INSERT INTO iceberg_lake.main.partitioned VALUES (1, '2021-03-04 05:06:07', 'a'), (2, '2021-03-05 05:06:07', 'b')
+
+statement ok
+SET VARIABLE partitioned = (SELECT response FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces/main/tables/partitioned', ''))
+
+query I
+SELECT getvariable('partitioned')->'$.metadata."partition-specs"'
+----
+[{"spec-id":0,"fields":[]},{"spec-id":1,"fields":[{"name":"ts_day","transform":"day","source-id":2,"field-id":1000},{"name":"cat","transform":"identity","source-id":3,"field-id":1001},{"name":"id_bucket","transform":"bucket[4]","source-id":1,"field-id":1002}]}]
+
+query II
+SELECT getvariable('partitioned')->>'$.metadata."default-spec-id"', getvariable('partitioned')->>'$.metadata."last-partition-id"'
+----
+1	1002
+
+# the manifest has the partition values of the files
+statement ok
+SET VARIABLE partitioned_list = getvariable('partitioned')->>'$.metadata.snapshots[0]."manifest-list"'
+
+statement ok
+SET VARIABLE partitioned_manifest = (SELECT record->>'$.manifest_path' FROM ducklake_avro_read(getvariable('partitioned_list')))
+
+query II
+SELECT record->>'$.data_file.record_count', record->'$.data_file.partition'
+FROM ducklake_avro_read(getvariable('partitioned_manifest')) ORDER BY record->>'$.data_file.partition'
+----
+1	{"ts_day":18690,"cat":"a","id_bucket":0}
+1	{"ts_day":18691,"cat":"b","id_bucket":0}
+
+# the specification of the partitioning is a header of the manifest
+query I
+SELECT value FROM ducklake_avro_schema(getvariable('partitioned_manifest')) WHERE key = 'partition-spec-id'
+----
+1
+
+# rows that DuckLake keeps in its catalog are written to a file for the snapshot
+statement ok iceberg_db:iceberg_server_con
+CALL iceberg_lake.set_option('data_inlining_row_limit', 10)
+
+statement ok iceberg_db:iceberg_server_con
+CREATE TABLE iceberg_lake.main.inlined(i INTEGER, s VARCHAR)
+
+statement ok iceberg_db:iceberg_server_con
+INSERT INTO iceberg_lake.main.inlined VALUES (1, 'a'), (2, 'b'), (3, 'c')
+
+statement ok iceberg_db:iceberg_server_con
+DELETE FROM iceberg_lake.main.inlined WHERE i = 2
+
+statement ok
+SET VARIABLE inlined = (SELECT response FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces/main/tables/inlined', ''))
+
+query II
+SELECT getvariable('inlined')->>'$.metadata.snapshots[0].summary."total-records"', json_array_length(getvariable('inlined')->'$.metadata.snapshots')
+----
+2	1
+
+statement ok
+SET VARIABLE inlined_list = getvariable('inlined')->>'$.metadata.snapshots[0]."manifest-list"'
+
+statement ok
+SET VARIABLE inlined_manifest = (SELECT record->>'$.manifest_path' FROM ducklake_avro_read(getvariable('inlined_list')))
+
+statement ok
+SET VARIABLE inlined_file = (SELECT record->>'$.data_file.file_path' FROM ducklake_avro_read(getvariable('inlined_manifest')))
+
+query II
+SELECT i, s FROM read_parquet(getvariable('inlined_file')) ORDER BY i
+----
+1	a
+3	c
+
+# the field ids of the file are the ids of the columns
+query II
+SELECT name, field_id FROM parquet_schema(getvariable('inlined_file')) WHERE field_id IS NOT NULL ORDER BY field_id
+----
+i	1
+s	2
+
+# a view
+statement ok iceberg_db:iceberg_server_con
+CREATE VIEW iceberg_lake.main.big AS SELECT i FROM iceberg_lake.main.inlined WHERE i > 2
+
+query II
+SELECT status, response->>'$.identifiers' FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces/main/views', '')
+----
+200	[{"namespace":["main"],"name":"big"}]
+
+query II
+SELECT response->>'$.metadata.versions[0].representations[0].dialect', response->>'$.metadata.schemas[0].fields[0].type'
+FROM ducklake_rest_request('{iceberg_server}', 'GET', '/v1/iceberg_lake/namespaces/main/views/big', '')
+----
+duckdb	int
+
+include test/template/iceberg_teardown.test_template
