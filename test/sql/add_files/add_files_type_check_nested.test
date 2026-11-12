@@ -70,7 +70,7 @@ BOOLEAN
 statement error
 CALL ducklake_add_data_files('ducklake', 'test', '{DATA_PATH}/int_list.parquet')
 ----
-LIST
+found type "INTEGER[]"
 
 statement ok
 CALL ducklake_add_data_files('ducklake', 'test', '{DATA_PATH}/int_struct.parquet')
@@ -94,7 +94,7 @@ BOOLEAN
 statement error
 CALL ducklake_add_data_files('ducklake', 'test', '{DATA_PATH}/int_list.parquet')
 ----
-LIST
+found type "INTEGER[]"
 
 statement ok
 CALL ducklake_add_data_files('ducklake', 'test', '{DATA_PATH}/int_map.parquet')

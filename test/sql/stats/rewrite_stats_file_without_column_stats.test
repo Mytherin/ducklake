@@ -1,0 +1,40 @@
+# name: test/sql/stats/rewrite_stats_file_without_column_stats.test
+# description: rewriting deletes recomputes the table stats when another file has no column stats
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/rewrite_stats_file_without_column_stats', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.t(i INTEGER)
+
+statement ok
+INSERT INTO ducklake.t SELECT i FROM range(10) r(i)
+
+statement ok
+INSERT INTO ducklake.t SELECT i FROM range(10, 20) r(i)
+
+statement ok
+DELETE FROM ducklake.t WHERE i < 8
+
+# the second file, which the rewrite does not touch, loses its column stats
+statement ok
+DELETE FROM __ducklake_metadata_ducklake.ducklake_file_column_stats WHERE data_file_id = (SELECT max(data_file_id) FROM __ducklake_metadata_ducklake.ducklake_data_file)
+
+query I
+SELECT files_processed FROM ducklake_rewrite_data_files('ducklake', 't', delete_threshold => 0.5)
+----
+1
+
+query III
+SELECT count(*), min(i), max(i) FROM ducklake.t
+----
+12	8	19

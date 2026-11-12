@@ -1,0 +1,44 @@
+# name: test/sql/stats/timestamptz_retype_infinite_bound.test
+# description: An infinite lower bound reads back after a retype to TIMESTAMPTZ while the finite upper bound without offset does not
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+require icu
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+SET TimeZone = 'UTC'
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/timestamptz_retype_infinite_bound', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.t(v TIMESTAMP)
+
+statement ok
+INSERT INTO ducklake.t VALUES ('-infinity'), ('2020-06-15 12:00:00')
+
+statement ok
+ALTER TABLE ducklake.t ALTER COLUMN v TYPE TIMESTAMPTZ
+
+# the naive upper bound is not used, so nothing is pruned
+query I
+SELECT count(*) FROM ducklake.t WHERE v > TIMESTAMPTZ '2020-01-01 00:00:00+00'
+----
+1
+
+query I
+SELECT count(*) FROM ducklake.t WHERE v < TIMESTAMPTZ '2020-01-01 00:00:00+00'
+----
+1
+
+query II
+SELECT min(v), max(v) FROM ducklake.t
+----
+-infinity	2020-06-15 12:00:00+00

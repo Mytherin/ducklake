@@ -1,0 +1,36 @@
+# name: test/sql/default/variant_and_expression_defaults.test
+# description: VARIANT, CASE and SQL value function defaults survive loading the table from the catalog
+# group: [default]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{BASE_TEST_NAME}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/variant_and_expression_defaults')
+
+# current_schema is parsed as a column reference and bound as a function
+statement ok
+CREATE TABLE ducklake.t(i INTEGER, v VARIANT DEFAULT 42, c INTEGER DEFAULT (CASE WHEN random() < 2 THEN 7 END), s VARCHAR DEFAULT current_schema)
+
+statement ok
+INSERT INTO ducklake.t (i) VALUES (1)
+
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/variant_and_expression_defaults')
+
+statement ok
+INSERT INTO ducklake.t (i) VALUES (2)
+
+query IIII
+SELECT i, v, c, s FROM ducklake.t ORDER BY i
+----
+1	42	7	main
+2	42	7	main

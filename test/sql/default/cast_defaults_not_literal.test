@@ -1,0 +1,45 @@
+# name: test/sql/default/cast_defaults_not_literal.test
+# description: Cast defaults that cannot be folded into a literal are kept as expressions
+# group: [default]
+
+require ducklake
+
+require parquet
+
+require json
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/cast_defaults_not_literal')
+
+# the cast fails, so the default is evaluated (and fails) when a row uses it
+statement ok
+CREATE TABLE ducklake.bad_default(i INTEGER, j INTEGER DEFAULT 'abc'::INTEGER)
+
+statement error
+INSERT INTO ducklake.bad_default (i) VALUES (1)
+----
+Could not convert string 'abc' to INT32
+
+statement ok
+INSERT INTO ducklake.bad_default VALUES (1, 2)
+
+query II
+FROM ducklake.bad_default
+----
+1	2
+
+# JSON is not a built-in type
+statement ok
+CREATE TABLE ducklake.json_default(i INTEGER, j JSON DEFAULT '{"k": 1}'::JSON)
+
+statement ok
+INSERT INTO ducklake.json_default (i) VALUES (1)
+
+query II
+FROM ducklake.json_default
+----
+1	{"k": 1}

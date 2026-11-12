@@ -20,6 +20,10 @@ class DuckLakeTypes {
 public:
 	static LogicalType FromString(const string &str);
 	static LogicalType FromColumnInfo(const DuckLakeColumnInfo &col);
+	//! Binds a DuckDB type string without catalog lookups, the types that are not built in are DuckLake types
+	static LogicalType FromDuckDBString(const string &type);
+	//! Binds a DuckDB type string in the context, child types it leaves unbound are DuckLake types
+	static LogicalType FromDuckDBString(const string &type, ClientContext &context);
 	static string ToString(const LogicalType &str);
 	static void CheckSupportedType(const LogicalType &type, DuckLakeVersion version);
 	static void CheckSupportedTypes(const ColumnList &columns, DuckLakeVersion version);

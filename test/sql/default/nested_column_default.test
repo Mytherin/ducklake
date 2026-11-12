@@ -1,0 +1,43 @@
+# name: test/sql/default/nested_column_default.test
+# description: Columns of nested types cannot have a default value
+# group: [default]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/nested_column_default')
+
+statement error
+CREATE TABLE ducklake.t (l INTEGER[] DEFAULT [1, 2])
+----
+Default value for LIST type not supported
+
+# arrays are stored as lists
+statement error
+CREATE TABLE ducklake.t (a INTEGER[2] DEFAULT [1, 2])
+----
+Default value for LIST type not supported
+
+statement error
+CREATE TABLE ducklake.t (s STRUCT(x INTEGER) DEFAULT {'x': 1})
+----
+Default value for STRUCT type not supported
+
+statement error
+CREATE TABLE ducklake.t (m MAP(INTEGER, INTEGER) DEFAULT MAP {1: 2})
+----
+Default value for MAP type not supported
+
+statement ok
+CREATE TABLE ducklake.t (l INTEGER[])
+
+query I
+SELECT count(*) FROM ducklake.t
+----
+0

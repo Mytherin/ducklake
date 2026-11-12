@@ -1,0 +1,49 @@
+# name: test/sql/settings/parquet_row_group_size_bytes_unlimited.test
+# description: An unlimited parquet_row_group_size_bytes is rejected when it is set
+# group: [settings]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/parquet_row_group_size_bytes_unlimited', DATA_INLINING_ROW_LIMIT 0)
+
+foreach unlimited -1 none
+
+statement error
+CALL dl.set_option('parquet_row_group_size_bytes', '{unlimited}')
+----
+Row group size bytes must be a finite size
+
+endloop
+
+statement ok
+CREATE TABLE dl.t AS SELECT range AS i FROM range(1000)
+
+statement error
+CALL dl.set_option('parquet_row_group_size_bytes', '-1', table_name => 't')
+----
+Row group size bytes must be a finite size
+
+statement error
+CREATE TABLE dl.t2(i INTEGER) WITH (parquet_row_group_size_bytes = '-1')
+----
+Row group size bytes must be a finite size
+
+query I
+SELECT count(*) FROM dl.options() WHERE option_name = 'parquet_row_group_size_bytes'
+----
+0
+
+statement ok
+INSERT INTO dl.t SELECT range FROM range(1000)
+
+query I
+SELECT count(*) FROM dl.t
+----
+2000

@@ -1,0 +1,56 @@
+# name: test/sql/stats/topn_file_pruning_missing_stats.test
+# description: Top-N dynamic filters keep files that have no min/max stats for the ordered column
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/topn_file_pruning_missing_stats', DATA_INLINING_ROW_LIMIT 0)
+
+# one thread without read-ahead opens each file after the previous one is scanned
+statement ok
+SET threads = 1
+
+statement ok
+SET read_ahead_depth = 0
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE t (id INTEGER);
+
+# written before the columns exist, so the file has no stats for them and reads their initial defaults
+statement ok
+INSERT INTO t SELECT i FROM range(0, 5) r(i);
+
+statement ok
+ALTER TABLE t ADD COLUMN hi INTEGER DEFAULT 1000;
+
+statement ok
+ALTER TABLE t ADD COLUMN lo INTEGER DEFAULT -1000;
+
+statement ok
+INSERT INTO t SELECT i, i * 10, i * 10 FROM range(5, 10) r(i);
+
+# the file with stats is read first and sets the boundary, the file without stats must still be read
+query I
+SELECT hi FROM t ORDER BY hi DESC LIMIT 1
+----
+1000
+
+query I
+SELECT lo FROM t ORDER BY lo ASC LIMIT 1
+----
+-1000
+
+query II
+EXPLAIN ANALYZE SELECT hi FROM t ORDER BY hi DESC LIMIT 1
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*

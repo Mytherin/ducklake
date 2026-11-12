@@ -1,0 +1,19 @@
+# name: benchmark/micro/read/snapshots_listing_limit.benchmark
+# description: Read the first 10 rows of ducklake_snapshots over 100001 snapshots
+# group: [read]
+
+name Snapshots Listing Limit
+group micro
+subgroup read
+
+require ducklake
+
+include benchmark/micro/fixtures/snap100k.benchmark.in
+
+run
+SELECT * FROM ducklake_snapshots('lake') LIMIT 10;
+
+result_query I
+SELECT count(*) FROM __answer
+----
+10

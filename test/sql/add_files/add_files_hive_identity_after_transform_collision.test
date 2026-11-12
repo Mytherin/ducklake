@@ -55,3 +55,9 @@ query III
 SELECT year, dt, v FROM t WHERE year = 5
 ----
 5	2021-03-03	20
+
+query II
+SELECT dt, v FROM t ORDER BY dt
+----
+2020-05-05	10
+2021-03-03	20

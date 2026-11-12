@@ -25,7 +25,7 @@ public:
 
 private:
 	void InitializeNewDuckLake(DuckLakeTransaction &transaction, bool has_explicit_schema);
-	void LoadExistingDuckLake(DuckLakeTransaction &transaction, bool skip_dev_migration = false);
+	void LoadExistingDuckLake(DuckLakeTransaction &transaction);
 	//! Loads an existing DuckLake, retrying when another attach migrates it at the same time
 	void LoadExistingDuckLakeWithRetries(DuckLakeTransaction &transaction);
 	void AttachMetadata(DuckLakeTransaction &transaction);
@@ -40,6 +40,9 @@ private:
 	ClientContext &context;
 	DuckLakeCatalog &catalog;
 	DuckLakeOptions &options;
+	bool migrating = false;
+	//! Whether creation, migration, or catalog reuse requires clearing the metadata cache.
+	bool metadata_cache_stale = false;
 };
 
 } // namespace duckdb

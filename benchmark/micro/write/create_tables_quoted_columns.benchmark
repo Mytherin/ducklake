@@ -1,0 +1,48 @@
+# name: benchmark/micro/write/create_tables_quoted_columns.benchmark
+# description: Create five 200-column tables with quotes and braces in their column names in one transaction
+# group: [write]
+
+name Create Tables Quoted Columns
+group micro
+subgroup write
+
+require ducklake
+
+argument work commit_create_work
+
+argument warm_table lake.main.ins_0
+
+include benchmark/micro/fixtures/commit.benchmark.in
+
+include benchmark/micro/fixtures/restore_cleanup_warm.benchmark.in
+
+init
+SET VARIABLE quoted_source_sql = (SELECT 'SELECT ' || string_agg('NULL::' || ['BIGINT', 'DOUBLE', 'VARCHAR'][j % 3 + 1]
+|| ' AS "c' || j || ' with ''quotes'' and {braces}"', ', ' ORDER BY j) || ' LIMIT 0' FROM range(200) t(j));
+CREATE TEMP TABLE quoted_source AS FROM query(getvariable('quoted_source_sql'));
+
+# The commit batch holds every column name as a literal and, for the inlined data tables, as a quoted identifier
+run
+BEGIN;
+CREATE TABLE lake.main.quoted_0 AS FROM quoted_source;
+CREATE TABLE lake.main.quoted_1 AS FROM quoted_source;
+CREATE TABLE lake.main.quoted_2 AS FROM quoted_source;
+CREATE TABLE lake.main.quoted_3 AS FROM quoted_source;
+CREATE TABLE lake.main.quoted_4 AS FROM quoted_source;
+COMMIT;
+
+# A missed reset makes the first CREATE TABLE fail because quoted_0 already exists
+# Both unions have 203 columns only if every inlined data table has all of them
+result_query IIIIII
+SET VARIABLE quoted_inlined = (SELECT list('__ducklake_metadata_lake.' || i.table_name)
+FROM __ducklake_metadata_lake.ducklake_inlined_data_tables i
+JOIN __ducklake_metadata_lake.ducklake_table t USING (table_id) WHERE t.table_name LIKE 'quoted\_%' ESCAPE '\');
+SELECT (SELECT count(*) FROM duckdb_columns() WHERE database_name = 'lake' AND table_name LIKE 'quoted\_%' ESCAPE '\'
+AND column_name LIKE 'c% with ''quotes'' and {braces}'),
+(SELECT count(*) FROM __ducklake_metadata_lake.ducklake_column WHERE column_name LIKE '% with ''quotes'' and {braces}'),
+len(getvariable('quoted_inlined')),
+(SELECT count(*) FROM (DESCRIBE SELECT * FROM query_table(getvariable('quoted_inlined')))),
+count(*) FILTER (WHERE column_name LIKE '% with ''quotes'' and {braces}'), count(*)
+FROM (DESCRIBE SELECT * FROM query_table(getvariable('quoted_inlined'), true))
+----
+1000	1000	5	203	200	203

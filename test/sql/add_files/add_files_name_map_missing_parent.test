@@ -1,0 +1,42 @@
+# name: test/sql/add_files/add_files_name_map_missing_parent.test
+# description: A name map entry whose parent column is missing is reported when the name map is loaded
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{BASE_TEST_NAME}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/add_files_name_map_missing_parent', METADATA_CATALOG 'ducklake_meta', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.t(s STRUCT(a INTEGER))
+
+statement ok
+COPY (SELECT {'a': 1} AS s) TO '{DATA_PATH}/add_files_name_map_missing_parent_file.parquet'
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 't', '{DATA_PATH}/add_files_name_map_missing_parent_file.parquet')
+
+query I
+SELECT s.a FROM ducklake.t
+----
+1
+
+statement ok
+UPDATE ducklake_meta.ducklake_name_mapping SET parent_column = 4242 WHERE parent_column IS NOT NULL
+
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/add_files_name_map_missing_parent', METADATA_CATALOG 'ducklake_meta', DATA_INLINING_ROW_LIMIT 0)
+
+statement error
+SELECT s.a FROM ducklake.t
+----
+Parent column 4242 not found when converting name map

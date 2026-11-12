@@ -1,0 +1,46 @@
+# name: test/sql/stats/inlined_double_stats_same_transaction.test
+# description: Inlined DOUBLE inserts of one transaction merge their bounds without widening
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/inlined_double_stats_same_transaction', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.t(d DOUBLE)
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.t VALUES (1.5)
+
+statement ok
+INSERT INTO ducklake.t VALUES (0.1), (2.5)
+
+statement ok
+COMMIT
+
+query II
+SELECT min(d), max(d) FROM ducklake.t
+----
+0.1	2.5
+
+# the bounds are exact, so they prune neither of the outer values
+query I
+SELECT d FROM ducklake.t WHERE d <= 0.1 OR d >= 2.5 ORDER BY d
+----
+0.1
+2.5
+
+query I
+SELECT count(*) FROM ducklake.t WHERE d > 2.5
+----
+0

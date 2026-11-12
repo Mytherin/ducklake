@@ -1,0 +1,35 @@
+# name: test/sql/encryption/encrypted_file_without_key.test
+# description: reading a data file of an encrypted catalog that has no encryption key fails
+# group: [encryption]
+
+require ducklake
+
+require parquet
+
+require httpfs
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/encrypted_file_without_key.db' AS dl
+(DATA_PATH '{DATA_PATH}/encrypted_file_without_key', ENCRYPTED, DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE dl.t AS SELECT 42 AS i
+
+statement ok
+UPDATE __ducklake_metadata_dl.ducklake_data_file SET encryption_key = NULL
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/encrypted_file_without_key.db' AS dl
+
+statement error
+SELECT * FROM dl.t
+----
+Database is encrypted, but file
+
+statement ok
+DETACH dl

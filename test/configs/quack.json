@@ -26,6 +26,18 @@
       ]
     },
     {
+      "reason": "Quack deletes expired snapshots when the transaction commits, so the gap is not visible inside the transaction",
+      "paths": [
+        "test/sql/time_travel/at_timestamp_expired_in_transaction.test"
+      ]
+    },
+    {
+      "reason": "Quack commits each statement, so a cached timestamp is checked again for concurrent expiries",
+      "paths": [
+        "test/sql/time_travel/at_timestamp_cached_no_rescan.test"
+      ]
+    },
+    {
       "reason": "Bespoke test starts and stops its own quack server",
       "paths": [
         "test/sql/quack/quack_basic.test"
@@ -37,6 +49,7 @@
         "test/sql/metadata/ducklake_settings_sqlite.test",
         "test/sql/metadata/sqlite_all_varchar.test",
         "test/sql/data_inlining/sqlite_column_limit.test",
+        "test/sql/data_inlining/sqlite_system_column_names.test",
         "test/sql/data_inlining/data_inlining_variant_sql_rollback.test"
       ]
     },
@@ -44,18 +57,34 @@
       "reason": "Test only for Postgres as catalog",
       "paths": [
         "test/sql/metadata/ducklake_settings_postgres.test",
+        "test/sql/metadata/postgres_long_metadata_schema.test",
+        "test/sql/retry/postgres_rollback_connection_loss.test",
         "test/sql/metadata/metadata_schema_scoped_attach.test",
         "test/sql/migration/postgres_concurrent_migration.test",
         "test/sql/retry/postgres_localized_conflict_retry.test",
         "test/sql/retry/postgres_commit_connection_loss.test",
         "test/sql/concurrent/postgres_concurrent_attach_new.test",
+        "test/sql/concurrent/postgres_concurrent_attach_other_catalogs.test",
+        "test/sql/metadata/postgres_cache_clear_scope.test",
         "test/sql/concurrent/postgres_concurrent_attach_new_migrate.test",
         "test/sql/migration/postgres_dev_migration_failure.test",
-        "test/sql/migration/postgres_concurrent_dev_attach.test",
+        "test/sql/migration/postgres_dev1_migration_skips_present_ddl.test",
         "test/sql/benchmark/postgres_catalog.test",
         "test/sql/issues/issue_843_postgres_legacy_inlined_types.test",
         "test/sql/data_inlining/inlined_superseded_drop_failure_postgres.test",
-        "test/sql/compaction/compaction_idle_metadata_transaction.test"
+        "test/sql/compaction/compaction_idle_metadata_transaction.test",
+        "test/sql/compaction/postgres_expire_snapshots_time_zone.test",
+        "test/sql/retry/postgres_commit_error_query_text.test",
+        "test/sql/settings/set_option_concurrent_insert.test",
+        "test/sql/settings/set_option_concurrent_insert_read_committed.test",
+        "test/sql/settings/set_option_concurrent_insert_expiry.test",
+        "test/sql/settings/set_option_read_committed_reset_race.test",
+        "test/sql/tags/postgres_tags_read_committed.test",
+        "test/sql/general/postgres_nul_byte_text.test",
+        "test/sql/data_inlining/postgres_new_inlined_table_keeps_cache.test",
+        "test/sql/transaction/postgres_failed_rollback_releases_transaction.test",
+        "test/sql/metadata/postgres_attach_cache_clear.test",
+        "test/sql/time_travel/postgres_at_timestamp_expired_read_committed.test"
       ]
     },
     {
@@ -77,6 +106,7 @@
       "paths": [
         "test/sql/delete/delete_legacy_missing_mapping_after_rename_add_files.test",
         "test/sql/rewrite_data_files/test_rewrite_many_non_candidate_files.test",
+        "test/sql/stats/nan_column_stats_missing_max.test",
         "test/sql/stats/nan_column_stats_missing_min.test",
         "test/sql/stats/numeric_stats_one_bound.test"
       ]
@@ -110,6 +140,8 @@
       "paths": [
         "test/sql/autoloading/autoload_data_path.test",
         "test/sql/data_inlining/postgres_identifier_limit.test",
+        "test/sql/data_inlining/postgres_system_column_names.test",
+        "test/sql/metadata/postgres_text_protocol.test",
         "test/sql/data_inlining/postgres_column_limit.test",
         "test/sql/issues/issue_sqlite_snapshot_time.test",
         "test/sql/metadata/ducklake_settings_s3.test"
@@ -138,6 +170,19 @@
       "reason": "FIXME: Each metadata query runs in its own server-side transaction on quack, so a reader that began before a concurrent TRUNCATE reads the post-truncate record counts from ducklake_table_stats.",
       "paths": [
         "test/sql/metadata/duckdb_tables_record_counts_concurrent.test"
+      ]
+    },
+    {
+      "reason": "FIXME: Each metadata query runs in its own server-side transaction on quack, so a reader that began before a rewrite reads the narrowed bounds from ducklake_table_column_stats.",
+      "paths": [
+        "test/sql/compaction/rewrite_narrow_older_transaction.test",
+        "test/sql/remove_files/remove_data_files_concurrent.test"
+      ]
+    },
+    {
+      "reason": "FIXME: Each metadata query runs in its own server-side transaction on quack, so an expiry in a transaction that began before a concurrent tag commit already sees the tag.",
+      "paths": [
+        "test/sql/tags/tags_expire_conflict.test"
       ]
     },
     {
@@ -173,6 +218,12 @@
       ]
     },
     {
+      "reason": "FIXME: Not implemented Error: Multiple streaming scans or streaming scans + CTAS / insert in the same query are not currently supported",
+      "paths": [
+        "test/sql/sorted_table/set_sorted_by_idempotent.test"
+      ]
+    },
+    {
       "reason": "Server-side quack commits serialize, so concurrent commits never exhaust the client retry budget these tests assert on.",
       "paths": [
         "test/sql/retry/commit_failure.test",
@@ -189,6 +240,13 @@
       "reason": "A quack catalog commits each statement, so its commits keep sending inlined rows as SQL text",
       "paths": [
         "test/sql/data_inlining/inlined_commit_append.test"
+      ]
+    },
+    {
+      "reason": "Quack expires snapshots when the transaction commits, so a cleanup in that transaction finds none of their files and a concurrent commit keeps the expiry",
+      "paths": [
+        "test/sql/cleanup/expire_cleanup_in_transaction.test",
+        "test/sql/cleanup/expire_cleanup_concurrent_commit.test"
       ]
     }
   ]

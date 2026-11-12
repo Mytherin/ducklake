@@ -1,0 +1,118 @@
+# name: test/sql/stats/rewrite_global_stats_recompute.test
+# description: rewrite_data_files recomputes the global stats of tables with dropped columns, NaN flags and inlined data
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/rewrite_global_stats_recompute', METADATA_CATALOG 'rewrite_stats_meta', DATA_INLINING_ROW_LIMIT 10)
+
+# the file that is not rewritten still has stats of a dropped column, which is listed in skip_stats_columns
+statement ok
+CREATE TABLE ducklake.dropped(i INTEGER, d DOUBLE, gone INTEGER)
+
+statement ok
+INSERT INTO ducklake.dropped SELECT range, range / 2, range FROM range(100)
+
+statement ok
+CALL ducklake.set_option('skip_stats_columns', ['gone'], table_name => 'dropped')
+
+statement ok
+ALTER TABLE ducklake.dropped DROP COLUMN gone
+
+statement ok
+INSERT INTO ducklake.dropped SELECT range, range / 2 FROM range(100, 200)
+
+statement ok
+DELETE FROM ducklake.dropped WHERE i >= 150
+
+statement ok
+CALL ducklake_rewrite_data_files('ducklake', 'dropped', delete_threshold => 0)
+
+query IIIII
+SELECT min(i), max(i), count(*), min(d), max(d) FROM ducklake.dropped
+----
+0	149	150	0.0	74.5
+
+# the bounds are exact again after the deletes are rewritten away
+query IIII
+SELECT c.column_name, s.min_value, s.max_value, s.contains_nan::BOOLEAN
+FROM rewrite_stats_meta.ducklake_table_column_stats s
+JOIN rewrite_stats_meta.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL
+JOIN rewrite_stats_meta.ducklake_column c ON c.table_id = s.table_id AND c.column_id = s.column_id AND c.end_snapshot IS NULL
+WHERE t.table_name = 'dropped'
+ORDER BY ALL
+----
+d	0.0	74.5	false
+i	0	149	NULL
+
+# inlined rows with a column that has no exact inlined bounds keep the existing stats
+statement ok
+CREATE TABLE ducklake.blobs(i INTEGER, b BLOB)
+
+statement ok
+INSERT INTO ducklake.blobs SELECT range, range::VARCHAR::BLOB FROM range(100)
+
+statement ok
+INSERT INTO ducklake.blobs VALUES (1000, 'x'::BLOB)
+
+statement ok
+DELETE FROM ducklake.blobs WHERE i < 50
+
+statement ok
+CALL ducklake_rewrite_data_files('ducklake', 'blobs', delete_threshold => 0)
+
+query III
+SELECT min(i), max(i), count(*) FROM ducklake.blobs
+----
+50	1000	51
+
+# an inlined table of an older schema version without live rows adds nothing to the bounds
+statement ok
+CREATE TABLE ducklake.inlined(i INTEGER, j INTEGER)
+
+statement ok
+INSERT INTO ducklake.inlined SELECT range, range FROM range(100)
+
+statement ok
+INSERT INTO ducklake.inlined VALUES (1000, 1), (1001, 2)
+
+statement ok
+DELETE FROM ducklake.inlined WHERE i >= 1000
+
+# a rewrite keeps the stats while deleted inlined rows are stored, so flush them
+statement ok
+CALL ducklake_flush_inlined_data('ducklake', table_name => 'inlined')
+
+statement ok
+ALTER TABLE ducklake.inlined DROP COLUMN j
+
+statement ok
+INSERT INTO ducklake.inlined VALUES (2000), (2001)
+
+statement ok
+DELETE FROM ducklake.inlined WHERE i < 50
+
+statement ok
+CALL ducklake_rewrite_data_files('ducklake', 'inlined', delete_threshold => 0)
+
+query III
+SELECT min(i), max(i), count(*) FROM ducklake.inlined
+----
+50	2001	52
+
+query III
+SELECT c.column_name, s.min_value, s.max_value
+FROM rewrite_stats_meta.ducklake_table_column_stats s
+JOIN rewrite_stats_meta.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL
+JOIN rewrite_stats_meta.ducklake_column c ON c.table_id = s.table_id AND c.column_id = s.column_id AND c.end_snapshot IS NULL
+WHERE t.table_name = 'inlined'
+ORDER BY ALL
+----
+i	50	2001

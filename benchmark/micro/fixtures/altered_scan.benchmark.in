@@ -6,18 +6,19 @@ argument lake altered_scan
 
 cache_file ${lake}_ready.marker
 
-# Each line adds and drops a column of p, so p gets a new schema version for every ALTER
+# Each iteration adds and drops a column of p, so p gets a new schema version for every ALTER
 load
-EXPORT DATABASE '${BENCHMARK_DIR}/${lake}_gen';
-COPY (SELECT 'ALTER TABLE lake.p ADD COLUMN c INTEGER; COMMIT; BEGIN; ALTER TABLE lake.p DROP COLUMN c; COMMIT; BEGIN;'
-FROM range(100) t(i))
-TO '${BENCHMARK_DIR}/${lake}_gen/schema.sql' (HEADER false, QUOTE '');
 @create ${lake}
 @attach ${lake} AS lake (DATA_PATH '${BENCHMARK_DIR}/${lake}_files')
 CREATE TABLE lake.p AS SELECT range::INTEGER AS i FROM range(1000);
 CREATE TABLE lake.q AS SELECT range::INTEGER AS i FROM range(1000);
 BEGIN;
-IMPORT DATABASE '${BENCHMARK_DIR}/${lake}_gen';
+@for k in range(100)
+ALTER TABLE lake.p ADD COLUMN c INTEGER;
+COMMIT; BEGIN;
+ALTER TABLE lake.p DROP COLUMN c;
+COMMIT; BEGIN;
+@end
 COMMIT;
 DETACH lake;
 @seal ${lake}

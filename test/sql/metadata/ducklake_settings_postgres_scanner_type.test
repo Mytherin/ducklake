@@ -1,0 +1,21 @@
+# name: test/sql/metadata/ducklake_settings_postgres_scanner_type.test
+# description: ducklake_settings reports the extension name of a PostgreSQL metadata catalog as postgres
+# group: [metadata]
+
+require ducklake
+
+require parquet
+
+require postgres_scanner
+
+require-env DUCKLAKE_CONNECTION postgres:dbname=ducklakedb
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:postgres_scanner:dbname=ducklakedb' AS ducklake (DATA_PATH '{DATA_PATH}/ducklake_settings_postgres_scanner_type')
+
+query II
+SELECT catalog_type, data_path LIKE '%ducklake_settings_postgres_scanner_type%' FROM ducklake_settings('ducklake')
+----
+postgres	true

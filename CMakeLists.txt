@@ -43,7 +43,9 @@ if(DUCKLAKE_COVERAGE)
     message(
       FATAL_ERROR "DUCKLAKE_COVERAGE=1 requires a clang-compatible compiler")
   endif()
-  add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+  # Racing threads lose non-atomic increments, making counts negative
+  add_compile_options(-fprofile-instr-generate -fcoverage-mapping
+                      -fprofile-update=atomic)
 endif()
 
 add_subdirectory(src)

@@ -1,0 +1,52 @@
+# name: test/sql/stats/topn_file_pruning_wider_sort_key.test
+# description: Top-N dynamic filters on a column widened to the sort key type keep files when the boundary is out of range
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/topn_file_pruning_wider_sort_key', DATA_INLINING_ROW_LIMIT 0)
+
+# one thread without read-ahead opens each file after the previous one is scanned
+statement ok
+SET threads = 1
+
+statement ok
+SET read_ahead_depth = 0
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE big (v BIGINT);
+
+statement ok
+INSERT INTO big VALUES (5000000000), (6000000000);
+
+statement ok
+CREATE TABLE small (i INTEGER);
+
+statement ok
+INSERT INTO small SELECT x FROM range(0, 100) r(x);
+
+statement ok
+INSERT INTO small SELECT x FROM range(100, 200) r(x);
+
+# the BIGINT branch is scanned first and sets a boundary that does not fit the INTEGER column, so its files are kept
+query I
+SELECT v FROM (SELECT v FROM big UNION ALL SELECT i::BIGINT AS v FROM small) ORDER BY v ASC LIMIT 2
+----
+0
+1
+
+query I
+SELECT v FROM (SELECT v FROM big UNION ALL SELECT i::BIGINT AS v FROM small) ORDER BY v DESC LIMIT 2
+----
+6000000000
+5000000000

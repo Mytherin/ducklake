@@ -21,12 +21,14 @@ public:
 	}
 
 	bool TypeIsNativelySupported(const LogicalType &type) override;
+	bool CanInlineValues(DataChunk &chunk) override;
 	bool SupportsAppender() const override {
 		return false;
 	}
 	bool DroppedTablesStayReadable() const override {
 		return false;
 	}
+	bool ShowsConcurrentCommits() const override;
 	bool InsertsInlinedRowsAfterBatch(idx_t row_count) const override;
 	idx_t MaxIdentifierLength() const override {
 		return 63;
@@ -34,24 +36,47 @@ public:
 	idx_t MaxColumnCount() const override {
 		return 1600;
 	}
+	vector<string> SystemColumnNames() const override {
+		return {"tableoid", "xmin", "cmin", "xmax", "cmax", "ctid"};
+	}
 
 	string GetColumnTypeInternal(const LogicalType &type) override;
-	bool InlinedDeletionTableExists(const string &table_name) override;
+	string GetSnapshotAndStatsAndChangesQuery(DuckLakeSnapshot snapshot, bool include_exactness) const override;
+	bool InlinedDeletionTableExists(const Identifier &table_name) override;
 	void MigrateInlinedDataTypes() override;
 	bool IsRetryableCommitError(const string &message) const override;
+	string CommitErrorWithoutQuery(const string &message) const override;
+	string ConfigOptionLockSql() const override;
 
 	unique_ptr<QueryResult> Execute(DuckLakeSnapshot snapshot, string &query) override;
+	unique_ptr<QueryResult> ExecuteDropInTransaction(string &query) override;
 
 	void ClearCache() override;
+	//! postgres_scanner looks up a table it has not cached
+	bool NewTablesRequireCacheClear() const override {
+		return false;
+	}
 
 protected:
 	string GetLatestSnapshotQuery() const override;
-	string GenerateFileListQuery(DuckLakeTableEntry &table, const FilterPushdownInfo *filter_info,
-	                             const vector<DuckLakeFileListDynamicFilter> &dynamic_filters,
-	                             const vector<idx_t> &runtime_filter_stats_columns, FileListType file_list_type,
+	string SnapshotTimeSql() const override {
+		// the server's clock, as NOW() is the start of the metadata transaction
+		return "clock_timestamp()";
+	}
+	string GenerateFileListQuery(DuckLakeTableEntry &table, DuckLakeSnapshot snapshot,
+	                             const FilterPushdownInfo *filter_info, const vector<DuckLakeFileListOrder> &file_order,
+	                             vector<idx_t> &runtime_filter_stats_columns, FileListType file_list_type,
 	                             const string &metadata_table_prefix) override;
+	bool MaterializeStatsCTEs() const override;
 	string CastValueToTarget(const Value &value, const LogicalType &type) override;
 	string CastStatsToTarget(const string &stats, const LogicalType &type, StatsCastType cast_type) override;
+
+private:
+	//! Where the server error starts in the error of the last Execute
+	optional_idx BatchServerErrorStart(const string &message) const;
+
+	//! The size of the last query of Execute, which the scanner repeats in front of a server error
+	idx_t executed_query_size = 0;
 };
 
 } // namespace duckdb

@@ -39,7 +39,6 @@ public:
 	DuckLakeDeleteFilter();
 
 	shared_ptr<DuckLakeDeleteData> delete_data;
-	optional_idx max_row_count;
 
 	optional_idx snapshot_filter;
 
@@ -47,7 +46,6 @@ public:
 	void Initialize(ClientContext &context, const DuckLakeFileData &delete_file);
 	void Initialize(const DuckLakeInlinedDataDeletes &inlined_deletes);
 	void Initialize(ClientContext &context, const DuckLakeDeleteScanEntry &delete_scan);
-	void SetMaxRowCount(idx_t max_row_count);
 	void SetSnapshotFilter(idx_t snapshot_filter);
 
 	static DeleteFileScanResult ScanDeleteFile(ClientContext &context, const DuckLakeFileData &delete_file,

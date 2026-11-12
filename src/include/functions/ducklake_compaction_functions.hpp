@@ -27,6 +27,15 @@
 #include "duckdb/planner/operator/logical_empty_result.hpp"
 
 namespace duckdb {
+
+//! The kind of compaction that the server of a REST catalog performs
+enum class RESTCompactionKind { MERGE_ADJACENT, REWRITE_DELETES, FLUSH_INLINED_DATA };
+class DuckLakeCatalog;
+
+//! Binds a compaction function of a REST catalog: its server performs the compaction when the function is executed
+unique_ptr<LogicalOperator> BindRESTCompaction(ClientContext &context, TableFunctionBindInput &input,
+                                               TableIndex bind_index, DuckLakeCatalog &catalog,
+                                               RESTCompactionKind kind);
 //===--------------------------------------------------------------------===//
 // Logical Operator
 //===--------------------------------------------------------------------===//
@@ -100,7 +109,7 @@ public:
 	                                               const DuckLakeTableEntry &table);
 	static unique_ptr<LogicalOperator>
 	PlanRewriteScan(ClientContext &context, Binder &binder, DuckLakeTableEntry &table, DuckLakeCopyInput &copy_input,
-	                bool write_row_id, bool write_snapshot_id,
+	                bool write_snapshot_id,
 	                const std::function<unique_ptr<DuckLakeMultiFileList>(DuckLakeFunctionInfo &)> &create_file_list,
 	                unique_ptr<LogicalCopyToFile> &copy);
 

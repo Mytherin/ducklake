@@ -1,0 +1,64 @@
+# name: test/sql/catalog/nested_column_load.test
+# description: Nested columns are attached to the right parent when the catalog is loaded
+# group: [catalog]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{BASE_TEST_NAME}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/nested_column_load_files')
+
+statement ok
+CREATE TABLE ducklake.t1(a STRUCT(x INT, y STRUCT(p INT, q INT[])), b INT, c MAP(VARCHAR, STRUCT(m INT, n INT)), d STRUCT(z INT)[]);
+
+# field ids overlap with t1
+statement ok
+CREATE TABLE ducklake.t2(b INT, s STRUCT(u INT, v INT));
+
+# added field gets a new id but must still land under a.y
+statement ok
+ALTER TABLE ducklake.t1 ADD COLUMN a.y.r INT
+
+statement ok
+INSERT INTO ducklake.t1 VALUES ({'x': 1, 'y': {'p': 2, 'q': [3, 4], 'r': 5}}, 6, MAP {'k': {'m': 7, 'n': 8}}, [{'z': 9}])
+
+statement ok
+INSERT INTO ducklake.t2 VALUES (10, {'u': 11, 'v': 12})
+
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/nested_column_load_files')
+
+statement ok
+USE ducklake
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE t1)
+----
+a	STRUCT(x INTEGER, y STRUCT(p INTEGER, q INTEGER[], r INTEGER))
+b	INTEGER
+c	MAP(VARCHAR, STRUCT(m INTEGER, n INTEGER))
+d	STRUCT(z INTEGER)[]
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE t2)
+----
+b	INTEGER
+s	STRUCT(u INTEGER, v INTEGER)
+
+query IIII
+FROM ducklake.t1
+----
+{'x': 1, 'y': {'p': 2, 'q': [3, 4], 'r': 5}}	6	{k={'m': 7, 'n': 8}}	[{'z': 9}]
+
+query II
+FROM ducklake.t2
+----
+10	{'u': 11, 'v': 12}

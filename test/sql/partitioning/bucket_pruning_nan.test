@@ -149,3 +149,48 @@ query II
 EXPLAIN ANALYZE SELECT k FROM q WHERE l = [5.5]
 ----
 analyzed_plan	<REGEX>:.*Total Files Read: 1\s.*
+
+statement ok
+CREATE TABLE f (d DOUBLE, k INTEGER);
+
+statement ok
+ALTER TABLE f SET PARTITIONED BY (bucket(8, d));
+
+statement ok
+INSERT INTO f VALUES ('nan'::DOUBLE, 1);
+
+# a NaN with the sign bit set is equal to NaN, but hashes to a different bucket
+statement ok
+INSERT INTO f SELECT -('nan'::DOUBLE), 2;
+
+statement ok
+INSERT INTO f VALUES (1.5, 3);
+
+query I
+SELECT 'nan'::DOUBLE = -('nan'::DOUBLE)
+----
+true
+
+query I
+SELECT k FROM f WHERE isnan(d) ORDER BY k
+----
+1
+2
+
+query I
+SELECT k FROM f WHERE d = 1.5
+----
+3
+
+query I
+SELECT k FROM f WHERE d = 'nan'::DOUBLE ORDER BY k
+----
+1
+2
+
+query I
+SELECT k FROM f WHERE d IN ('nan'::DOUBLE, 1.5, 2.5) ORDER BY k
+----
+1
+2
+3

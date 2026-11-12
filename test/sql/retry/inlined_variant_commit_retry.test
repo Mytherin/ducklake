@@ -1,0 +1,47 @@
+# name: test/sql/retry/inlined_variant_commit_retry.test
+# description: Inlined VARIANT rows are committed when the first commit attempt fails
+# group: [retry]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/inlined_variant_commit_retry', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+SET ducklake_retry_wait_ms = 0
+
+statement ok
+CREATE TABLE ducklake.t(id INTEGER, v VARIANT)
+
+statement ok
+CREATE TABLE ducklake.other(i INTEGER)
+
+statement ok con1
+BEGIN
+
+statement ok con1
+INSERT INTO ducklake.t VALUES (1, 42::TINYINT), (2, 'text'::VARIANT)
+
+statement ok con2
+INSERT INTO ducklake.other VALUES (1)
+
+# the commit of con2 took the next snapshot id, so the commit of con1 is retried
+statement ok con1
+COMMIT
+
+query III
+SELECT id, v, variant_typeof(v) FROM ducklake.t ORDER BY id
+----
+1	42	INT8
+2	text	VARCHAR
+
+query I
+SELECT count(*) FROM ducklake_list_files('ducklake', 't')
+----
+0

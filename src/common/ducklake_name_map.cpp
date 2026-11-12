@@ -37,7 +37,9 @@ bool DuckLakeNameMapEntry::ListIsCompatible(const vector<unique_ptr<DuckLakeName
 
 bool DuckLakeNameMapEntry::IsCompatibleWith(const DuckLakeNameMapEntry &other) const {
 	if (source_name != other.source_name) {
+		// LCOV_EXCL_START
 		return false;
+		// LCOV_EXCL_STOP
 	}
 	if (target_field_id != other.target_field_id) {
 		return false;

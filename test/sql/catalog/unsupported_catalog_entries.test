@@ -1,0 +1,48 @@
+# name: test/sql/catalog/unsupported_catalog_entries.test
+# description: Indexes, sequences, user-defined types and foreign keys are rejected by DuckLake
+# group: [catalog]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/unsupported_catalog_entries')
+
+statement ok
+CREATE TABLE ducklake.tbl(i INTEGER, j INTEGER)
+
+statement error
+CREATE INDEX tbl_idx ON ducklake.tbl(i)
+----
+DuckLake does not support indexes
+
+statement error
+ALTER TABLE ducklake.tbl ADD PRIMARY KEY (i)
+----
+Adding indexes or constraints is not supported in DuckLake
+
+statement error
+CREATE SEQUENCE ducklake.seq
+----
+DuckLake does not support sequences
+
+statement error
+CREATE TYPE ducklake.mood AS ENUM ('happy', 'sad')
+----
+DuckLake does not support user-defined types
+
+# the foreign key is checked before the primary key it references
+statement error
+CREATE TABLE ducklake.fk_tbl(i INTEGER, j INTEGER, FOREIGN KEY (j) REFERENCES fk_tbl(i), PRIMARY KEY (i))
+----
+FOREIGN KEY constraints are not supported in DuckLake
+
+query I
+SELECT table_name FROM duckdb_tables() WHERE database_name = 'ducklake'
+----
+tbl

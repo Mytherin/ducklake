@@ -1,5 +1,4 @@
 #include "common/ducklake_util.hpp"
-#include "duckdb/execution/operator/helper/physical_set.hpp"
 #include "common/ducklake_types.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "storage/ducklake_transaction.hpp"
@@ -14,6 +13,7 @@
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "storage/ducklake_metadata_manager.hpp"
+#include "functions/ducklake_table_functions.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
@@ -28,6 +28,7 @@
 #include "duckdb/catalog/catalog_entry/copy_function_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/copy_info.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/execution/operator/helper/physical_set.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/unordered_map.hpp"
@@ -47,9 +48,9 @@ string DuckLakeUtil::ParseQuotedValue(const string &input, idx_t &pos) {
 	return result;
 }
 
-string DuckLakeUtil::ToQuotedList(const vector<string> &input, char list_separator) {
+string DuckLakeUtil::ToQuotedList(const vector<Identifier> &input, char list_separator) {
 	return StringUtil::Join(input, input.size(), string(1, list_separator),
-	                        [](const string &value) { return SQLQuotedIdentifier::ToString(value); });
+	                        [](const Identifier &value) { return SQLQuotedIdentifier::ToString(value); });
 }
 
 vector<string> DuckLakeUtil::ParseQuotedList(const string &input, char list_separator) {
@@ -76,7 +77,7 @@ string ParsedCatalogEntry::SchemaKey() const {
 }
 
 ParsedCatalogEntry DuckLakeUtil::ParseCatalogEntry(const string &input) {
-	auto parts = ParseQuotedList(input, '.');
+	auto parts = StringsToIdentifiers(ParseQuotedList(input, '.'));
 	if (parts.size() < 2) {
 		throw InvalidInputException("Failed to parse catalog entry - expected a schema and a name");
 	}
@@ -85,6 +86,15 @@ ParsedCatalogEntry DuckLakeUtil::ParseCatalogEntry(const string &input) {
 	parts.pop_back();
 	result_data.schema_path = std::move(parts);
 	return result_data;
+}
+
+string DuckLakeUtil::UnquoteSQLString(const string &str) {
+	idx_t pos = 0;
+	string result;
+	if (StringUtil::TryParseQuotedString(str, pos, result, '\'') && pos == str.size()) {
+		return result;
+	}
+	return str;
 }
 
 string DuckLakeUtil::StatsToString(const string &text) {
@@ -152,8 +162,10 @@ string ToSQLString(DuckLakeMetadataManager &metadata_manager, const Value &value
 		return EscapeVarcharForSQL(value.ToString());
 	case LogicalTypeId::VARIANT: {
 		if (!use_native_type) {
+			// LCOV_EXCL_START
 			throw InternalException("VARIANT values must be encoded as Parquet Variant blobs before being "
 			                        "inlined in this catalog type");
+			// LCOV_EXCL_STOP
 		}
 		return value.ToSQLString();
 	}
@@ -193,7 +205,6 @@ string ToByteaHexLiteral(const string &raw_bytes) {
 }
 
 string DuckLakeUtil::ValueToSQL(DuckLakeMetadataManager &metadata_manager, ClientContext &context, const Value &val) {
-	// FIXME: this should be upstreamed
 	if (val.IsNull()) {
 		return val.ToString();
 	}
@@ -315,28 +326,27 @@ optional_ptr<const Expression> DuckLakeUtil::GetFilterSubject(const Expression &
 	return conflict ? nullptr : subject;
 }
 
-bool DuckLakeUtil::IsInlinedSystemColumn(const string &name, bool prefixed_inlined_columns) {
+bool DuckLakeUtil::IsInlinedSystemColumn(const Identifier &name, bool prefixed_inlined_columns) {
 	if (prefixed_inlined_columns) {
-		return StringUtil::CIStartsWith(name, DuckLakeInlinedColNames::PREFIX);
+		return name.StartsWith(DuckLakeInlinedColNames::PREFIX);
 	}
 	return DuckLakeInlinedColNames(false).ConflictsWith(name);
 }
 
-static void ThrowReservedInlinedColumn(const string &name, bool prefixed_inlined_columns) {
+static void ThrowReservedInlinedColumn(const Identifier &name, bool prefixed_inlined_columns) {
 	if (prefixed_inlined_columns) {
-		throw BinderException("Column name \"%s\" is reserved by DuckLake for internal use: column names starting "
+		throw BinderException("Column name %s is reserved by DuckLake for internal use: column names starting "
 		                      "with \"%s\" are not allowed.",
 		                      name, DuckLakeInlinedColNames::PREFIX);
 	}
-	throw BinderException(
-	    "Column name \"%s\" is reserved by DuckLake for internal use when data inlining is enabled. If "
-	    "you must use this column name, disable inlining by calling "
-	    "ducklake_set_option('data_inlining_row_limit', 0).",
-	    name);
+	throw BinderException("Column name %s is reserved by DuckLake for internal use when data inlining is enabled. If "
+	                      "you must use this column name, disable inlining by calling "
+	                      "ducklake_set_option('data_inlining_row_limit', 0).",
+	                      name);
 }
 
 void DuckLakeUtil::ValidateInlinedSystemColumn(DuckLakeCatalog &catalog, ClientContext &context, SchemaIndex schema_id,
-                                               TableIndex table_id, const string &name,
+                                               TableIndex table_id, const Identifier &name,
                                                optional_ptr<const map<string, string>> table_options) {
 	bool prefixed_inlined_columns = catalog.SupportsV1_1Metadata();
 	if (!prefixed_inlined_columns && catalog.DataInliningRowLimit(context, schema_id, table_id, table_options) == 0) {
@@ -356,29 +366,79 @@ void DuckLakeUtil::ValidateNoInlinedSystemColumns(DuckLakeCatalog &catalog, Clie
 		return;
 	}
 	for (auto &col : columns.Logical()) {
-		if (IsInlinedSystemColumn(col.Name().GetIdentifierName(), prefixed_inlined_columns)) {
-			ThrowReservedInlinedColumn(col.Name().GetIdentifierName(), prefixed_inlined_columns);
+		if (IsInlinedSystemColumn(col.Name(), prefixed_inlined_columns)) {
+			ThrowReservedInlinedColumn(col.Name(), prefixed_inlined_columns);
 		}
 	}
 }
 
 void DuckLakeUtil::ValidateCanEnableInlining(const ColumnList &columns, bool prefixed_inlined_columns,
-                                             const string &table_name) {
+                                             const Identifier &table_name) {
 	DuckLakeInlinedColNames col_names(prefixed_inlined_columns);
 	for (auto &col : columns.Logical()) {
-		if (col_names.ConflictsWith(col.Name().GetIdentifierName())) {
+		if (col_names.ConflictsWith(col.Name())) {
 			throw BinderException(
-			    "Cannot enable data inlining for table \"%s\". Column \"%s\" conflicts with a reserved DuckLake "
+			    "Cannot enable data inlining for table %s. Column %s conflicts with a reserved DuckLake "
 			    "internal column name used for inlining. To enable inlining for this table, rename or drop column "
-			    "\"%s\".",
-			    table_name, col.Name().GetIdentifierName(), col.Name().GetIdentifierName());
+			    "%s.",
+			    table_name, col.Name(), col.Name());
 		}
 	}
 }
 
+string DuckLakeUtil::ReplacePlaceholders(const string &sql, const vector<pair<string, string>> &replacements) {
+	string result;
+	result.reserve(sql.size());
+	idx_t pos = 0;
+	while (pos < sql.size()) {
+		auto next = sql.find_first_of("'\"{", pos);
+		if (next == string::npos) {
+			result.append(sql, pos, string::npos);
+			break;
+		}
+		result.append(sql, pos, next - pos);
+		pos = next;
+		auto c = sql[pos];
+		if (c == '{') {
+			bool replaced = false;
+			for (auto &replacement : replacements) {
+				if (sql.compare(pos, replacement.first.size(), replacement.first) == 0) {
+					result += replacement.second;
+					pos += replacement.first.size();
+					replaced = true;
+					break;
+				}
+			}
+			if (!replaced) {
+				result += c;
+				pos++;
+			}
+			continue;
+		}
+		// copy the quoted text up to its closing quote, a doubled quote does not close it
+		idx_t end = pos + 1;
+		while (end < sql.size()) {
+			if (sql[end] == c) {
+				if (end + 1 < sql.size() && sql[end + 1] == c) {
+					end += 2;
+					continue;
+				}
+				break;
+			}
+			end++;
+		}
+		end = MinValue<idx_t>(end + 1, sql.size());
+		result.append(sql, pos, end - pos);
+		pos = end;
+	}
+	return result;
+}
+
 string DuckLakeUtil::ReplaceSkippingQuotes(const string &sql, const string &from, const string &to) {
 	if (from.empty()) {
+		// LCOV_EXCL_START
 		return sql;
+		// LCOV_EXCL_STOP
 	}
 
 	auto tokens = Parser::Tokenize(sql);
@@ -405,7 +465,9 @@ string DuckLakeUtil::ReplaceSkippingQuotes(const string &sql, const string &from
 
 	while (pos < sql.size()) {
 		while (range_idx < no_replace_ranges.size() && pos >= no_replace_ranges[range_idx].second) {
+			// LCOV_EXCL_START
 			range_idx++;
+			// LCOV_EXCL_STOP
 		}
 
 		// If inside a quoted range, copy verbatim to its end
@@ -447,11 +509,15 @@ string DuckLakeUtil::EncryptionKeyLiteral(const string &key) {
 	return "'" + Blob::ToBase64(string_t(key)) + "'";
 }
 
+string DuckLakeUtil::WithBinaryCollation(const string &expression) {
+	return "(" + expression + " COLLATE \"C\")";
+}
+
 const char *DuckLakeUtil::BoolLiteral(bool v) {
 	return v ? "true" : "false";
 }
 
-string DuckLakeUtil::PartitionValueLiteral(const Value &v) {
+string DuckLakeUtil::TextLiteralOrNull(const Value &v) {
 	return v.IsNull() ? string("NULL") : SQLString::ToString(v.ToString());
 }
 
@@ -556,12 +622,17 @@ void DuckLakeUtil::CopyExtensionSettings(ClientContext &from, ClientContext &to)
 	for (auto &entry : db_config.GetExtensionSettings()) {
 		auto &option = entry.second;
 		if (!option.setting_index.IsValid()) {
+			// LCOV_EXCL_START
 			continue;
+			// LCOV_EXCL_STOP
 		}
 		auto setting_index = option.setting_index.GetIndex();
-		// these change the types read from the metadata and data files
-		if (entry.first == "sqlite_all_varchar" || entry.first == "binary_as_string") {
-			to.config.user_settings.SetUserSetting(setting_index, Value::BOOLEAN(false));
+		// these change the types or values read from the metadata and data files
+		static const case_insensitive_set_t READ_SETTINGS {"binary_as_string",    "pg_use_text_protocol",
+		                                                   "pg_query_mode",       "pg_use_binary_copy",
+		                                                   "pg_array_as_varchar", "pg_numeric_as_varchar"};
+		if (READ_SETTINGS.count(entry.first.GetIdentifierName())) {
+			to.config.user_settings.SetUserSetting(setting_index, option.default_value);
 			continue;
 		}
 		if (!from.config.user_settings.IsSet(setting_index)) {
@@ -573,10 +644,24 @@ void DuckLakeUtil::CopyExtensionSettings(ClientContext &from, ClientContext &to)
 	}
 }
 
+void DuckLakeUtil::ResetExtensionSettings(ClientContext &context, const vector<string> &names) {
+	auto &db_config = DBConfig::GetConfig(context);
+	for (auto &name : names) {
+		ExtensionOption option;
+		if (!db_config.TryGetExtensionOption(Identifier(name), option) || !option.setting_index.IsValid()) {
+			continue;
+		}
+		context.config.user_settings.SetUserSetting(option.setting_index.GetIndex(), option.default_value);
+	}
+}
+
 void DuckLakeUtil::SetExtensionSetting(ClientContext &context, const string &name, const Value &value) {
 	ExtensionOption option;
 	if (!DBConfig::GetConfig(context).TryGetExtensionOption(Identifier(name), option)) {
+		// LCOV_EXCL_START
+		// the settings are registered by the extension itself
 		return;
+		// LCOV_EXCL_STOP
 	}
 	PhysicalSet::SetExtensionVariable(context, option, SetScope::SESSION, value);
 }
@@ -639,6 +724,9 @@ static string ParseRowGroupSizeBytes(ClientContext &, const string &, const Valu
 	if (row_group_size_bytes == 0) {
 		throw NotImplementedException("Row group size bytes cannot be 0");
 	}
+	if (row_group_size_bytes == NumericLimits<idx_t>::Maximum()) {
+		throw InvalidInputException("Row group size bytes must be a finite size, not \"%s\"", val.ToString());
+	}
 	return to_string(row_group_size_bytes);
 }
 
@@ -646,13 +734,9 @@ static string ParseMemorySize(ClientContext &, const string &, const Value &val)
 	return to_string(DBConfig::ParseMemoryLimitOrMaximum(val.ToString()));
 }
 
-static string ParseBooleanLiteral(ClientContext &, const string &, const Value &val) {
-	return DuckLakeUtil::BoolLiteral(val.GetValue<bool>());
-}
-
 static string ParseDeleteThreshold(ClientContext &, const string &, const Value &val) {
 	double threshold = val.GetValue<double>();
-	if (threshold < 0 || threshold > 1) {
+	if (!(threshold >= 0 && threshold <= 1)) {
 		throw BinderException("The rewrite_delete_threshold must be between 0 and 1");
 	}
 	return to_string(threshold);
@@ -665,6 +749,8 @@ static string ParseInterval(ClientContext &, const string &option, const Value &
 		if (!Interval::FromString(interval_value, result)) {
 			throw BinderException("%s is not a valid interval value.", option);
 		}
+		// throws if the interval reaches back before the year 1
+		DuckLakeTableFunctionUtil::FormatTimestampOlderThan(option, interval_value);
 	}
 	return interval_value;
 }
@@ -687,8 +773,8 @@ static const unordered_map<string, config_option_parser_t> &ConfigOptionParsers(
 	    {"parquet_row_group_size", ParseRowGroupSize},
 	    {"parquet_row_group_size_bytes", ParseRowGroupSizeBytes},
 	    {"target_file_size", ParseMemorySize},
-	    {"require_commit_message", ParseBooleanLiteral},
-	    {"hive_file_pattern", ParseBooleanLiteral},
+	    {"require_commit_message", ParseBoolean},
+	    {"hive_file_pattern", ParseBoolean},
 	    {"rewrite_delete_threshold", ParseDeleteThreshold},
 	    {"delete_older_than", ParseInterval},
 	    {"expire_older_than", ParseInterval},
@@ -726,7 +812,21 @@ void DuckLakeUtil::ValidateConfigOptionScope(const string &option, bool has_sche
 	}
 }
 
-bool DuckLakeUtil::TryGetLiteralValue(const ParsedExpression &expr, Value &result) {
+bool DuckLakeUtil::DependsOnTimeZone(const LogicalType &type) {
+	return TypeVisitor::Contains(type, [](const LogicalType &child) {
+		switch (child.id()) {
+		case LogicalTypeId::TIMESTAMP_TZ:
+		case LogicalTypeId::TIMESTAMP_TZ_NS:
+		case LogicalTypeId::TIME_TZ:
+			return true;
+		default:
+			return false;
+		}
+	});
+}
+
+bool DuckLakeUtil::TryGetLiteralValue(const ParsedExpression &expr, Value &result,
+                                      optional_ptr<ClientContext> context) {
 	if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
 		result = expr.Cast<ConstantExpression>().GetLiteral().ToValue();
 		return true;
@@ -742,7 +842,16 @@ bool DuckLakeUtil::TryGetLiteralValue(const ParsedExpression &expr, Value &resul
 	if (target_type.id() == LogicalTypeId::INVALID || target_type.id() == LogicalTypeId::UNBOUND) {
 		return false;
 	}
-	auto value = cast.Child().Cast<ConstantExpression>().GetLiteral().ToValue().DefaultTryCastAs(target_type);
+	auto literal = cast.Child().Cast<ConstantExpression>().GetLiteral().ToValue();
+	optional<Value> value;
+	if (context) {
+		value = literal.TryCastAs(*context, target_type);
+	} else if (DuckLakeUtil::DependsOnTimeZone(target_type) || DuckLakeUtil::DependsOnTimeZone(literal.type())) {
+		// the session decides what the cast gives, so it stays an expression
+		return false;
+	} else {
+		value = literal.DefaultTryCastAs(target_type);
+	}
 	if (!value) {
 		return false;
 	}
@@ -750,11 +859,25 @@ bool DuckLakeUtil::TryGetLiteralValue(const ParsedExpression &expr, Value &resul
 	return true;
 }
 
+optional<Value> DuckLakeUtil::TryParseSnapshotId(const Value &version) {
+	// the cast of a string to the BIGINT version parameters
+	return version.DefaultTryCastAs(LogicalType::BIGINT);
+}
+
+bool DuckLakeUtil::TryReadTextAs(const Value &text, const LogicalType &type, Value &result) {
+	auto typed_value = text.DefaultTryCastAs(type);
+	if (!typed_value || typed_value->ToString() != text.ToString()) {
+		return false;
+	}
+	result = std::move(*typed_value);
+	return true;
+}
+
 unique_ptr<ParsedExpression> DuckLakeUtil::LiteralDefaultExpression(const Value &text, const LogicalType &type) {
 	// keep the text when the column type would print it differently, as for a rounded value or a time zone
-	auto typed_value = text.DefaultTryCastAs(type);
-	if (typed_value && typed_value->ToString() == text.ToString()) {
-		return ConstantExpression::FromValue(*typed_value);
+	Value typed_value;
+	if (TryReadTextAs(text, type, typed_value)) {
+		return ConstantExpression::FromValue(typed_value);
 	}
 	return ConstantExpression::FromValue(text);
 }

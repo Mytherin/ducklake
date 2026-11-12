@@ -1,0 +1,56 @@
+# name: test/sql/table_changes/ducklake_table_deletions_file_and_inlined_deletes.test
+# description: ducklake_table_deletions dates the rows of a delete file and of later inlined deletes of the same data file
+# group: [table_changes]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/ducklake_table_deletions_file_and_inlined_deletes', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.t AS SELECT range::INTEGER AS i FROM range(50)
+
+# more deleted rows than the inlining limit are written to a delete file
+statement ok
+DELETE FROM ducklake.t WHERE i < 20
+
+statement ok
+SET VARIABLE file_delete = (SELECT max(snapshot_id) FROM ducklake_snapshots('ducklake'))
+
+# a delete within the inlining limit is stored in the metadata catalog
+statement ok
+DELETE FROM ducklake.t WHERE i = 30
+
+statement ok
+SET VARIABLE inlined_delete = (SELECT max(snapshot_id) FROM ducklake_snapshots('ducklake'))
+
+query I
+SELECT count(*) FROM ducklake_list_files('ducklake', 't') WHERE delete_file IS NOT NULL
+----
+1
+
+query IIII
+SELECT snapshot_id - getvariable('file_delete'), count(*), min(i), max(i)
+FROM ducklake_table_deletions('ducklake', 'main', 't', getvariable('file_delete'), getvariable('inlined_delete'))
+GROUP BY ALL
+ORDER BY ALL
+----
+0	20	0	19
+1	1	30	30
+
+query II
+SELECT snapshot_id - getvariable('file_delete'), i
+FROM ducklake_table_deletions('ducklake', 'main', 't', getvariable('inlined_delete'), getvariable('inlined_delete'))
+----
+1	30
+
+query I
+SELECT count(*) FROM ducklake.t
+----
+29

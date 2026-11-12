@@ -1,0 +1,85 @@
+# name: test/sql/transaction/drop_altered_table_local_changes.test
+# description: Dropping a table altered in the same transaction discards its delete files and compactions
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/drop_altered_table_local_changes', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.deleted(i INTEGER)
+
+statement ok
+INSERT INTO ducklake.deleted SELECT range FROM range(100)
+
+statement ok
+INSERT INTO ducklake.deleted SELECT range FROM range(100, 200)
+
+statement ok
+BEGIN
+
+statement ok
+DELETE FROM ducklake.deleted WHERE i < 50
+
+statement ok
+COMMENT ON TABLE ducklake.deleted IS 'altered'
+
+statement ok
+DROP TABLE ducklake.deleted
+
+statement ok
+COMMIT
+
+statement error
+FROM ducklake.deleted
+----
+does not exist
+
+# the delete file written in the transaction is removed, the committed data files are kept
+query II
+SELECT count(*), count(*) FILTER (WHERE file LIKE '%-delete.%')
+FROM glob('{DATA_PATH}/drop_altered_table_local_changes/main/deleted/*')
+----
+2	0
+
+statement ok
+CREATE TABLE ducklake.compacted(i INTEGER)
+
+statement ok
+INSERT INTO ducklake.compacted SELECT range FROM range(100)
+
+statement ok
+INSERT INTO ducklake.compacted SELECT range FROM range(100, 200)
+
+statement ok
+BEGIN
+
+statement ok
+CALL ducklake_merge_adjacent_files('ducklake', 'compacted')
+
+statement ok
+COMMENT ON TABLE ducklake.compacted IS 'altered'
+
+# the compaction is discarded with the table, so the transaction only has schema changes
+statement ok
+DROP TABLE ducklake.compacted
+
+statement ok
+COMMIT
+
+statement error
+FROM ducklake.compacted
+----
+does not exist
+
+query I
+SELECT count(*) FROM glob('{DATA_PATH}/drop_altered_table_local_changes/main/compacted/*')
+----
+2

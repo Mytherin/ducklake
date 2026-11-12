@@ -1,0 +1,47 @@
+# name: test/sql/delete/delete_file_corrupt.test
+# description: Scanning a table whose parquet delete file is corrupt fails with a clear error
+# group: [delete]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/delete_file_corrupt', DATA_INLINING_ROW_LIMIT 0, WRITE_DELETION_VECTORS false)
+
+statement ok
+CREATE TABLE ducklake.t AS SELECT range::INTEGER AS i FROM range(10)
+
+statement ok
+DELETE FROM ducklake.t WHERE i = 0
+
+query I
+SELECT sum(i) FROM ducklake.t
+----
+45
+
+statement ok
+SET VARIABLE delete_path = (SELECT delete_file FROM ducklake_list_files('ducklake', 't'))
+
+# a delete file holds the file path and the position of every deleted row
+statement ok
+COPY (SELECT 42 AS x) TO (getvariable('delete_path')) (FORMAT PARQUET)
+
+statement error
+SELECT sum(i) FROM ducklake.t
+----
+Invalid schema contained in the delete file
+
+# the positions must be strictly increasing
+statement ok
+COPY (SELECT * FROM (VALUES ('f', 5::BIGINT), ('f', 2::BIGINT)) v(file_path, pos))
+TO (getvariable('delete_path')) (FORMAT PARQUET)
+
+statement error
+SELECT sum(i) FROM ducklake.t
+----
+row ids must be sorted and strictly increasing - but found 2 after 5

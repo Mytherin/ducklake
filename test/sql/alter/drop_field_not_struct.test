@@ -1,0 +1,45 @@
+# name: test/sql/alter/drop_field_not_struct.test
+# description: Fields can only be dropped from struct columns, not from lists, maps or variants
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/drop_field_not_struct')
+
+statement ok
+CREATE TABLE ducklake.t (l INTEGER[], m MAP(INTEGER, VARCHAR), v VARIANT)
+
+statement ok
+INSERT INTO ducklake.t VALUES ([1, 2], MAP {1: 'one'}, 42)
+
+statement error
+ALTER TABLE ducklake.t DROP COLUMN l.element
+----
+Cannot drop field "element" from column "l" - it's not a struct
+
+statement error
+ALTER TABLE ducklake.t DROP COLUMN m.key
+----
+Cannot drop field "key" from column "m" - it's not a struct
+
+statement error
+ALTER TABLE ducklake.t DROP COLUMN m.value
+----
+Cannot drop field "value" from column "m" - it's not a struct
+
+statement error
+ALTER TABLE ducklake.t DROP COLUMN v.a
+----
+points to child of variant column "v"
+
+query III
+SELECT * FROM ducklake.t
+----
+[1, 2]	{1=one}	42

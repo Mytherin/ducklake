@@ -107,7 +107,9 @@ static DuckLakeVariantStats DeserializeShreddedStats(const LogicalType &shredded
 
 	auto extra_stats_val = obj.GetMember("extra_stats");
 	if (stats.extra_stats && extra_stats_val.IsValid()) {
+		// LCOV_EXCL_START
 		stats.extra_stats->Deserialize(extra_stats_val.GetString());
+		// LCOV_EXCL_STOP
 	}
 
 	return variant_stats;
@@ -164,9 +166,11 @@ static JSONMutableValue SerializeShreddedStats(JSONWriter &writer, const string 
 	obj.Add("any_valid", writer.CreateBoolean(stats.any_valid));
 
 	if (stats.extra_stats) {
+		// LCOV_EXCL_START
 		string extra_stats_str;
 		if (stats.extra_stats->TrySerialize(extra_stats_str)) {
 			obj.AddString("extra_stats", extra_stats_str);
+			// LCOV_EXCL_STOP
 		}
 	}
 	return obj;
@@ -354,15 +358,19 @@ bool DuckLakeColumnVariantStats::ParseStats(const string &stats_name, const vect
 		variant_type = UnboundType::TryParseAndDefaultBind(type_str);
 		return true;
 	}
+	// LCOV_EXCL_START
 	return false;
+	// LCOV_EXCL_STOP
 }
 
 vector<string> ExtractVariantFieldNames(const vector<string> &path, idx_t variant_field_start) {
 	vector<string> field_names;
 	for (idx_t i = variant_field_start; i + 1 < path.size(); i += 2) {
 		if (path[i] != "typed_value") {
+			// LCOV_EXCL_START
 			throw InvalidInputException("Expected typed_value at position %d in path %s", i,
 			                            StringUtil::Join(path, "."));
+			// LCOV_EXCL_STOP
 		}
 		field_names.push_back(path[i + 1]);
 	}
@@ -375,9 +383,11 @@ LogicalType ExtractVariantType(const LogicalType &variant_type, const vector<str
 		variant_field_name = "root";
 	}
 	if (variant_type.id() != LogicalTypeId::STRUCT) {
+		// LCOV_EXCL_START
 		throw InvalidInputException(
 		    "Expected variant type to be struct at this layer while looking for field %s - but found %s",
 		    StringUtil::Join(field_names, "."), variant_type);
+		// LCOV_EXCL_STOP
 	}
 	// find the "typed_value" within this entry
 	for (auto &entry : StructType::GetChildTypes(variant_type)) {
@@ -390,9 +400,11 @@ LogicalType ExtractVariantType(const LogicalType &variant_type, const vector<str
 			auto &field_name = field_names[field_idx];
 			if (entry.second.id() == LogicalTypeId::LIST) {
 				if (field_name != "element") {
+					// LCOV_EXCL_START
 					throw InvalidInputException(
 					    "Found a list at this layer - expected a field named \"element\" but got a field named \"%s\"",
 					    field_name);
+					// LCOV_EXCL_STOP
 				}
 				if (!variant_field_name.empty()) {
 					variant_field_name += ".";
@@ -402,9 +414,11 @@ LogicalType ExtractVariantType(const LogicalType &variant_type, const vector<str
 				                          field_idx + 1);
 			}
 			if (entry.second.id() != LogicalTypeId::STRUCT) {
+				// LCOV_EXCL_START
 				throw InvalidInputException(
 				    "Expected variant type to be struct at this layer while looking for nested field %s - but found %s",
 				    StringUtil::Join(field_names, "."), variant_type);
+				// LCOV_EXCL_STOP
 			}
 			// not the final field - recurse to find the field
 			for (auto &typed_child : StructType::GetChildTypes(entry.second)) {
@@ -476,8 +490,10 @@ void PartialVariantStats::ParseVariantStats(const vector<string> &path, idx_t va
 		}
 		return;
 	}
+	// LCOV_EXCL_START
 	throw InvalidInputException("Variant stats - unknown path element %s - expected metadata, typed_value or value",
 	                            path.back());
+	// LCOV_EXCL_STOP
 }
 
 DuckLakeColumnStats PartialVariantStats::Finalize() {

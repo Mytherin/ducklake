@@ -63,15 +63,6 @@ optional_idx DuckLakeDeleteData::GetSnapshotForPosition(idx_t position) const {
 }
 
 idx_t DuckLakeDeleteFilter::Filter(row_t start_row_index, idx_t count, SelectionVector &result_sel) {
-	// apply max row count (if it is set)
-	if (max_row_count.IsValid()) {
-		auto max_count = max_row_count.GetIndex();
-		if (max_count <= NumericCast<idx_t>(start_row_index)) {
-			// no rows to read based on max row count - skip
-			return 0;
-		}
-		count = MinValue<idx_t>(max_count - start_row_index, count);
-	}
 	return delete_data->Filter(start_row_index, count, result_sel, snapshot_filter);
 }
 
@@ -379,10 +370,6 @@ void DuckLakeDeleteFilter::Initialize(ClientContext &context, const DuckLakeDele
 			deleted.push_back(i);
 		}
 	}
-}
-
-void DuckLakeDeleteFilter::SetMaxRowCount(idx_t max_row_count_p) {
-	max_row_count = max_row_count_p;
 }
 
 void DuckLakeDeleteFilter::SetSnapshotFilter(idx_t snapshot_filter_p) {

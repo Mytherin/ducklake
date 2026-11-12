@@ -23,7 +23,8 @@
       "reason": "Extension Loading tests, not relevant to remote files.",
       "paths": [
         "test/sql/general/missing_parquet.test",
-        "test/sql/autoloading/autoload_data_path.test"
+        "test/sql/autoloading/autoload_data_path.test",
+        "test/sql/add_files/add_files_json_without_extension.test"
       ]
     },
   {
@@ -50,6 +51,20 @@
       "reason": "Tests ObjectCache eviction under a tight memory_limit; S3 multipart upload part buffers (~80MB each) exceed the memory_limit required for the eviction scenario.",
       "paths": [
         "test/sql/insert/insert_wide_table_low_memory.test_slow"
+      ]
+    },
+    {
+      "reason": "Test only for Postgres as catalog",
+      "paths": [
+        "test/sql/benchmark/postgres_catalog.test",
+        "test/sql/metadata/metadata_schema_scoped_attach.test"
+      ]
+    },
+    {
+      "reason": "Overwrites a delete file in place, while DuckLake caches remote files on the assumption that they never change.",
+      "paths": [
+        "test/sql/delete/delete_file_corrupt.test",
+        "test/sql/table_changes/ducklake_table_deletions_corrupt_delete_file.test"
       ]
     }
   ]

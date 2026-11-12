@@ -1,0 +1,35 @@
+# name: test/sql/list_files/list_files_without_footer_size.test
+# description: Data files without a footer size in the metadata, as other writers may leave them, are listed and read
+# group: [list_files]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/list_files_without_footer_size', METADATA_CATALOG 'ducklake_meta', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.t(i INTEGER)
+
+statement ok
+INSERT INTO ducklake.t VALUES (1), (2), (3)
+
+statement ok
+UPDATE ducklake_meta.ducklake_data_file SET footer_size = NULL
+
+query III
+SELECT data_file IS NOT NULL, data_file_size_bytes > 0, data_file_footer_size FROM ducklake_list_files('ducklake', 't')
+----
+true	true	NULL
+
+query I
+SELECT i FROM ducklake.t ORDER BY i
+----
+1
+2
+3

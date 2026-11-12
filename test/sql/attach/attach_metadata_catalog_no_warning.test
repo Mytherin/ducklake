@@ -1,0 +1,35 @@
+# name: test/sql/attach/attach_metadata_catalog_no_warning.test
+# description: Attaching a DuckLake does not warn that its DuckDB metadata is only a DuckLake catalog
+# group: [attach]
+
+require ducklake
+
+require parquet
+
+require skip_reload
+
+statement ok
+SET enable_logging = true
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/metadata_no_warning.ducklake' AS lake (DATA_PATH '{TEST_DIR}/metadata_no_warning_files', METADATA_CATALOG 'lake_meta')
+
+statement ok
+CREATE TABLE lake.t(i INTEGER)
+
+statement ok
+DETACH lake
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/metadata_no_warning.ducklake' AS lake (METADATA_CATALOG 'lake_meta')
+
+statement ok
+DETACH lake
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/metadata_no_warning.ducklake' AS lake
+
+query I
+SELECT count(*) FROM duckdb_logs WHERE log_level = 'WARNING' AND contains(message, 'is a DuckLake metadata catalog')
+----
+0

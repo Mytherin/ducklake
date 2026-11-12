@@ -1,0 +1,45 @@
+# name: test/sql/general/null_schema_and_table_paths.test
+# description: schemas and tables without a stored path resolve their files from the data path
+# group: [general]
+
+require ducklake
+
+require parquet
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/null_schema_and_table_paths.db' AS dl
+(DATA_PATH '{DATA_PATH}/null_schema_and_table_paths', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE dl.t AS SELECT 42 AS i
+
+# drop the schema and table paths, the data file is now found from the data path
+statement ok
+UPDATE __ducklake_metadata_dl.ducklake_schema SET path = NULL, path_is_relative = NULL
+
+statement ok
+UPDATE __ducklake_metadata_dl.ducklake_table SET path = NULL, path_is_relative = NULL
+
+statement ok
+UPDATE __ducklake_metadata_dl.ducklake_data_file SET path = 'main/t/' || path
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/null_schema_and_table_paths.db' AS dl
+
+query I
+SELECT * FROM dl.t
+----
+42
+
+query I
+SELECT count(*) FROM ducklake_list_files('dl', 't') WHERE data_file LIKE '%null_schema_and_table_paths%main%t%.parquet'
+----
+1
+
+statement ok
+DETACH dl

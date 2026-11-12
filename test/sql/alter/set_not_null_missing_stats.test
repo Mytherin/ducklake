@@ -1,0 +1,81 @@
+# name: test/sql/alter/set_not_null_missing_stats.test
+# description: SET NOT NULL on columns that have no column stats, such as nested columns and columns of empty tables
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/set_not_null_missing_stats')
+
+statement ok
+CREATE TABLE ducklake.with_null(s STRUCT(a INTEGER))
+
+statement ok
+INSERT INTO ducklake.with_null VALUES ({'a': 1}), (NULL)
+
+statement error
+ALTER TABLE ducklake.with_null ALTER s SET NOT NULL
+----
+Cannot SET NOT NULL on
+
+statement ok
+INSERT INTO ducklake.with_null VALUES (NULL)
+
+query I
+SELECT count(*) FROM ducklake.with_null WHERE s IS NULL
+----
+2
+
+statement ok
+CREATE TABLE ducklake.nested(s STRUCT(a INTEGER), l INTEGER[], m MAP(INTEGER, INTEGER))
+
+statement ok
+INSERT INTO ducklake.nested VALUES ({'a': 1}, [1], MAP {1: 2})
+
+statement ok
+ALTER TABLE ducklake.nested ALTER s SET NOT NULL
+
+statement ok
+ALTER TABLE ducklake.nested ALTER l SET NOT NULL
+
+statement ok
+ALTER TABLE ducklake.nested ALTER m SET NOT NULL
+
+statement error
+INSERT INTO ducklake.nested VALUES (NULL, [2], MAP {3: 4})
+----
+NOT NULL constraint failed
+
+statement ok
+CREATE TABLE ducklake.empty(i INTEGER)
+
+statement ok
+ALTER TABLE ducklake.empty ALTER i SET NOT NULL
+
+statement ok
+BEGIN
+
+statement ok
+CREATE TABLE ducklake.local_empty(i INTEGER)
+
+statement ok
+ALTER TABLE ducklake.local_empty ALTER i SET NOT NULL
+
+statement ok
+COMMIT
+
+statement error
+INSERT INTO ducklake.empty VALUES (NULL)
+----
+NOT NULL constraint failed
+
+statement error
+INSERT INTO ducklake.local_empty VALUES (NULL)
+----
+NOT NULL constraint failed

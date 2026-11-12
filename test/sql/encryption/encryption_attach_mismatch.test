@@ -1,0 +1,48 @@
+# name: test/sql/encryption/encryption_attach_mismatch.test
+# description: Attaching with an ENCRYPTED setting that does not match the catalog fails
+# group: [encryption]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{BASE_TEST_NAME}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/encryption_attach_mismatch', ENCRYPTED false)
+
+statement ok
+CREATE TABLE ducklake.t AS SELECT 42 AS i
+
+statement ok
+DETACH ducklake
+
+statement error
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/encryption_attach_mismatch', ENCRYPTED true)
+----
+the database is not encrypted but we requested an encrypted database
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/encryption_attach_mismatch', ENCRYPTED false)
+
+query I
+FROM ducklake.t
+----
+42
+
+statement ok
+DETACH ducklake
+
+# the other direction, with an encrypted catalog stored in a DuckDB file
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/{BASE_TEST_NAME}_encrypted.db' AS enc (DATA_PATH '{DATA_PATH}/encryption_attach_mismatch_encrypted', ENCRYPTED)
+
+statement ok
+DETACH enc
+
+statement error
+ATTACH 'ducklake:{TEST_DIR}/{BASE_TEST_NAME}_encrypted.db' AS enc (DATA_PATH '{DATA_PATH}/encryption_attach_mismatch_encrypted', ENCRYPTED false)
+----
+the database is encrypted but we requested an unencrypted database

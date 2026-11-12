@@ -1,0 +1,46 @@
+# name: test/sql/compaction/postgres_expire_snapshots_time_zone.test
+# description: Snapshot time filters on a Postgres catalog whose session time zone is not UTC
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+require postgres_scanner
+
+require-env DUCKLAKE_CONNECTION
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION} options=-ctimezone=America/New_York' AS ducklake (DATA_PATH '{DATA_PATH}/postgres_expire_snapshots_time_zone')
+
+statement ok
+CREATE TABLE ducklake.t (i INTEGER)
+
+statement ok
+INSERT INTO ducklake.t VALUES (1)
+
+statement ok
+INSERT INTO ducklake.t VALUES (2)
+
+statement ok
+SET VARIABLE first_insert = (SELECT snapshot_time FROM ducklake.snapshots() WHERE snapshot_id = 2)
+
+query I
+SELECT i FROM ducklake.t AT (TIMESTAMP => getvariable('first_insert'))
+----
+1
+
+query I
+SELECT count(*) FROM ducklake_expire_snapshots('ducklake', dry_run => true, older_than => now() - INTERVAL 1 HOUR)
+----
+0
+
+statement ok
+CALL ducklake_expire_snapshots('ducklake', older_than => now() - INTERVAL 1 HOUR)
+
+query I
+SELECT count(*) FROM ducklake.snapshots()
+----
+4

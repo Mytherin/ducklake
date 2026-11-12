@@ -1,0 +1,35 @@
+# name: test/sql/cleanup/cleanup_conflicting_age_options.test
+# description: The cleanup functions reject cleanup_all together with older_than, naming the function in the error
+# group: [cleanup]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/cleanup_conflicting_age_options')
+
+statement error
+SELECT * FROM ducklake_cleanup_old_files('ducklake', cleanup_all => true, older_than => now())
+----
+ducklake_cleanup_old_files: either cleanup_all OR older_than must be specified
+
+statement error
+SELECT * FROM ducklake_delete_orphaned_files('ducklake', cleanup_all => true, older_than => now())
+----
+ducklake_delete_orphaned_files: either cleanup_all OR older_than must be specified
+
+# both options are still accepted on their own
+query I
+SELECT count(*) FROM ducklake_cleanup_old_files('ducklake', cleanup_all => true, dry_run => true)
+----
+0
+
+query I
+SELECT count(*) FROM ducklake_delete_orphaned_files('ducklake', older_than => now(), dry_run => true)
+----
+0

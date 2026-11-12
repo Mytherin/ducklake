@@ -1,0 +1,47 @@
+# name: test/sql/migration/postgres_inlined_unknown_column.test
+# description: the Postgres inlined type migration leaves an inlined table with a column the catalog does not know alone
+# group: [migration]
+
+require ducklake
+
+require parquet
+
+require postgres_scanner
+
+require-env DUCKLAKE_CONNECTION postgres:dbname=ducklakedb
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl
+(DATA_PATH '{DATA_PATH}/postgres_inlined_unknown_column', DATA_INLINING_ROW_LIMIT 10, DUCKLAKE_VERSION '1.0')
+
+statement ok
+CREATE TABLE dl.t (i INTEGER, s VARCHAR)
+
+statement ok
+INSERT INTO dl.t VALUES (1, 'a')
+
+statement ok
+CALL postgres_execute('__ducklake_metadata_dl', 'ALTER TABLE ducklake_inlined_data_1_1 ADD COLUMN unknown_column INTEGER')
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl
+(DATA_PATH '{DATA_PATH}/postgres_inlined_unknown_column', DATA_INLINING_ROW_LIMIT 10, DUCKLAKE_VERSION '1.1', AUTOMATIC_MIGRATION TRUE)
+
+query II
+SELECT * FROM dl.t
+----
+1	a
+
+# the table was not rewritten
+query I
+SELECT * FROM postgres_query('__ducklake_metadata_dl', 'SELECT count(*) FROM ducklake_inlined_data_1_1 WHERE unknown_column IS NULL')
+----
+1
+
+statement ok
+DETACH dl

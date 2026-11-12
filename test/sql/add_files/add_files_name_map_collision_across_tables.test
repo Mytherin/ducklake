@@ -1,0 +1,43 @@
+# name: test/sql/add_files/add_files_name_map_collision_across_tables.test
+# description: Name maps of different tables are kept apart when their hashes collide
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/add_files_name_map_collision_across_tables', DATA_INLINING_ROW_LIMIT 0)
+
+# the column names are chosen so the name map of table "a" (id 1) hashes like the name map of table "b" (id 2)
+statement ok
+CREATE TABLE ducklake.a(c0 INTEGER, c1 INTEGER, c4 INTEGER, c6 INTEGER, c7 INTEGER, c8 INTEGER, c9 INTEGER, c11 INTEGER, c14 INTEGER, c18 INTEGER, c20 INTEGER, c22 INTEGER, c23 INTEGER, c24 INTEGER, c25 INTEGER, c27 INTEGER, c28 INTEGER, c29 INTEGER, c36 INTEGER, c37 INTEGER, c39 INTEGER, c40 INTEGER, c42 INTEGER, c45 INTEGER, c47 INTEGER, c48 INTEGER, c50 INTEGER, c51 INTEGER, c52 INTEGER, c58 INTEGER, c61 INTEGER)
+
+statement ok
+CREATE TABLE ducklake.b(x INTEGER)
+
+statement ok
+COPY (SELECT 1 AS c0, 1 AS c1, 1 AS c4, 1 AS c6, 1 AS c7, 1 AS c8, 1 AS c9, 1 AS c11, 1 AS c14, 1 AS c18, 1 AS c20, 1 AS c22, 1 AS c23, 1 AS c24, 1 AS c25, 1 AS c27, 1 AS c28, 1 AS c29, 1 AS c36, 1 AS c37, 1 AS c39, 1 AS c40, 1 AS c42, 1 AS c45, 1 AS c47, 1 AS c48, 1 AS c50, 1 AS c51, 1 AS c52, 1 AS c58, 1 AS c61) TO '{DATA_PATH}/add_files_name_map_collision_across_tables_a.parquet'
+
+statement ok
+COPY (SELECT 2 AS x) TO '{DATA_PATH}/add_files_name_map_collision_across_tables_b.parquet'
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'a', '{DATA_PATH}/add_files_name_map_collision_across_tables_a.parquet')
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'b', '{DATA_PATH}/add_files_name_map_collision_across_tables_b.parquet')
+
+query I
+SELECT x FROM ducklake.b
+----
+2
+
+query I
+SELECT c0 + c1 + c4 + c6 + c7 + c8 + c9 + c11 + c14 + c18 + c20 + c22 + c23 + c24 + c25 + c27 + c28 + c29 + c36 + c37 + c39 + c40 + c42 + c45 + c47 + c48 + c50 + c51 + c52 + c58 + c61 FROM ducklake.a
+----
+31

@@ -1,0 +1,48 @@
+# name: test/sql/add_files/add_files_hive_key_missing_from_path.test
+# description: A column read from the hive path of an added file fails cleanly when the stored path lost the key
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{BASE_TEST_NAME}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl
+(DATA_PATH '{DATA_PATH}/add_files_hive_key_missing_from_path/lake', METADATA_CATALOG 'meta', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE dl.t (part INTEGER, val INTEGER)
+
+statement ok
+COPY (SELECT 7 AS part, 42 AS val) TO '{DATA_PATH}/add_files_hive_key_missing_from_path_hive' (FORMAT 'parquet', PARTITION_BY (part))
+
+# a byte-identical file under a directory that does not name the partition key
+statement ok
+COPY (SELECT 7 AS other, 42 AS val) TO '{DATA_PATH}/add_files_hive_key_missing_from_path_moved' (FORMAT 'parquet', PARTITION_BY (other))
+
+statement ok
+CALL ducklake_add_data_files('dl', 't', '{DATA_PATH}/add_files_hive_key_missing_from_path_hive/part=7/*.parquet', hive_partitioning => true)
+
+query II
+SELECT part, val FROM dl.t
+----
+7	42
+
+statement ok
+UPDATE meta.ducklake_data_file SET path = replace(path, '_hive/part=7', '_moved/other=7')
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl
+(DATA_PATH '{DATA_PATH}/add_files_hive_key_missing_from_path/lake', METADATA_CATALOG 'meta')
+
+statement error
+SELECT part, val FROM dl.t
+----
+should have been read from hive partitions

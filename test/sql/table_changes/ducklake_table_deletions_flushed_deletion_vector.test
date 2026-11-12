@@ -1,0 +1,58 @@
+# name: test/sql/table_changes/ducklake_table_deletions_flushed_deletion_vector.test
+# description: ducklake_table_deletions over part of the snapshots in a deletion vector of flushed inlined deletes
+# group: [table_changes]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/ducklake_table_deletions_flushed_deletion_vector', DATA_INLINING_ROW_LIMIT 10, WRITE_DELETION_VECTORS true)
+
+statement ok
+CREATE TABLE ducklake.t AS SELECT range::INTEGER AS i FROM range(50)
+
+statement ok
+DELETE FROM ducklake.t WHERE i = 3
+
+statement ok
+SET VARIABLE first_delete = (SELECT max(snapshot_id) FROM ducklake_snapshots('ducklake'))
+
+statement ok
+DELETE FROM ducklake.t WHERE i = 7
+
+statement ok
+SET VARIABLE second_delete = (SELECT max(snapshot_id) FROM ducklake_snapshots('ducklake'))
+
+# the flush writes the deletes of both snapshots into one delete file
+statement ok
+CALL ducklake_flush_inlined_data('ducklake')
+
+query I
+SELECT count(*) FROM ducklake_list_files('ducklake', 't') WHERE delete_file IS NOT NULL
+----
+1
+
+query II
+SELECT snapshot_id - getvariable('first_delete'), i
+FROM ducklake_table_deletions('ducklake', 'main', 't', getvariable('first_delete'), getvariable('first_delete'))
+----
+0	3
+
+query II
+SELECT snapshot_id - getvariable('first_delete'), i
+FROM ducklake_table_deletions('ducklake', 'main', 't', getvariable('first_delete'), getvariable('second_delete'))
+ORDER BY i
+----
+0	3
+1	7
+
+query II
+SELECT snapshot_id - getvariable('first_delete'), i
+FROM ducklake_table_deletions('ducklake', 'main', 't', getvariable('second_delete'), getvariable('second_delete'))
+----
+1	7

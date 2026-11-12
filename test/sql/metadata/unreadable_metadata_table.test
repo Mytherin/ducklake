@@ -1,0 +1,49 @@
+# name: test/sql/metadata/unreadable_metadata_table.test
+# description: attaching a catalog whose ducklake_metadata table cannot be read reports the underlying errors
+# group: [metadata]
+
+require ducklake
+
+require parquet
+
+test-env DATA_PATH {TEST_DIR}
+
+# the probe for an existing DuckLake fails with an error other than a missing table
+statement ok
+ATTACH '{TEST_DIR}/unreadable_metadata_probe.db' AS meta
+
+statement ok
+CREATE VIEW meta.ducklake_metadata AS SELECT 'version' AS key, '1.0' AS value FROM range(1) WHERE error('broken metadata') IS NULL
+
+statement ok
+DETACH meta
+
+statement error
+ATTACH 'ducklake:{TEST_DIR}/unreadable_metadata_probe.db' AS dl (DATA_PATH '{DATA_PATH}/unreadable_metadata_probe')
+----
+Failed to probe DuckLake metadata: broken metadata
+
+# the metadata table exists, but neither the current nor the v0.1 layout can be read from it
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/unreadable_metadata_load.db' AS dl (DATA_PATH '{DATA_PATH}/unreadable_metadata_load')
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH '{TEST_DIR}/unreadable_metadata_load.db' AS meta
+
+statement ok
+ALTER TABLE meta.ducklake_metadata RENAME COLUMN value TO renamed_value
+
+statement ok
+DETACH meta
+
+# fail without retrying the load
+statement ok
+SET ducklake_max_retry_count = 0
+
+statement error
+ATTACH 'ducklake:{TEST_DIR}/unreadable_metadata_load.db' AS dl
+----
+<REGEX>:.*Failed to load existing DuckLake.*Followed by.*

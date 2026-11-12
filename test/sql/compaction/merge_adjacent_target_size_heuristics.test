@@ -1,0 +1,67 @@
+# name: test/sql/compaction/merge_adjacent_target_size_heuristics.test
+# description: merge_adjacent_files skips files at the target size and files that only move away from it when merged
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/merge_adjacent_target_size_heuristics', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+USE ducklake
+
+# two files of about 4KB each, which barely compress
+statement ok
+CREATE TABLE t(i UBIGINT)
+
+statement ok
+INSERT INTO t SELECT hash(i) FROM range(500) t(i)
+
+statement ok
+INSERT INTO t SELECT hash(i + 1000) FROM range(500) t(i)
+
+query I
+SELECT count(*) FROM ducklake_list_files('ducklake', 't') WHERE data_file_size_bytes BETWEEN 3500 AND 4900
+----
+2
+
+# with a 5KB target, merging both files ends up further from the target than either file on its own
+statement ok
+CALL ducklake.set_option('target_file_size', '5KB')
+
+query III
+SELECT table_name, files_processed, files_created FROM ducklake_merge_adjacent_files('ducklake', 't', max_compacted_files => 1)
+----
+
+# files at or above the target are skipped, also when max_file_size admits them
+statement ok
+CALL ducklake.set_option('target_file_size', '1B')
+
+query III
+SELECT table_name, files_processed, files_created FROM ducklake_merge_adjacent_files('ducklake', 't', max_file_size => 1000000)
+----
+
+query I
+SELECT count(*) FROM ducklake_list_files('ducklake', 't')
+----
+2
+
+# a target that fits both files merges them
+statement ok
+CALL ducklake.set_option('target_file_size', '1MB')
+
+query III
+SELECT table_name, files_processed, files_created FROM ducklake_merge_adjacent_files('ducklake', 't')
+----
+t	2	1
+
+query II
+SELECT count(*), count(DISTINCT i) FROM t
+----
+1000	1000

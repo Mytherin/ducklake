@@ -1,0 +1,30 @@
+# name: test/sql/constraints/not_null_insert_parquet.test
+# description: Inserting a NULL into a NOT NULL column fails when the rows are written to a Parquet file
+# group: [constraints]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/not_null_insert_parquet', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.t (i INTEGER NOT NULL, j INTEGER)
+
+statement error
+INSERT INTO ducklake.t VALUES (1, 2), (NULL, 3)
+----
+NOT NULL constraint failed: t.i
+
+statement ok
+INSERT INTO ducklake.t VALUES (1, NULL)
+
+query II
+SELECT i, j FROM ducklake.t
+----
+1	NULL

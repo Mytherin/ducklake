@@ -1,0 +1,76 @@
+# name: test/sql/alter/alter_table_rejected_changes.test
+# description: ALTER TABLE changes that DuckLake rejects, such as renames onto existing tables and unsupported partition keys
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/alter_table_rejected_changes', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.a(i INTEGER, s STRUCT(x INTEGER))
+
+statement ok
+CREATE TABLE ducklake.b(i INTEGER)
+
+statement error
+ALTER TABLE ducklake.a RENAME TO b
+----
+Could not rename "a" to "b": another entry with this name already exists!
+
+statement error
+ALTER TABLE ducklake.a SET PARTITIONED BY (i::VARCHAR)
+----
+Unsupported partition key CAST(i AS VARCHAR)
+
+statement error
+ALTER TABLE ducklake.a SET PARTITIONED BY (42)
+----
+Unsupported partition key 42
+
+statement error
+ALTER TABLE ducklake.a ALTER i TYPE BIGINT USING i + 1
+----
+Column type cannot be modified using an expression
+
+statement error
+ALTER TABLE ducklake.a ALTER i TYPE BIGINT USING (i + 1)::BIGINT
+----
+Column type cannot be modified using an expression
+
+# dropping a field of a column that does not exist is a no-op with IF EXISTS
+statement ok
+ALTER TABLE ducklake.a DROP COLUMN IF EXISTS missing.x
+
+# uncommitted inlined rows cannot be partitioned
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.a VALUES (1, {'x': 2})
+
+statement error
+ALTER TABLE ducklake.a SET PARTITIONED BY (i)
+----
+ALTER on a table with transaction-local inlined data is not supported SET_PARTITIONED_BY
+
+statement ok
+ROLLBACK
+
+query II
+SELECT table_name, column_name FROM duckdb_columns() WHERE database_name = 'ducklake' ORDER BY ALL
+----
+a	i
+a	s
+b	i
+
+query I
+SELECT count(*) FROM ducklake.a
+----
+0

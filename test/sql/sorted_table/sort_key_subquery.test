@@ -1,0 +1,75 @@
+# name: test/sql/sorted_table/sort_key_subquery.test
+# description: Sort keys that contain a subquery
+# group: [sorted_table]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/sort_key_subquery', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE MACRO ducklake.sort_key(x) AS x
+
+statement ok
+CREATE TABLE ducklake.t (i INTEGER)
+
+statement ok
+INSERT INTO ducklake.t VALUES (3), (1), (2)
+
+statement ok
+ALTER TABLE ducklake.t SET SORTED BY (sort_key(i))
+
+# the macro now expands to a subquery, which the flush cannot sort the inlined rows by
+statement ok
+CREATE OR REPLACE MACRO ducklake.sort_key(x) AS x + (SELECT 0)
+
+statement error
+CALL ducklake_flush_inlined_data('ducklake')
+----
+subqueries are not allowed in ORDER_BY
+
+query I
+SELECT i FROM ducklake.t ORDER BY i
+----
+1
+2
+3
+
+statement ok
+CREATE TABLE ducklake.w (i INTEGER)
+
+statement ok
+ALTER TABLE ducklake.w SET SORTED BY (row_number() OVER ())
+
+statement error
+INSERT INTO ducklake.w VALUES (1)
+----
+window functions are not allowed in ORDER_BY
+
+statement ok
+CREATE TABLE ducklake.s (i INTEGER)
+
+statement ok
+ALTER TABLE ducklake.s SET SORTED BY (i + (SELECT 0))
+
+statement error
+INSERT INTO ducklake.s VALUES (1)
+----
+Binder Error
+
+statement ok
+ALTER TABLE ducklake.s RESET SORTED BY
+
+statement ok
+INSERT INTO ducklake.s VALUES (1)
+
+query I
+SELECT i FROM ducklake.s
+----
+1

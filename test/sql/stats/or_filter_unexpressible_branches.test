@@ -1,0 +1,86 @@
+# name: test/sql/stats/or_filter_unexpressible_branches.test
+# description: Disjunctions with branches that cannot be checked against column stats still return the right rows
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/or_filter_unexpressible_branches', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE t (i INTEGER, j INTEGER);
+
+# one file per range of i - 1..100, 101..200 and 201..300, j = i % 10
+statement ok
+INSERT INTO t SELECT i, i % 10 FROM range(1, 101) r(i);
+
+statement ok
+INSERT INTO t SELECT i, i % 10 FROM range(101, 201) r(i);
+
+statement ok
+INSERT INTO t SELECT i, i % 10 FROM range(201, 301) r(i);
+
+# a branch on the row id has no column stats, so the disjunction prunes nothing
+query II
+SELECT i, j FROM t WHERE rowid = 4 OR i = 250 ORDER BY i
+----
+5	5
+250	0
+
+query II
+EXPLAIN ANALYZE SELECT i, j FROM t WHERE rowid = 4 OR i = 250
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 3.*
+
+# a conjunct that spans two columns is left out, the other conjunct still prunes
+query II
+SELECT i, j FROM t WHERE (i + j = 108 AND i <= 100) OR i = 250 ORDER BY i
+----
+99	9
+250	0
+
+query II
+EXPLAIN ANALYZE SELECT i, j FROM t WHERE (i + j = 108 AND i <= 100) OR i = 250
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+# a conjunction holding a disjunction that matches nothing drops out
+query II
+SELECT i, j FROM t WHERE (((i = 1 AND i = 2) OR (i = 3 AND i = 4)) AND i + j = 5) OR i = 250 ORDER BY i
+----
+250	0
+
+query II
+EXPLAIN ANALYZE SELECT i, j FROM t WHERE (((i = 1 AND i = 2) OR (i = 3 AND i = 4)) AND i + j = 5) OR i = 250
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+# a conjunction of branches that cannot be checked against the stats prunes nothing
+query II
+SELECT i, j FROM t WHERE (CAST(i AS VARCHAR) LIKE '%99' AND CAST(j AS VARCHAR) LIKE '%9') OR i = 250 ORDER BY i
+----
+99	9
+199	9
+250	0
+299	9
+
+query II
+EXPLAIN ANALYZE SELECT i, j FROM t WHERE (CAST(i AS VARCHAR) LIKE '%99' AND CAST(j AS VARCHAR) LIKE '%9') OR i = 250
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 3.*
+
+# past the node budget the disjunction is not pushed, and every conjunct after the budget ran out is skipped
+query II
+SELECT i, j FROM t WHERE ((i = 1 OR i = 2 OR i = 3 OR i = 4 OR i = 5 OR i = 6 OR i = 7 OR i = 8 OR i = 9 OR i = 10 OR i = 11 OR i = 12 OR i = 13 OR i = 14 OR i = 15 OR i = 16 OR i = 17 OR i = 18 OR i = 19 OR i = 20 OR i = 21 OR i = 22 OR i = 23 OR i = 24 OR i = 25 OR i = 26 OR i = 27 OR i = 28 OR i = 29 OR i = 30 OR i = 31 OR i = 32 OR i = 33 OR i = 34 OR i = 35 OR i = 36 OR i = 37 OR i = 38 OR i = 39 OR i = 40 OR i = 41 OR i = 42 OR i = 43 OR i = 44 OR i = 45 OR i = 46 OR i = 47 OR i = 48 OR i = 49 OR i = 50 OR i = 51 OR i = 52 OR i = 53 OR i = 54 OR i = 55 OR i = 56 OR i = 57 OR i = 58 OR i = 59 OR i = 60 OR i = 61 OR i = 62 OR i = 63 OR i = 64 OR i = 65 OR i = 66 OR i = 67 OR i = 68 OR i = 69 OR i = 70) AND i + j = 10 AND j = 5) OR i = 250 ORDER BY i
+----
+5	5
+250	0

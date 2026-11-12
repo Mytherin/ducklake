@@ -229,7 +229,9 @@ class RegressionRunTest(unittest.TestCase):
 
     def test_other_arguments_reach_the_comparison(self):
         self.assertEqual(self.main("--threads", "2", "--benchmark-argument", "sf=1"), 0)
-        self.assertEqual(self.compare.call_args.args[2][4:], ["--threads", "2", "--benchmark-argument", "sf=1"])
+        self.assertEqual(
+            self.compare.call_args.args[2][4:], ["--threads", "2", "--benchmark-argument", "sf=1", "--samples", "10"]
+        )
 
     def test_interrupt_drops_databases(self):
         self.compare.side_effect = KeyboardInterrupt
@@ -246,7 +248,7 @@ class RegressionRunTest(unittest.TestCase):
         self.assertEqual(self.dropped(), self.created()[::-1])
         self.assertIs(signal.getsignal(signal.SIGTERM), handler)
 
-    def test_databases_survive_until_confirmation_finishes(self):
+    def test_a_regression_fails_after_one_comparison(self):
         def compare(script, root, passthrough, benchmarks):
             self.mocks["drop_database"].assert_not_called()
             self.assertEqual(len(self.created()), 2)
@@ -254,12 +256,11 @@ class RegressionRunTest(unittest.TestCase):
 
         self.compare.side_effect = compare
         self.assertEqual(self.main(), 1)
-        self.assertEqual(self.compare.call_count, 2)
-        self.assertEqual(self.compare.call_args_list[0].args[2], self.compare.call_args_list[1].args[2])
-        self.assertEqual([call.args[0] for call in self.compare.call_args_list], [run.COMPARE, run.RUNNER])
+        self.assertEqual(self.compare.call_count, 1)
+        self.assertEqual(self.compare.call_args.args[0], run.RUNNER)
         self.assertEqual(self.dropped(), self.created()[::-1])
         self.assertIn(
-            "::error::benchmark/example.benchmark (micro_postgres) is 10% or more slower in two runs in a row",
+            "::error::benchmark/example.benchmark (micro_postgres) is 10% or more slower",
             self.stdout.getvalue(),
         )
 
@@ -271,6 +272,39 @@ class RegressionRunTest(unittest.TestCase):
                 self.assertEqual(self.main(), 42)
         self.assertEqual(self.dropped(), self.created()[::-1])
         self.assertEqual(stderr.getvalue().count("failed to drop the PostgreSQL database"), 2)
+
+    def test_sqlite_omits_only_the_unsupported_retry_benchmarks(self):
+        retry = [
+            "benchmark/micro/write/delete_commits_retry.benchmark",
+            "benchmark/micro/write/delete_commits_inlined_retry.benchmark",
+            "benchmark/micro/write/delete_commits_rewrite_retry.benchmark",
+        ]
+        supported = [
+            "benchmark/micro/write/insert_large_file_commit.benchmark",
+            "benchmark/micro/write/insert_small_file_commits.benchmark",
+        ]
+        benchmarks = retry + supported
+        (self.directory / "micro.csv").write_text("\n".join(benchmarks) + "\n")
+        for catalog in ("sqlite", "duckdb", "postgres"):
+            with self.subTest(catalog=catalog):
+                expected = supported if catalog == "sqlite" else benchmarks
+
+                def compare(script, root, passthrough, listing):
+                    self.assertEqual(listing.read_text().split(), expected)
+                    return 0, set()
+
+                self.compare.side_effect = compare
+                self.assertEqual(self.main(catalog=catalog), 0)
+                self.assertEqual(self.mocks["render_root"].call_args.args[2], expected)
+        for benchmark in retry:
+            self.assertIn(f"Skipping {benchmark}:", self.stdout.getvalue())
+
+    def test_sqlite_rejects_a_list_with_no_supported_benchmarks(self):
+        (self.directory / "micro.csv").write_text("benchmark/micro/write/delete_commits_retry.benchmark\n")
+        with self.assertRaisesRegex(SystemExit, "No benchmarks support the SQLite catalog"):
+            self.main(catalog="sqlite")
+        self.compare.assert_not_called()
+        self.mocks["render_root"].assert_not_called()
 
     def test_duckdb_does_not_create_postgres_databases(self):
         self.assertEqual(self.main(catalog="duckdb"), 0)

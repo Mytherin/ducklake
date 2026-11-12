@@ -1,0 +1,35 @@
+# name: test/sql/metadata/ducklake_settings_sqlite_scanner_type.test
+# description: ducklake_settings reports the extension name of a SQLite metadata catalog as sqlite
+# group: [metadata]
+
+require ducklake
+
+require parquet
+
+require sqlite_scanner
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:sqlite_scanner:{TEST_DIR}/ducklake_settings_sqlite_scanner_prefix.db' AS prefixed (DATA_PATH '{DATA_PATH}/ducklake_settings_sqlite_scanner_prefix')
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/ducklake_settings_sqlite_scanner_option.db' AS typed (DATA_PATH '{DATA_PATH}/ducklake_settings_sqlite_scanner_option', META_TYPE 'sqlite_scanner')
+
+query II
+SELECT catalog_type, data_path LIKE '%ducklake_settings_sqlite_scanner_prefix%' FROM ducklake_settings('prefixed')
+----
+sqlite	true
+
+query I
+SELECT catalog_type FROM ducklake_settings('typed')
+----
+sqlite
+
+statement ok
+CREATE TABLE typed.t AS SELECT 42 AS i
+
+query I
+SELECT i FROM typed.t
+----
+42

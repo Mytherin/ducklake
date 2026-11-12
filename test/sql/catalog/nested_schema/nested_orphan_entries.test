@@ -1,0 +1,84 @@
+# name: test/sql/catalog/nested_schema/nested_orphan_entries.test
+# description: Views, macros, partitions, sorts and child schemas of an orphaned schema are skipped when loading
+# group: [nested_schema]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{BASE_TEST_NAME}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DUCKLAKE_VERSION '1.1', DATA_PATH '{DATA_PATH}/nested_orphan_entries', METADATA_CATALOG 'dl_meta')
+
+statement ok
+CREATE SCHEMA dl.b
+
+statement ok
+CREATE SCHEMA dl.b.c
+
+statement ok
+CREATE TABLE dl.b.t(i INTEGER, j INTEGER)
+
+statement ok
+ALTER TABLE dl.b.t SET PARTITIONED BY (i)
+
+statement ok
+ALTER TABLE dl.b.t SET SORTED BY (j)
+
+statement ok
+CREATE VIEW dl.b.v AS SELECT 42 AS x
+
+statement ok
+CREATE MACRO dl.b.m() AS 1
+
+statement ok
+CREATE TABLE dl.b.c.t2(k INTEGER)
+
+statement ok
+CREATE TABLE dl.main.keep AS SELECT 42 AS k
+
+# a writer that does not know about parent_schema_id can leave a child behind
+statement ok
+UPDATE dl_meta.ducklake_schema SET parent_schema_id = 4242 WHERE schema_name = 'b' AND end_snapshot IS NULL
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DUCKLAKE_VERSION '1.1', DATA_PATH '{DATA_PATH}/nested_orphan_entries', METADATA_CATALOG 'dl_meta')
+
+query I
+SELECT k FROM dl.main.keep
+----
+42
+
+query I
+SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'dl' AND schema_name IN ('b', 'c')
+----
+0
+
+statement error
+SELECT * FROM dl.b.v
+----
+does not exist
+
+# a partition of a table that is not in the catalog at all is reported
+statement ok
+UPDATE dl_meta.ducklake_schema SET parent_schema_id = NULL WHERE schema_name = 'b' AND end_snapshot IS NULL
+
+statement ok
+UPDATE dl_meta.ducklake_partition_info SET table_id = 4242
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DUCKLAKE_VERSION '1.1', DATA_PATH '{DATA_PATH}/nested_orphan_entries', METADATA_CATALOG 'dl_meta')
+
+statement error
+SELECT k FROM dl.main.keep
+----
+Could not find matching table for partition entry

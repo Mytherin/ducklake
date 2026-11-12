@@ -1,0 +1,42 @@
+# name: test/sql/transaction/file_delete_concurrent_inlined_delete.test
+# description: Deleting from a data file does not conflict with a concurrent delete of inlined rows of the table
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/file_delete_concurrent_inlined_delete', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.t(i INTEGER)
+
+# 100 rows are written to a data file, 3 rows are inlined
+statement ok
+INSERT INTO ducklake.t SELECT range FROM range(100)
+
+statement ok
+INSERT INTO ducklake.t VALUES (1000), (1001), (1002)
+
+statement ok con1
+BEGIN
+
+# more rows than the inlining limit, so they go to a delete file
+statement ok con1
+DELETE FROM ducklake.t WHERE i < 50
+
+statement ok con2
+DELETE FROM ducklake.t WHERE i = 1000
+
+statement ok con1
+COMMIT
+
+query II
+SELECT count(*), sum(i) FROM ducklake.t
+----
+52	5728

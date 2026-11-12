@@ -1,0 +1,57 @@
+# name: test/sql/transaction/drop_column_local_inlined_data.test
+# description: Dropping columns of a table with rows inlined in the same transaction
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/drop_column_local_inlined_data', METADATA_CATALOG 'drop_column_local_meta', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.t(a INTEGER, b VARCHAR, s STRUCT(x INTEGER, y INTEGER))
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO ducklake.t VALUES (1, 'one', {'x': 10, 'y': 100}), (2, 'two', {'x': 20, 'y': 200})
+
+statement ok
+ALTER TABLE ducklake.t DROP COLUMN s
+
+statement ok
+ALTER TABLE ducklake.t DROP COLUMN a
+
+query I
+SELECT b FROM ducklake.t ORDER BY b
+----
+one
+two
+
+statement ok
+INSERT INTO ducklake.t VALUES ('three')
+
+statement ok
+COMMIT
+
+query I
+SELECT b FROM ducklake.t ORDER BY b
+----
+one
+three
+two
+
+# the statistics of the dropped columns and struct fields are not committed
+query III
+SELECT c.column_name, s.min_value, s.max_value
+FROM drop_column_local_meta.ducklake_table_column_stats s
+JOIN drop_column_local_meta.ducklake_column c ON c.table_id = s.table_id AND c.column_id = s.column_id
+ORDER BY ALL
+----
+b	one	two

@@ -1,0 +1,42 @@
+# name: benchmark/micro/read/load_nested_catalog.benchmark
+# description: Load the catalog of a freshly attached lake whose table has many STRUCT columns
+# group: [read]
+
+argument columns 1000
+
+name Load Nested Catalog
+group micro
+subgroup read
+
+require ducklake
+
+cache_file load_nested_catalog_${columns}_ready.marker
+
+init
+SET VARIABLE nested_sql = (SELECT 'SELECT ' || string_agg('{' || (SELECT string_agg('''f' || j || ''': ' || j, ', ')
+FROM range(20) t(j)) || '} AS s' || i, ', ') FROM range(${columns}) t(i));
+
+load
+@create load_nested_catalog_${columns}
+@attach load_nested_catalog_${columns} AS ducklake (DATA_PATH '${BENCHMARK_DIR}/load_nested_catalog_${columns}_files')
+CREATE TABLE ducklake.nested AS FROM query(getvariable('nested_sql')) LIMIT 0;
+DETACH ducklake;
+@seal load_nested_catalog_${columns}
+COPY (SELECT 1) TO '${BENCHMARK_DIR}/load_nested_catalog_${columns}_ready.marker' (FORMAT CSV);
+@attach load_nested_catalog_${columns} AS ducklake
+
+reload
+@attach load_nested_catalog_${columns} AS ducklake
+
+run
+SELECT count(*) FROM (DESCRIBE ducklake.nested);
+
+# Reattaching clears the catalog cache
+cleanup
+DETACH ducklake;
+@attach load_nested_catalog_${columns} AS ducklake
+
+result_query I
+SELECT * FROM __answer
+----
+${columns}

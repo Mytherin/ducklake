@@ -1,0 +1,50 @@
+# name: test/sql/migration/inlined_column_rename_unexpected_layout.test
+# description: the inlined column rename refuses an inlined table whose metadata columns have unknown names
+# group: [migration]
+
+require ducklake
+
+require parquet
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inlined_column_rename_unexpected_layout.db' AS dl
+(DATA_PATH '{DATA_PATH}/inlined_column_rename_unexpected_layout', DUCKLAKE_VERSION '1.0', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE dl.t (i INTEGER)
+
+statement ok
+INSERT INTO dl.t VALUES (1)
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH '{TEST_DIR}/inlined_column_rename_unexpected_layout.db' AS meta
+
+statement ok
+ALTER TABLE meta.ducklake_inlined_data_1_1 RENAME COLUMN begin_snapshot TO unknown_snapshot
+
+statement ok
+DETACH meta
+
+statement error
+ATTACH 'ducklake:{TEST_DIR}/inlined_column_rename_unexpected_layout.db' AS dl
+(DUCKLAKE_VERSION '1.1', AUTOMATIC_MIGRATION TRUE)
+----
+Failed to rename inlined-data metadata columns of "ducklake_inlined_data_1_1" while migrating to v1.1: the table has an unexpected column layout
+
+# nothing was renamed
+statement ok
+ATTACH '{TEST_DIR}/inlined_column_rename_unexpected_layout.db' AS meta
+
+query I
+SELECT list(column_name ORDER BY column_index) FROM duckdb_columns()
+WHERE database_name = 'meta' AND table_name = 'ducklake_inlined_data_1_1'
+----
+[row_id, unknown_snapshot, end_snapshot, i]
+
+statement ok
+DETACH meta

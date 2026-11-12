@@ -1,0 +1,61 @@
+# name: test/sql/transaction/options_in_transaction_schema.test
+# description: ducklake_options resolves the scope of options inside a transaction with catalog changes
+# group: [transaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/options_in_transaction_schema')
+
+statement ok
+CREATE SCHEMA ducklake.s
+
+statement ok
+CREATE TABLE ducklake.s.t(i INTEGER)
+
+statement ok
+CALL ducklake_set_option('ducklake', 'parquet_compression', 'zstd', schema => 's')
+
+statement ok
+CALL ducklake_set_option('ducklake', 'parquet_row_group_size', '1000', schema => 's', table_name => 't')
+
+# a schema created in the transaction does not hide the committed schemas
+statement ok
+BEGIN
+
+statement ok
+CREATE SCHEMA ducklake.s2
+
+query III
+SELECT option_name, scope, scope_entry FROM ducklake_options('ducklake') WHERE scope <> 'GLOBAL' ORDER BY ALL
+----
+parquet_compression	SCHEMA	s
+parquet_row_group_size	TABLE	s.t
+
+statement ok
+COMMIT
+
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE ducklake.s.t RENAME TO t2
+
+query II
+SELECT option_name, scope_entry FROM ducklake_options('ducklake') WHERE scope = 'TABLE'
+----
+parquet_row_group_size	s.t2
+
+statement ok
+COMMIT
+
+query II
+SELECT option_name, scope_entry FROM ducklake_options('ducklake') WHERE scope = 'TABLE'
+----
+parquet_row_group_size	s.t2

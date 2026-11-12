@@ -1,0 +1,108 @@
+# name: test/sql/stats/variant_float_and_nested_shredded_stats.test
+# description: Shredded VARIANT stats of floating point fields, lists of lists and structs with several fields round-trip through the table stats
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/variant_float_and_nested_shredded_stats', METADATA_CATALOG 'ducklake_meta', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+USE ducklake
+
+# floating point fields record whether they contain NaN
+statement ok
+CREATE TABLE floats AS SELECT {'d': i::DOUBLE / 2, 'f': i::FLOAT}::VARIANT AS v FROM range(3) t(i)
+
+statement ok
+INSERT INTO floats VALUES ({'d': 'nan'::DOUBLE, 'f': 1.5::FLOAT}::VARIANT)
+
+query IIIIIII
+SELECT variant_path, shredded_type, min_value, max_value, null_count, value_count, contains_nan::BOOLEAN
+FROM ducklake_meta.ducklake_file_variant_stats
+WHERE table_id = (SELECT table_id FROM ducklake_meta.ducklake_table WHERE table_name = 'floats')
+ORDER BY data_file_id, variant_path
+----
+"d"	float64	0.0	1.0	0	3	false
+"f"	float32	0.0	2.0	0	3	false
+"d"	float64	NULL	NULL	0	1	true
+"f"	float32	1.5	1.5	0	1	false
+
+# the NaN leaves the DOUBLE field without bounds
+query I
+SELECT stats(v) FROM floats LIMIT 1
+----
+{'fully_shredded': {'d': {'stats': {'has_no_null': true, 'has_null': false}, 'type': DOUBLE}, 'f': {'stats': {'has_no_null': true, 'has_null': false, 'max': 2.0, 'min': 0.0}, 'type': FLOAT}}, 'has_no_null': true, 'has_null': true, 'shredding_state': SHREDDED}
+
+query I
+SELECT v FROM floats WHERE v.d::DOUBLE > 0.5 ORDER BY v.f::FLOAT
+----
+{'d': nan, 'f': 1.5}
+{'d': 1.0, 'f': 2.0}
+
+query I
+SELECT v FROM floats WHERE v.f::FLOAT BETWEEN 0.5 AND 1.5 ORDER BY v.f::FLOAT
+----
+{'d': 0.5, 'f': 1.0}
+{'d': nan, 'f': 1.5}
+
+# a list of lists is shredded down to its innermost elements
+statement ok
+CREATE TABLE lists AS SELECT [[i, i + 1], [i + 2]]::VARIANT AS v FROM range(3) t(i)
+
+query IIIII
+SELECT variant_path, shredded_type, min_value, max_value, value_count
+FROM ducklake_meta.ducklake_file_variant_stats
+WHERE table_id = (SELECT table_id FROM ducklake_meta.ducklake_table WHERE table_name = 'lists')
+----
+element.element	int64	0	4	9
+
+query I
+SELECT stats(v) FROM lists LIMIT 1
+----
+{'fully_shredded': {'child_stats': {'child_stats': {'stats': {'has_no_null': true, 'has_null': false, 'max': 4, 'min': 0}, 'type': BIGINT}}}, 'has_no_null': true, 'has_null': true, 'shredding_state': SHREDDED}
+
+query I
+SELECT v FROM lists ORDER BY v::VARCHAR
+----
+[[0, 1], [2]]
+[[1, 2], [3]]
+[[2, 3], [4]]
+
+# a struct with several fields, next to a list of structs
+statement ok
+CREATE TABLE objects AS SELECT {'s': {'x': i, 'y': i * 10}, 'l': [{'z': i}]}::VARIANT AS v FROM range(3) t(i)
+
+query IIII
+SELECT variant_path, shredded_type, min_value, max_value
+FROM ducklake_meta.ducklake_file_variant_stats
+WHERE table_id = (SELECT table_id FROM ducklake_meta.ducklake_table WHERE table_name = 'objects')
+ORDER BY variant_path
+----
+"l".element."z"	int64	0	2
+"s"."x"	int64	0	2
+"s"."y"	int64	0	20
+
+query I
+SELECT stats(v) FROM objects LIMIT 1
+----
+{'fully_shredded': {'l': {'child_stats': {'z': {'stats': {'has_no_null': true, 'has_null': false, 'max': 2, 'min': 0}, 'type': BIGINT}}}, 's': {'x': {'stats': {'has_no_null': true, 'has_null': false, 'max': 2, 'min': 0}, 'type': BIGINT}, 'y': {'stats': {'has_no_null': true, 'has_null': false, 'max': 20, 'min': 0}, 'type': BIGINT}}}, 'has_no_null': true, 'has_null': true, 'shredding_state': SHREDDED}
+
+query I
+SELECT v.s.y FROM objects WHERE v.s.y::BIGINT >= 10 ORDER BY ALL
+----
+10
+20
+
+query I
+SELECT v.l FROM objects ORDER BY v::VARCHAR
+----
+[{'z': 0}]
+[{'z': 1}]
+[{'z': 2}]

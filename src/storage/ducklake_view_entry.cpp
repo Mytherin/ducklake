@@ -19,10 +19,11 @@ DuckLakeViewEntry::DuckLakeViewEntry(Catalog &catalog, SchemaCatalogEntry &schem
                                      TableIndex view_id, string view_uuid_p, string query_sql_p,
                                      LocalChange local_change)
     : ViewCatalogEntry(catalog, schema, info), view_id(view_id), view_uuid(std::move(view_uuid_p)),
-      query_sql(std::move(query_sql_p)), local_change(local_change) {
+      query_sql(std::move(query_sql_p)), local_change(local_change),
+      has_column_comments(!info.column_comments_map.empty()) {
 }
 
-DuckLakeViewEntry::DuckLakeViewEntry(DuckLakeViewEntry &parent, CreateViewInfo &info, LocalChange local_change)
+DuckLakeViewEntry::DuckLakeViewEntry(const DuckLakeViewEntry &parent, CreateViewInfo &info, LocalChange local_change)
     : DuckLakeViewEntry(parent.catalog, parent.schema, info, parent.GetViewId(), parent.GetViewUUID(), parent.query_sql,
                         local_change) {
 	oid = parent.oid;
@@ -67,11 +68,24 @@ unique_ptr<CatalogEntry> DuckLakeViewEntry::Alter(DuckLakeTransaction &transacti
 		throw InternalException("Alter view column comment: missing client context");
 	}
 	BindView(*context);
-	auto column_name = ResolveColumnName(info.column_name).GetIdentifierName();
+	auto column_name = ResolveColumnName(info.column_name);
 	auto create_info = GetInfo();
 	auto &view_info = create_info->Cast<CreateViewInfo>();
-	view_info.column_comments_map[Identifier(column_name)] = info.comment_value;
+	view_info.column_comments_map[column_name] = info.comment_value;
 	return make_uniq<DuckLakeViewEntry>(*this, view_info, LocalChange::SetViewColumnComment(column_name));
+}
+
+unique_ptr<DuckLakeViewEntry> DuckLakeViewEntry::CopyUnbound() const {
+	unique_ptr<CreateInfo> info;
+	{
+		// the base info does not parse the query, and the lock keeps GetQuery from setting it meanwhile
+		lock_guard<mutex> l(lock);
+		info = ViewCatalogEntry::GetInfo();
+	}
+	auto &view_info = info->Cast<CreateViewInfo>();
+	view_info.types.clear();
+	view_info.names.clear();
+	return make_uniq<DuckLakeViewEntry>(*this, view_info, local_change);
 }
 
 unique_ptr<CreateInfo> DuckLakeViewEntry::GetInfo() const {
@@ -90,9 +104,8 @@ string DuckLakeViewEntry::ToSQL() const {
 	result += qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	if (!aliases.empty()) {
 		result += " (";
-		result += StringUtil::Join(aliases, aliases.size(), ", ", [](const Identifier &alias) {
-			return SQLIdentifier::ToString(alias.GetIdentifierName());
-		});
+		result += StringUtil::Join(aliases, aliases.size(), ", ",
+		                           [](const Identifier &alias) { return SQLIdentifier::ToString(alias); });
 		result += ")";
 	}
 	result += " AS ";
@@ -102,6 +115,7 @@ string DuckLakeViewEntry::ToSQL() const {
 	return result;
 }
 
+// LCOV_EXCL_START
 unique_ptr<CatalogEntry> DuckLakeViewEntry::Copy(ClientContext &context) const {
 	D_ASSERT(!internal);
 	auto create_info = GetInfo();
@@ -109,6 +123,7 @@ unique_ptr<CatalogEntry> DuckLakeViewEntry::Copy(ClientContext &context) const {
 	return make_uniq<DuckLakeViewEntry>(catalog, schema, create_info->Cast<CreateViewInfo>(), view_id, view_uuid,
 	                                    query_sql, local_change);
 }
+// LCOV_EXCL_STOP
 
 unique_ptr<SelectStatement> DuckLakeViewEntry::ParseSelectStatement() const {
 	auto parser = Parser::GetBuiltinParser();

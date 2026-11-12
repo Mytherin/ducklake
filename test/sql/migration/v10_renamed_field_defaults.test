@@ -1,0 +1,117 @@
+# name: test/sql/migration/v10_renamed_field_defaults.test
+# description: the v1.1 migration restores the defaults of struct fields that DuckDB 1.5.6 dropped when renaming them
+# group: [migration]
+
+require ducklake
+
+require parquet
+
+# written by DuckDB 1.5.6, t.s.f was renamed to g and then h, t.s.n without a default to m, u.s.f to g
+unzip data/old_ducklake/renamed_field_default.db.gz {TEST_DIR}/v10_renamed_field_defaults.db
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/v10_renamed_field_defaults.db' AS lake (DATA_PATH 'data/old_ducklake/renamed_field_default/', OVERRIDE_DATA_PATH TRUE, METADATA_CATALOG 'meta', DUCKLAKE_VERSION '1.1', AUTOMATIC_MIGRATION TRUE)
+
+# the row of t is in a Parquet file, the row of u is inlined
+query II
+SELECT s, c FROM lake.t
+----
+{'a': 1, 'h': 5, 'm': NULL}	1
+
+query I
+SELECT s FROM lake.u
+----
+{'a': 2, 'g': x}
+
+query I
+SELECT s FROM lake.t AT (VERSION => 5)
+----
+{'a': 1, 'g': 5, 'n': NULL}
+
+query IIII
+SELECT column_name, begin_snapshot, initial_default, default_value_type FROM meta.ducklake_column
+WHERE parent_column IS NOT NULL ORDER BY table_id, column_id, begin_snapshot
+----
+a	1	NULL	literal
+f	3	5	literal
+g	5	5	literal
+h	6	5	literal
+n	4	NULL	literal
+m	7	NULL	(empty)
+a	8	NULL	literal
+f	10	x	literal
+g	11	x	literal
+
+statement ok
+DETACH lake
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/v10_renamed_field_defaults.db' AS lake (DATA_PATH 'data/old_ducklake/renamed_field_default/', OVERRIDE_DATA_PATH TRUE, METADATA_CATALOG 'meta', DUCKLAKE_VERSION '1.1')
+
+query I
+SELECT s FROM lake.t
+----
+{'a': 1, 'h': 5, 'm': NULL}
+
+# the same repair on the metadata catalog of the test config
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/v10_renamed_field_defaults_config.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS config_lake (DATA_PATH '{DATA_PATH}/v10_renamed_field_defaults_files', METADATA_CATALOG 'config_meta', DATA_INLINING_ROW_LIMIT 0, DUCKLAKE_VERSION '1.0')
+
+statement ok
+CREATE TABLE config_lake.t(s STRUCT(a INT));
+
+statement ok
+INSERT INTO config_lake.t VALUES ({'a': 1});
+
+statement ok
+ALTER TABLE config_lake.t ADD COLUMN s.f INT DEFAULT 5;
+
+statement ok
+ALTER TABLE config_lake.t RENAME s.f TO g;
+
+# the row that versions before the fix wrote for the rename
+statement ok
+UPDATE config_meta.ducklake_column SET initial_default = NULL, default_value = 'NULL', default_value_type = ''
+WHERE column_name = 'g';
+
+statement ok
+DETACH config_lake
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS config_lake (DATA_PATH '{DATA_PATH}/v10_renamed_field_defaults_files', METADATA_CATALOG 'config_meta', DUCKLAKE_VERSION '1.1', AUTOMATIC_MIGRATION TRUE)
+
+query I
+SELECT s FROM config_lake.t
+----
+{'a': 1, 'g': 5}
+
+query III
+SELECT column_name, initial_default, default_value FROM config_meta.ducklake_column WHERE parent_column IS NOT NULL
+ORDER BY column_id, begin_snapshot
+----
+a	NULL	NULL
+f	5	5
+g	5	5
+
+# a v1.1-dev1 catalog with the same rows is repaired when its migration is requested again
+statement ok
+UPDATE config_meta.ducklake_column SET initial_default = NULL, default_value = 'NULL', default_value_type = ''
+WHERE column_name = 'g';
+
+statement ok
+UPDATE config_meta.ducklake_metadata SET value = '1.1-dev1' WHERE key = 'version';
+
+statement ok
+DETACH config_lake
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS config_lake (DATA_PATH '{DATA_PATH}/v10_renamed_field_defaults_files', METADATA_CATALOG 'config_meta', DUCKLAKE_VERSION '1.1', AUTOMATIC_MIGRATION TRUE)
+
+query I
+SELECT s FROM config_lake.t
+----
+{'a': 1, 'g': 5}

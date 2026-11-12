@@ -35,6 +35,7 @@ struct NewTableInfo {
 	vector<DuckLakeViewColumnTagInfo> new_view_column_tags;
 	vector<DuckLakeDroppedColumn> dropped_columns;
 	vector<DuckLakeNewColumn> new_columns;
+	vector<DuckLakeNewColumn> dropped_new_columns;
 	vector<DuckLakeTableInfo> new_inlined_data_tables;
 	vector<DuckLakeSortInfo> new_sort_keys;
 	vector<DuckLakeConfigOption> new_table_options;
@@ -72,6 +73,8 @@ struct DuckLakeCommitState {
 	map<TableIndex, set<FieldIndex>> float_widened_columns;
 	//! The widened columns with values that read as DOUBLE without FLOAT rounding
 	map<TableIndex, set<FieldIndex>> float_bounds_to_clear;
+	//! The columns this commit retypes to a finer timestamp unit
+	map<TableIndex, set<FieldIndex>> refined_timestamp_columns;
 	//! The oid of each entry that gets its id in this commit
 	ducklake_entry_oids_t new_entry_oids;
 	//! The existing tables that get a new inlined data table in this commit

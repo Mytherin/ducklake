@@ -1,0 +1,37 @@
+# name: test/sql/default/add_column_if_not_exists_expression_default.test
+# description: ADD COLUMN IF NOT EXISTS rejects a non-literal default for a new column
+# group: [default]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/add_column_if_not_exists_expression_default')
+
+statement ok
+CREATE TABLE ducklake.t (i INTEGER)
+
+statement ok
+INSERT INTO ducklake.t VALUES (1)
+
+statement error
+ALTER TABLE ducklake.t ADD COLUMN IF NOT EXISTS j INTEGER DEFAULT random()
+----
+We cannot add a column with a non-literal default value
+
+# the column exists, so its default is not looked at
+statement ok
+ALTER TABLE ducklake.t ADD COLUMN IF NOT EXISTS i INTEGER DEFAULT random()
+
+statement ok
+ALTER TABLE ducklake.t ADD COLUMN IF NOT EXISTS j INTEGER DEFAULT 42
+
+query II
+SELECT i, j FROM ducklake.t
+----
+1	42

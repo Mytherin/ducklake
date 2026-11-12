@@ -1,0 +1,27 @@
+# name: test/sql/attach/attach_busy_timeout.test
+# description: BUSY_TIMEOUT is accepted as an attach option
+# group: [attach]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/attach_busy_timeout', BUSY_TIMEOUT 1000)
+
+statement ok
+CREATE TABLE ducklake.t AS SELECT 42 AS i
+
+query I
+FROM ducklake.t
+----
+42
+
+statement error
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS other (DATA_PATH '{DATA_PATH}/attach_busy_timeout', BUSY_TIMEOUT 'soon')
+----
+Could not convert string 'soon'

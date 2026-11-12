@@ -75,3 +75,41 @@ query I
 SELECT count(*) FROM ducklake.options() WHERE scope <> 'GLOBAL'
 ----
 0
+
+statement ok
+CREATE SCHEMA ducklake.s
+
+statement ok
+CREATE TABLE ducklake.s.t(i INTEGER)
+
+statement ok
+CALL ducklake.set_option('parquet_compression', 'zstd', schema => 's', table_name => 't')
+
+statement ok
+CALL ducklake.set_option('parquet_compression', 'gzip', schema => 's')
+
+query III
+SELECT value, scope, scope_entry FROM ducklake.options() WHERE scope <> 'GLOBAL' ORDER BY ALL
+----
+gzip	SCHEMA	s
+zstd	TABLE	s.t
+
+statement ok
+DROP TABLE ducklake.s.t
+
+statement ok
+DROP SCHEMA ducklake.s
+
+query III
+SELECT value, scope, scope_entry FROM ducklake.options() WHERE scope <> 'GLOBAL' ORDER BY ALL
+----
+gzip	SCHEMA	NULL
+zstd	TABLE	NULL
+
+statement ok
+CALL ducklake_expire_snapshots('ducklake', older_than => now())
+
+query I
+SELECT count(*) FROM ducklake.options() WHERE scope <> 'GLOBAL'
+----
+0

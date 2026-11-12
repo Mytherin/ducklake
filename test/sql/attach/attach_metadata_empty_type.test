@@ -1,0 +1,10 @@
+# name: test/sql/attach/attach_metadata_empty_type.test
+# description: An empty META_TYPE falls back to detecting the metadata file type
+# group: [attach]
+
+require ducklake
+
+require parquet
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/empty_metadata_type.ducklake' AS lake (DATA_PATH '{TEST_DIR}/empty_metadata_type_files', METADATA_CATALOG 'empty_type_meta', META_TYPE '')

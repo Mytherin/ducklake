@@ -1,0 +1,37 @@
+# name: test/sql/alter/promote_date_to_timestamp.test
+# description: Promoting a DATE column to TIMESTAMP keeps the table readable
+# group: [alter]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/promote_date_to_timestamp', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE ducklake.far (d DATE)
+
+# the second date is past the end of the TIMESTAMP range (year 294247)
+statement ok
+INSERT INTO ducklake.far VALUES (DATE '2000-01-01'), (DATE '5000000-01-01')
+
+# FIXME: the promotion is accepted although 5000000-01-01 does not fit in a TIMESTAMP, after which every scan of the table fails with a conversion error, see https://github.com/pdet/ducklake_internal/issues/112
+mode skip
+
+statement error
+ALTER TABLE ducklake.far ALTER d SET DATA TYPE TIMESTAMP
+----
+from DATE to TIMESTAMP
+
+query I
+SELECT d FROM ducklake.far ORDER BY d
+----
+2000-01-01
+5000000-01-01
+
+mode unskip

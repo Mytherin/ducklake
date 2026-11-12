@@ -1,0 +1,33 @@
+# name: test/sql/stats/skip_stats_columns_null.test
+# description: Setting skip_stats_columns to NULL clears the option
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/skip_stats_columns_null')
+
+statement ok
+CREATE TABLE ducklake.t(id INTEGER, s VARCHAR)
+
+statement ok
+CALL ducklake.set_option('skip_stats_columns', ['s'], table_name => 't')
+
+query II
+SELECT option_name, value FROM ducklake.options() WHERE scope = 'TABLE'
+----
+skip_stats_columns	2
+
+statement ok
+CALL ducklake.set_option('skip_stats_columns', NULL, table_name => 't')
+
+query II
+SELECT option_name, value = '' FROM ducklake.options() WHERE scope = 'TABLE'
+----
+skip_stats_columns	true

@@ -13,20 +13,6 @@ struct CleanupBindData : public MetadataBindData {
 	explicit CleanupBindData(DuckLakeCatalog &catalog, CleanupType type) : catalog(catalog), type(type) {
 	}
 
-	string GetFilter() const {
-		if (timestamp_filter.empty()) {
-			return "";
-		}
-		switch (type) {
-		case CleanupType::OLD_FILES:
-			return StringUtil::Format("WHERE schedule_start::TIMESTAMPTZ < '%s'", timestamp_filter);
-		case CleanupType::ORPHANED_FILES:
-			return StringUtil::Format(" AND last_modified::TIMESTAMPTZ < '%s'", timestamp_filter);
-		default:
-			throw InternalException("Unknown Cleanup type for GetFilter()");
-		}
-	}
-
 	string GetFunctionName() const {
 		switch (type) {
 		case CleanupType::OLD_FILES:
@@ -59,13 +45,16 @@ static unique_ptr<FunctionData> CleanupBind(ClientContext &context, TableFunctio
 	if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "dry_run", "boolean", dry_run)) {
 		result->dry_run = BooleanValue::Get(dry_run);
 	}
+	if (!result->dry_run) {
+		ducklake_catalog.VerifyWritable();
+	}
 	bool cleanup_all = false;
 	Value cleanup_all_value;
 	if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "cleanup_all", "boolean", cleanup_all_value)) {
 		cleanup_all = BooleanValue::Get(cleanup_all_value);
 	}
 	Value older_than;
-	bool has_timestamp = DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "older_than", "timestamp", older_than);
+	bool has_timestamp = DuckLakeTableFunctionUtil::TryGetTimestampOption(input, "older_than", older_than);
 	if ((cleanup_all == has_timestamp && cleanup_all == true) ||
 	    (cleanup_all == has_timestamp && cleanup_all == false && older_than_default.empty())) {
 		throw InvalidInputException(
@@ -78,15 +67,22 @@ static unique_ptr<FunctionData> CleanupBind(ClientContext &context, TableFunctio
 		auto from_timestamp = older_than.GetValue<timestamp_tz_t>();
 		result->timestamp_filter = DuckLakeTableFunctionUtil::FormatTimestampISO8601(timestamp_t(from_timestamp.value));
 	} else if (!cleanup_all && !older_than_default.empty()) {
-		result->timestamp_filter = DuckLakeTableFunctionUtil::FormatTimestampOlderThan(older_than_default);
+		result->timestamp_filter =
+		    DuckLakeTableFunctionUtil::FormatTimestampOlderThan("delete_older_than", older_than_default);
 	}
 
 	// orphans belong to no table, so only the global auto_compact option can turn their cleanup off
 	bool skip_cleanup = type == CleanupType::ORPHANED_FILES && !ducklake_catalog.AutoCompactEnabled();
 	if (!skip_cleanup) {
 		auto &transaction = DuckLakeTransaction::Get(context, ducklake_catalog);
+		if (type == CleanupType::OLD_FILES && !result->dry_run && transaction.ExpiredSnapshotsInMetadataTransaction()) {
+			throw InvalidInputException("%s cannot delete files in a transaction that expired snapshots, since a "
+			                            "rollback of the expiry would keep the snapshots without their files. Commit "
+			                            "the expiry first",
+			                            result->GetFunctionName());
+		}
 		auto &metadata_manager = transaction.GetMetadataManager();
-		result->files = metadata_manager.GetFilesForCleanup(result->GetFilter(), type);
+		result->files = metadata_manager.GetFilesForCleanup(result->timestamp_filter, type);
 		for (auto &file : result->files) {
 			result->rows.push_back({Value(file.path)});
 		}
@@ -126,9 +122,7 @@ void DuckLakeCleanupExecute(ClientContext &context, TableFunctionInput &data_p, 
 		fs.RemoveFiles(paths);
 		if (data.type == CleanupType::OLD_FILES) {
 			// If we are removing old files, we need to remove them from the catalog
-			auto &transaction = DuckLakeTransaction::Get(context, data.catalog);
-			auto &metadata_manager = transaction.GetMetadataManager();
-			metadata_manager.RemoveFilesScheduledForCleanup(data.files);
+			DuckLakeTransaction::Get(context, data.catalog).RemoveFilesScheduledForCleanup(data.files);
 		}
 		state.executed = true;
 	}

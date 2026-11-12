@@ -1,0 +1,108 @@
+# name: test/sql/partitioning/bucket_pruning_filter_shapes.test
+# description: Bucket pruning folds IN lists through the bucket transform and leaves other filter shapes to the scan
+# group: [partitioning]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/bucket_pruning_filter_shapes', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+USE ducklake
+
+statement ok
+CREATE TABLE t (i INTEGER);
+
+statement ok
+ALTER TABLE t SET PARTITIONED BY (bucket(10, i));
+
+# every bucket file spans most of the value range, so only the bucket values can prune
+statement ok
+INSERT INTO t SELECT i::INTEGER FROM range(0, 100) g(i);
+
+# 0 and 1 share a bucket, 5 has another one
+query I
+SELECT (murmur3_32(x) & 2147483647) % 10 FROM (VALUES (0), (1), (5)) vals(x) ORDER BY x
+----
+6
+6
+3
+
+# a list that is not a dense range is pushed as an optional IN filter
+query I
+SELECT i FROM t WHERE i IN (0, 1, 5) ORDER BY i
+----
+0
+1
+5
+
+query II
+EXPLAIN ANALYZE SELECT i FROM t WHERE i IN (0, 1, 5)
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+# a NULL in the list matches no row, so it adds no bucket
+query I
+SELECT i FROM t WHERE i IN (1, 5, NULL) ORDER BY i
+----
+1
+5
+
+query II
+EXPLAIN ANALYZE SELECT i FROM t WHERE i IN (1, 5, NULL)
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+# a disjunction is not folded through the bucket transform
+query I
+SELECT i FROM t WHERE i = 1 OR i = 5 ORDER BY i
+----
+1
+5
+
+# neither is an IN list over an expression of the column
+query I
+SELECT i FROM t WHERE CAST(i AS VARCHAR) IN ('1', '5', '9') ORDER BY i
+----
+1
+5
+9
+
+# nor a filter shape that is no comparison at all
+query I
+SELECT i FROM t WHERE CASE WHEN i > 5 THEN i < 8 ELSE false END ORDER BY i
+----
+6
+7
+
+statement ok
+CREATE TABLE s (v VARCHAR);
+
+statement ok
+ALTER TABLE s SET PARTITIONED BY (bucket(4, v));
+
+statement ok
+INSERT INTO s SELECT 'v' || i FROM range(0, 20) g(i);
+
+# the element that is not a constant never matches here, so only the rows of the constants are returned
+query I
+SELECT v FROM s WHERE v IN ('v1', 'v5', v || 'x') ORDER BY v
+----
+v1
+v5
+
+query I
+SELECT count(*) FROM s WHERE v IN ('v1', 'v5', v)
+----
+20
+
+query I
+SELECT count(*) FROM t WHERE i IN (1, 5, i)
+----
+100

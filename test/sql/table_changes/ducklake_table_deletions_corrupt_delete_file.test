@@ -1,0 +1,81 @@
+# name: test/sql/table_changes/ducklake_table_deletions_corrupt_delete_file.test
+# description: ducklake_table_deletions rejects delete files with positions past the end of the data file
+# group: [table_changes]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/ducklake_table_deletions_corrupt_delete_file', DATA_INLINING_ROW_LIMIT 0, WRITE_DELETION_VECTORS false)
+
+# the delete file of a partial delete
+statement ok
+CREATE TABLE ducklake.t AS SELECT range::INTEGER AS i FROM range(10)
+
+statement ok
+DELETE FROM ducklake.t WHERE i = 0
+
+statement ok
+SET VARIABLE delete_snapshot = (SELECT max(snapshot_id) FROM ducklake_snapshots('ducklake'))
+
+query II
+SELECT rowid, i FROM ducklake_table_deletions('ducklake', 'main', 't', getvariable('delete_snapshot'), getvariable('delete_snapshot'))
+----
+0	0
+
+statement ok
+SET VARIABLE delete_path = (SELECT delete_file FROM ducklake_list_files('ducklake', 't'))
+
+statement ok
+COPY (SELECT 'f' AS file_path, 100::BIGINT AS pos) TO (getvariable('delete_path')) (FORMAT PARQUET)
+
+statement error
+SELECT rowid, i FROM ducklake_table_deletions('ducklake', 'main', 't', getvariable('delete_snapshot'), getvariable('delete_snapshot'))
+----
+is out of range for data file
+
+# the delete file that precedes a full file delete
+statement ok
+CREATE TABLE ducklake.t2 AS SELECT range::INTEGER AS i FROM range(10)
+
+statement ok
+DELETE FROM ducklake.t2 WHERE i = 0
+
+statement ok
+SET VARIABLE first_delete = (SELECT max(snapshot_id) FROM ducklake_snapshots('ducklake'))
+
+statement ok
+DELETE FROM ducklake.t2 WHERE i = 1
+
+statement ok
+SET VARIABLE second_delete = (SELECT max(snapshot_id) FROM ducklake_snapshots('ducklake'))
+
+statement ok
+SET VARIABLE delete_path = (SELECT delete_file FROM ducklake_list_files('ducklake', 't2'))
+
+statement ok
+DELETE FROM ducklake.t2
+
+statement ok
+SET VARIABLE file_delete = (SELECT max(snapshot_id) FROM ducklake_snapshots('ducklake'))
+
+# the rows that the delete file already deleted are not part of the full file delete
+query II
+SELECT count(*), min(i) FROM ducklake_table_deletions('ducklake', 'main', 't2', getvariable('file_delete'), getvariable('file_delete'))
+----
+8	2
+
+statement ok
+COPY (SELECT * FROM (VALUES ('f', 0::BIGINT, getvariable('first_delete')), ('f', 1::BIGINT, getvariable('second_delete')),
+	('f', 100::BIGINT, getvariable('second_delete'))) v(file_path, pos, _ducklake_internal_snapshot_id))
+TO (getvariable('delete_path')) (FORMAT PARQUET)
+
+statement error
+SELECT count(*), min(i) FROM ducklake_table_deletions('ducklake', 'main', 't2', getvariable('file_delete'), getvariable('file_delete'))
+----
+is out of range for data file

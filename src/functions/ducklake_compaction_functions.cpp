@@ -17,6 +17,7 @@
 #include "storage/ducklake_multi_file_list.hpp"
 #include "duckdb/planner/tableref/bound_at_clause.hpp"
 #include "duckdb/planner/operator/logical_empty_result.hpp"
+#include "rest/ducklake_rest_client.hpp"
 #include "fmt/format.h"
 
 #include "functions/ducklake_compaction_functions.hpp"
@@ -121,7 +122,7 @@ SourceResultType DuckLakeCompaction::GetDataInternal(ExecutionContext &context, 
 	auto files_created = gstate.written_files.size();
 
 	chunk.data[0].Append(Value(table.schema.GetSchemaName()));
-	chunk.data[1].Append(Value(table.name.GetIdentifierName()));
+	chunk.data[1].Append(Value(table.name));
 	chunk.data[2].Append(Value::BIGINT(static_cast<int64_t>(source_files.size())));
 	chunk.data[3].Append(Value::BIGINT(static_cast<int64_t>(files_created)));
 	chunk.SetChildCardinality(1);
@@ -262,7 +263,8 @@ static bool FieldsPreservedInLatest(const vector<unique_ptr<DuckLakeFieldId>> &o
 		if (!latest_field) {
 			return false;
 		}
-		if (older_field->Name() != latest_field->Name()) {
+		// a rename that only changes the case is still a rename, which `Identifier` equality would not see
+		if (older_field->Name().GetIdentifierName() != latest_field->Name().GetIdentifierName()) {
 			return false;
 		}
 		if (older_field->Type() != latest_field->Type()) {
@@ -273,6 +275,21 @@ static bool FieldsPreservedInLatest(const vector<unique_ptr<DuckLakeFieldId>> &o
 		}
 	}
 	return true;
+}
+
+static bool TimestampRetypedInLatest(const vector<unique_ptr<DuckLakeFieldId>> &older_fields,
+                                     const DuckLakeFieldData &latest) {
+	for (auto &older_field : older_fields) {
+		auto latest_field = latest.GetByFieldIndex(older_field->GetFieldIndex());
+		if (latest_field && LogicalType::TypeIsTimestamp(older_field->Type()) &&
+		    older_field->Type() != latest_field->Type()) {
+			return true;
+		}
+		if (TimestampRetypedInLatest(older_field->Children(), latest)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void DuckLakeCompactor::GenerateCompactions(DuckLakeTableEntry &table,
@@ -316,6 +333,22 @@ void DuckLakeCompactor::GenerateCompactions(DuckLakeTableEntry &table,
 		merges_into_latest_schema[schema_version] = result;
 		return result;
 	};
+	// an added file can hold timestamps finer than its schema version, which reading at that version rounds
+	unordered_map<idx_t, bool> rounds_added_timestamps;
+	auto rounds_added_file = [&](idx_t schema_version) -> bool {
+		if (schema_version == latest_schema_version) {
+			return false;
+		}
+		auto cached = rounds_added_timestamps.find(schema_version);
+		if (cached != rounds_added_timestamps.end()) {
+			return cached->second;
+		}
+		auto version_table = catalog.GetTableAtSchemaVersion(transaction, table_id, schema_version);
+		bool result =
+		    version_table && TimestampRetypedInLatest(version_table->GetFieldData().GetFieldIds(), latest_field_data);
+		rounds_added_timestamps[schema_version] = result;
+		return result;
+	};
 
 	// iterate over the files and split into separate compaction groups
 	compaction_map_t<DuckLakeCompactionCandidates> candidates;
@@ -333,6 +366,10 @@ void DuckLakeCompactor::GenerateCompactions(DuckLakeTableEntry &table,
 			continue;
 		}
 		if (files_compacted_in_transaction.count(candidate.file.id)) {
+			continue;
+		}
+		// only added files have a name mapping
+		if (candidate.file.mapping_id.IsValid() && rounds_added_file(candidate.schema_version)) {
 			continue;
 		}
 		// construct the compaction group for this file - i.e. the set of candidate files we can compact it with
@@ -554,7 +591,7 @@ DuckLakeTableEntry &DuckLakeCompactor::GetLatestTableEntry(DuckLakeCatalog &cata
 }
 
 unique_ptr<LogicalOperator> DuckLakeCompactor::PlanRewriteScan(
-    ClientContext &context, Binder &binder, DuckLakeTableEntry &table, DuckLakeCopyInput &copy_input, bool write_row_id,
+    ClientContext &context, Binder &binder, DuckLakeTableEntry &table, DuckLakeCopyInput &copy_input,
     bool write_snapshot_id,
     const std::function<unique_ptr<DuckLakeMultiFileList>(DuckLakeFunctionInfo &)> &create_file_list,
     unique_ptr<LogicalCopyToFile> &copy) {
@@ -566,12 +603,11 @@ unique_ptr<LogicalOperator> DuckLakeCompactor::PlanRewriteScan(
 	auto &read_info = scan_function.function_info->Cast<DuckLakeFunctionInfo>();
 	multi_file_bind_data.file_list = create_file_list(read_info);
 
-	if (write_row_id && write_snapshot_id) {
+	// rowids are always written, since a sort reorders rows, deletes leave gaps and UPDATE files embed their own
+	if (write_snapshot_id) {
 		copy_input.virtual_columns = InsertVirtualColumns::WRITE_ROW_ID_AND_SNAPSHOT_ID;
-	} else if (write_row_id) {
+	} else {
 		copy_input.virtual_columns = InsertVirtualColumns::WRITE_ROW_ID;
-	} else if (write_snapshot_id) {
-		copy_input.virtual_columns = InsertVirtualColumns::WRITE_SNAPSHOT_ID;
 	}
 	copy_input.get_table_index = table_idx.index;
 	auto copy_options = DuckLakeInsert::GetCopyOptions(context, copy_input);
@@ -584,9 +620,7 @@ unique_ptr<LogicalOperator> DuckLakeCompactor::PlanRewriteScan(
 	for (idx_t i = 0; i < table.GetColumns().PhysicalColumnCount(); i++) {
 		column_ids.emplace_back(i);
 	}
-	if (write_row_id) {
-		column_ids.emplace_back(COLUMN_IDENTIFIER_ROW_ID);
-	}
+	column_ids.emplace_back(COLUMN_IDENTIFIER_ROW_ID);
 	if (write_snapshot_id) {
 		column_ids.emplace_back(DuckLakeMultiFileReader::COLUMN_IDENTIFIER_SNAPSHOT_ID);
 	}
@@ -639,7 +673,9 @@ DuckLakeCompactor::GenerateCompactionCommand(vector<DuckLakeCompactionFileEntry>
 		case CompactionType::REWRITE_DELETES: {
 			if (!source.delete_files.empty()) {
 				if (source.delete_files.back().end_snapshot.IsValid()) {
+					// LCOV_EXCL_START
 					continue;
+					// LCOV_EXCL_STOP
 				}
 				result.delete_file = source.delete_files.back().data;
 			}
@@ -670,7 +706,9 @@ DuckLakeCompactor::GenerateCompactionCommand(vector<DuckLakeCompactionFileEntry>
 		files_to_scan.push_back(std::move(result));
 	}
 	if (actionable_source_files.empty()) {
+		// LCOV_EXCL_START
 		return nullptr;
+		// LCOV_EXCL_STOP
 	}
 
 	string data_path;
@@ -680,22 +718,21 @@ DuckLakeCompactor::GenerateCompactionCommand(vector<DuckLakeCompactionFileEntry>
 			data_path =
 			    DuckLakePartitionUtils::BuildHivePartitionPath(*partition_table, partition_values, catalog.Separator());
 		} else {
+			// no schema version has the spec, as when it was set and reset in one transaction
 			auto &file_path = source_files[0].file.data.path;
 			auto &table_path = table.DataPath();
-			if (!StringUtil::StartsWith(file_path, table_path)) {
-				throw InternalException("DuckLakeCompactor: failed to resolve partition path");
+			if (StringUtil::StartsWith(file_path, table_path)) {
+				// keep the directory of the source files, which is the table directory without hive_file_pattern
+				auto relative_path = file_path.substr(table_path.size());
+				auto separator_pos = relative_path.rfind(catalog.Separator());
+				if (separator_pos != string::npos) {
+					data_path = relative_path.substr(0, separator_pos + catalog.Separator().size());
+				}
 			}
-			auto relative_path = file_path.substr(table_path.size());
-			auto separator_pos = relative_path.rfind(catalog.Separator());
-			if (separator_pos == string::npos) {
-				throw InternalException("DuckLakeCompactor: failed to resolve partition path");
-			}
-			data_path = relative_path.substr(0, separator_pos + catalog.Separator().size());
+			// files outside the table directory, as added files can be, are written to the table directory
 		}
 	}
 
-	// rowids are always written, since a sort reorders rows, deletes leave gaps and UPDATE files embed their own
-	bool write_row_id = true;
 	bool write_snapshot_id = false;
 	switch (type) {
 	case CompactionType::MERGE_ADJACENT_TABLES:
@@ -712,7 +749,7 @@ DuckLakeCompactor::GenerateCompactionCommand(vector<DuckLakeCompactionFileEntry>
 	copy_input.partition_data = nullptr;
 	unique_ptr<LogicalCopyToFile> copy;
 	auto root = PlanRewriteScan(
-	    context, binder, table, copy_input, write_row_id, write_snapshot_id,
+	    context, binder, table, copy_input, write_snapshot_id,
 	    [&](DuckLakeFunctionInfo &read_info) {
 		    return make_uniq<DuckLakeMultiFileList>(read_info, std::move(files_to_scan));
 	    },
@@ -736,7 +773,6 @@ DuckLakeCompactor::GenerateCompactionCommand(vector<DuckLakeCompactionFileEntry>
 	} else {
 		auto &fs = FileSystem::GetFileSystem(context);
 		copy->file_path = copy->filename_pattern.CreateFilename(fs, copy->file_path, "parquet", 0);
-		copy->batch_size = DEFAULT_ROW_GROUP_SIZE;
 		copy->file_size_bytes = optional_idx();
 		copy->rotate = false;
 		copy->preserve_order = PreserveOrderType::PRESERVE_ORDER;
@@ -814,10 +850,124 @@ static double GetDeleteThreshold(DuckLakeTableEntry &table_entry, const DuckLake
 		// If the user manually sets the parameter, this has priority
 		delete_threshold = DoubleValue::Get(delete_threshold_value);
 	}
-	if (delete_threshold > 1 || delete_threshold < 0) {
+	if (!(delete_threshold >= 0 && delete_threshold <= 1)) {
 		throw BinderException("The delete_threshold option must be between 0 and 1");
 	}
 	return delete_threshold;
+}
+
+//! The compaction of a REST catalog, which its server performs when the function is executed
+struct RESTCompactionBindData : public TableFunctionData {
+	RESTCompactionBindData(DuckLakeCatalog &catalog, RESTCompactRequest request, bool flush)
+	    : catalog(catalog), request(std::move(request)), flush(flush) {
+	}
+
+	reference<DuckLakeCatalog> catalog;
+	RESTCompactRequest request;
+	bool flush;
+};
+
+static void RESTCompactionExecute(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+	auto &data = data_p.bind_data->Cast<RESTCompactionBindData>();
+	auto &state = data_p.global_state->Cast<DuckLakeRunOnceState>();
+	if (state.executed) {
+		return;
+	}
+	state.executed = true;
+	if (DuckLakeTransaction::Get(context, data.catalog.get()).ChangesMade()) {
+		throw InvalidInputException("A REST catalog is compacted by its server, which does not see the changes of the "
+		                            "open transaction: commit the changes first");
+	}
+	auto response = data.catalog.get().GetRESTClient().Compact(data.request);
+	idx_t count = 0;
+	for (auto &result : response.results) {
+		if (count >= STANDARD_VECTOR_SIZE) {
+			break;
+		}
+		output.SetValue(0, count, Value(result.schema_name));
+		output.SetValue(1, count, Value(result.table_name));
+		if (data.flush) {
+			output.SetValue(2, count, Value::BIGINT(NumericCast<int64_t>(result.rows_flushed.GetIndex())));
+		} else {
+			output.SetValue(2, count, Value::BIGINT(NumericCast<int64_t>(result.files_processed.GetIndex())));
+			output.SetValue(3, count, Value::BIGINT(NumericCast<int64_t>(result.files_created.GetIndex())));
+		}
+		count++;
+	}
+	output.SetCardinality(count);
+}
+
+unique_ptr<LogicalOperator> BindRESTCompaction(ClientContext &context, TableFunctionBindInput &input,
+                                               TableIndex bind_index, DuckLakeCatalog &ducklake_catalog,
+                                               RESTCompactionKind kind) {
+	RESTCompactRequest request;
+	bool flush = kind == RESTCompactionKind::FLUSH_INLINED_DATA;
+	switch (kind) {
+	case RESTCompactionKind::MERGE_ADJACENT:
+		request.type = "merge_adjacent";
+		break;
+	case RESTCompactionKind::REWRITE_DELETES:
+		request.type = "rewrite_delete";
+		break;
+	case RESTCompactionKind::FLUSH_INLINED_DATA:
+		request.type = "flush_inlined_data";
+		break;
+	}
+	if (flush) {
+		request.schema_name = DuckLakeTableFunctionUtil::GetStringOption(input, "schema_name");
+		request.table_name = DuckLakeTableFunctionUtil::GetStringOption(input, "table_name");
+	} else if (input.inputs.size() == 2) {
+		request.table_name = DuckLakeTableFunctionUtil::GetTableName(input.inputs[1]);
+		if (request.table_name.empty()) {
+			throw BinderException("Table with name \"\" does not exist");
+		}
+		request.schema_name = DuckLakeTableFunctionUtil::GetStringOption(input, "schema");
+	}
+	Value value;
+	auto get_number = [&](const char *name, optional_idx &result) {
+		if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, name, "integer", value)) {
+			auto number = BigIntValue::Get(value);
+			if (number < 0) {
+				throw BinderException("The %s option must not be negative.", name);
+			}
+			result = NumericCast<uint64_t>(number);
+		}
+	};
+	if (!flush) {
+		get_number("max_compacted_files", request.max_compacted_files);
+		get_number("min_file_size", request.min_file_size);
+		get_number("max_file_size", request.max_file_size);
+		if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "newer_than", "timestamp", value)) {
+			request.newer_than = value.ToString();
+		}
+		if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "older_than", "timestamp", value)) {
+			request.older_than = value.ToString();
+		}
+		if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "delete_threshold", "double", value)) {
+			request.delete_threshold = DoubleValue::Get(value);
+		}
+	}
+	TableFunction function("ducklake_rest_compaction", {}, RESTCompactionExecute, nullptr, DuckLakeRunOnceState::Init);
+	auto bind_data = make_uniq<RESTCompactionBindData>(ducklake_catalog, std::move(request), flush);
+	vector<Identifier> names {Identifier("schema_name"), Identifier("table_name")};
+	vector<LogicalType> types {LogicalType::VARCHAR, LogicalType::VARCHAR};
+	if (flush) {
+		names.emplace_back("rows_flushed");
+		types.push_back(LogicalType::BIGINT);
+	} else {
+		names.emplace_back("files_processed");
+		names.emplace_back("files_created");
+		types.push_back(LogicalType::BIGINT);
+		types.push_back(LogicalType::BIGINT);
+	}
+	auto column_count = names.size();
+	auto get = make_uniq<LogicalGet>(bind_index, BoundTableFunction(std::move(function)), std::move(bind_data),
+	                                 std::move(types), std::move(names));
+	auto &column_ids = get->GetMutableColumnIds();
+	for (idx_t i = 0; i < column_count; i++) {
+		column_ids.emplace_back(i);
+	}
+	return std::move(get);
 }
 
 static unique_ptr<LogicalOperator> BindCompaction(ClientContext &context, TableFunctionBindInput &input,
@@ -829,7 +979,13 @@ static unique_ptr<LogicalOperator> BindCompaction(ClientContext &context, TableF
 	return_names.push_back("files_created");
 
 	auto &ducklake_catalog = DuckLakeBaseMetadataFunction::GetCatalog(context, input);
+	ducklake_catalog.VerifyWritable();
 	auto &transaction = DuckLakeTransaction::Get(context, ducklake_catalog);
+	if (ducklake_catalog.IsREST()) {
+		return BindRESTCompaction(context, input, bind_index, ducklake_catalog,
+		                          type == CompactionType::MERGE_ADJACENT_TABLES ? RESTCompactionKind::MERGE_ADJACENT
+		                                                                        : RESTCompactionKind::REWRITE_DELETES);
+	}
 	uint64_t max_files = NumericLimits<uint64_t>::Maximum() - 1;
 	Value max_files_value;
 	if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "max_compacted_files", "integer", max_files_value)) {
@@ -866,8 +1022,8 @@ static unique_ptr<LogicalOperator> BindCompaction(ClientContext &context, TableF
 		throw BinderException("The min_file_size must be less than max_file_size.");
 	}
 
-	DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "newer_than", "timestamp", merge_options.newer_than);
-	DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "older_than", "timestamp", merge_options.older_than);
+	DuckLakeTableFunctionUtil::TryGetTimestampOption(input, "newer_than", merge_options.newer_than);
+	DuckLakeTableFunctionUtil::TryGetTimestampOption(input, "older_than", merge_options.older_than);
 	if (!merge_options.newer_than.IsNull() && !merge_options.older_than.IsNull() &&
 	    merge_options.newer_than >= merge_options.older_than) {
 		throw BinderException("The newer_than option must be less than older_than.");

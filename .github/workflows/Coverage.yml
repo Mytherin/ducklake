@@ -1,7 +1,7 @@
 #
-# Measures the coverage of the DuckLake sources by the tests of every metadata catalog with clang's source-based code
-# coverage, like the codecov job of DuckDB. The report is the coverage-ducklake artifact, and a pull request fails
-# when it lowers the line coverage of the latest report of main.
+# Measures the coverage of the DuckLake sources by the tests of every metadata catalog, and on S3 storage, with clang's
+# source-based code coverage, like the codecov job of DuckDB. The report is the coverage-ducklake artifact, and a pull
+# request fails when it lowers the line coverage of the latest report of main.
 #
 name: Code Coverage
 on:
@@ -22,7 +22,7 @@ jobs:
   codecov:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Code Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
       VCPKG_TARGET_TRIPLET: x64-linux
@@ -112,6 +112,26 @@ jobs:
         DUCKLAKE_CI: 1
       run: |
         python3 scripts/run_quack_tests.py --timeout 300 --build-dir build/codecov
+
+    # Every DuckLake is served by a REST server that the test starts on a fixed port, so the tests run one at a time
+    - name: Test REST
+      env:
+        LLVM_PROFILE_FILE: ${{ env.PROFILES }}/ducklake-%m.profraw
+        DUCKLAKE_CI: 1
+      run: |
+        python3 duckdb/scripts/ci/run_tests.py build/codecov/test/unittest --retry 2 --workers 1 \
+          --test-config test/configs/rest_ducklake.json "test/sql/*"
+
+    # Every test runs on S3 storage as well, which reaches the code for remote paths. The tests share one bucket, so
+    # they run one at a time, and without DUCKLAKE_CI, which skips the PostgreSQL tests
+    - name: Test S3
+      env:
+        LLVM_PROFILE_FILE: ${{ env.PROFILES }}/ducklake-%m.profraw
+        S3_TEST_SERVER_AVAILABLE: 1
+      run: |
+        ./scripts/start-docker.sh
+        python3 duckdb/scripts/ci/run_tests.py build/codecov/test/unittest --retry 2 --workers 1 \
+          --test-config test/configs/seaweedfs.json "test/sql/*"
 
     - name: Generate coverage report
       run: |

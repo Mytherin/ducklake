@@ -11,7 +11,7 @@ test-env DUCKLAKE_CONNECTION {TEST_DIR}/{BASE_TEST_NAME}.db
 test-env DATA_PATH {TEST_DIR}
 
 statement ok
-ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/nested_core', METADATA_CATALOG 'meta', DUCKLAKE_VERSION '1.1-dev1')
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/nested_core', METADATA_CATALOG 'meta', DUCKLAKE_VERSION '1.1')
 
 statement ok
 BEGIN;
@@ -104,13 +104,8 @@ SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'dl' AND schema_name
 statement ok
 ROLLBACK;
 
-# FIXME: DuckDB fails to bind catalog-qualified nested schema references in views
-mode skip
-
 statement ok
 CREATE VIEW dl.a.child.v AS SELECT * FROM dl.a.child.t;
-
-mode unskip
 
 statement ok
 CREATE MACRO dl.a.child.m(x) AS x + 10;
@@ -118,15 +113,10 @@ CREATE MACRO dl.a.child.m(x) AS x + 10;
 statement ok
 CREATE MACRO dl.b.child.m(x) AS x + 20;
 
-# FIXME: DuckDB fails to bind catalog-qualified nested schema references in views
-mode skip
-
 query II
 SELECT dl.a.child.m(i), dl.b.child.m(i) FROM dl.a.child.v;
 ----
 11	21
-
-mode unskip
 
 statement ok
 ALTER TABLE dl.a.child.t ADD COLUMN j INTEGER DEFAULT 7;
@@ -173,7 +163,7 @@ statement ok
 DETACH dl;
 
 statement ok
-ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/nested_core', METADATA_CATALOG 'meta', DUCKLAKE_VERSION '1.1-dev1')
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/nested_core', METADATA_CATALOG 'meta', DUCKLAKE_VERSION '1.1')
 
 query II
 SELECT * FROM dl.a.child.t;
@@ -200,13 +190,8 @@ ALTER TABLE dl.a.child.t RENAME TO old_t;
 statement ok
 CREATE TABLE dl.a.child.t AS SELECT 99 AS i;
 
-# FIXME: DuckDB fails to bind catalog-qualified nested schema references in views
-mode skip
-
 statement ok
 CREATE OR REPLACE VIEW dl.a.child.v AS SELECT * FROM dl.a.child.t;
-
-mode unskip
 
 statement ok
 CREATE OR REPLACE MACRO dl.a.child.m(x) AS x + 100;
@@ -222,15 +207,10 @@ SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'dl' AND schema_name
 statement ok
 ROLLBACK;
 
-# FIXME: DuckDB fails to bind catalog-qualified nested schema references in views
-mode skip
-
 query II
 SELECT * FROM dl.a.child.v;
 ----
 5	7
-
-mode unskip
 
 query I
 SELECT dl.a.child.m(1);
@@ -260,7 +240,7 @@ statement ok
 DETACH dl;
 
 statement ok
-ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/nested_core', METADATA_CATALOG 'meta', DUCKLAKE_VERSION '1.1-dev1')
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/nested_core', METADATA_CATALOG 'meta', DUCKLAKE_VERSION '1.1')
 
 query I
 SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'dl' AND parent_schema IS NOT NULL;

@@ -10,14 +10,30 @@ struct ExpireSnapshotsBindData : public MetadataBindData {
 	}
 
 	DuckLakeCatalog &catalog;
-	vector<DuckLakeSnapshotInfo> snapshots;
+	//! The criterion of the expiry
+	DuckLakeSnapshotFilter filter;
 	bool dry_run = false;
+};
+
+struct ExpireSnapshotsGlobalState : public GlobalTableFunctionState {
+	bool executed = false;
+	idx_t offset = 0;
+	//! The expired snapshots, or the candidates of a dry run
+	vector<vector<Value>> rows;
+
+	static unique_ptr<GlobalTableFunctionState> Init(ClientContext &context, TableFunctionInitInput &input) {
+		return make_uniq<ExpireSnapshotsGlobalState>();
+	}
 };
 
 static unique_ptr<FunctionData> DuckLakeExpireSnapshotsBind(ClientContext &context, TableFunctionBindInput &input,
                                                             vector<LogicalType> &return_types,
                                                             vector<Identifier> &names) {
 	auto &ducklake_catalog = DuckLakeBaseMetadataFunction::GetCatalog(context, input);
+	if (DuckLakeTransaction::Get(context, ducklake_catalog).GetMetadataManager().IsRemote()) {
+		throw NotImplementedException("DuckLake REST catalogs do not support expiring snapshots: run the maintenance "
+		                              "functions on the DuckLake that the server serves");
+	}
 	auto result = make_uniq<ExpireSnapshotsBindData>(ducklake_catalog);
 	DuckLakeSnapshotsFunction::GetSnapshotTypes(return_types, names);
 
@@ -27,7 +43,10 @@ static unique_ptr<FunctionData> DuckLakeExpireSnapshotsBind(ClientContext &conte
 	if (DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "dry_run", "boolean", dry_run)) {
 		result->dry_run = BooleanValue::Get(dry_run);
 	}
-	vector<string> snapshot_ids;
+	if (!result->dry_run) {
+		ducklake_catalog.VerifyWritable();
+	}
+	auto &filter = result->filter;
 	auto versions_entry = input.named_parameters.find("versions");
 	bool has_versions = versions_entry != input.named_parameters.end();
 	if (has_versions && !versions_entry->second.IsNull()) {
@@ -38,67 +57,68 @@ static unique_ptr<FunctionData> DuckLakeExpireSnapshotsBind(ClientContext &conte
 			if (BigIntValue::Get(snapshot_id) < 0) {
 				throw BinderException("The versions option must only contain non-negative snapshot ids.");
 			}
-			snapshot_ids.push_back(snapshot_id.ToString());
+			filter.snapshot_ids.push_back(NumericCast<idx_t>(BigIntValue::Get(snapshot_id)));
 		}
 	}
 	Value older_than;
-	bool has_timestamp = DuckLakeTableFunctionUtil::TryGetNonNullOption(input, "older_than", "timestamp", older_than);
+	bool has_timestamp = DuckLakeTableFunctionUtil::TryGetTimestampOption(input, "older_than", older_than);
 	if (has_versions && has_timestamp) {
 		throw InvalidInputException(
 		    "ducklake_expire_snapshots: cannot specify both 'versions' and 'older_than' parameters at the "
 		    "same time. Please use only one criterion.");
 	}
-	// An explicitly empty version set expires no snapshots.
-	if (has_versions && snapshot_ids.empty()) {
-		return std::move(result);
-	}
-	// No criteria given and no global default: silently no-op.
-	if (!has_versions && !has_timestamp && older_than_default.empty()) {
+	// an empty version set, or no criterion and no global default, expires no snapshots
+	if ((has_versions && filter.snapshot_ids.empty()) ||
+	    (!has_versions && !has_timestamp && older_than_default.empty())) {
+		// the expiry still drops the tags whose expiry time has passed, an empty id list selects no snapshots
+		filter.snapshot_ids.clear();
+		filter.has_snapshot_ids = true;
 		return std::move(result);
 	}
 
-	string filter;
 	// we can never delete the most recent snapshot
-	filter = "snapshot_id != (SELECT MAX(snapshot_id) FROM {METADATA_CATALOG}.ducklake_snapshot) AND ";
+	filter.exclude_latest = true;
 	if (has_timestamp) {
 		auto from_timestamp = older_than.GetValue<timestamp_tz_t>();
-		auto timestamp_filter = DuckLakeTableFunctionUtil::FormatTimestampISO8601(timestamp_t(from_timestamp.value));
-		filter += StringUtil::Format("snapshot_time::TIMESTAMPTZ < '%s'", timestamp_filter);
+		filter.older_than = DuckLakeTableFunctionUtil::FormatTimestampISO8601(timestamp_t(from_timestamp.value));
 	} else if (!has_versions) {
-		auto timestamp_filter = DuckLakeTableFunctionUtil::FormatTimestampOlderThan(older_than_default);
-		filter += StringUtil::Format("snapshot_time::TIMESTAMPTZ < '%s'", timestamp_filter);
+		filter.older_than =
+		    DuckLakeTableFunctionUtil::FormatTimestampOlderThan("expire_older_than", older_than_default);
 	} else {
-		filter += StringUtil::Format("snapshot_id IN (%s)", StringUtil::Join(snapshot_ids, ", "));
+		filter.has_snapshot_ids = true;
 	}
-	auto &transaction = DuckLakeTransaction::Get(context, ducklake_catalog);
-	auto &metadata_manager = transaction.GetMetadataManager();
-	result->snapshots = metadata_manager.GetAllSnapshots(filter);
-	for (auto &snapshot : result->snapshots) {
-		result->rows.push_back(DuckLakeSnapshotsFunction::GetSnapshotValues(snapshot));
+	if (result->dry_run) {
+		auto &transaction = DuckLakeTransaction::Get(context, ducklake_catalog);
+		for (auto &snapshot : transaction.ExpirableSnapshots(filter)) {
+			result->rows.push_back(DuckLakeSnapshotsFunction::GetSnapshotValues(snapshot));
+		}
 	}
 	return std::move(result);
 }
 
 void DuckLakeExpireSnapshotsExecute(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
 	auto &data = data_p.bind_data->Cast<ExpireSnapshotsBindData>();
-	auto &state = data_p.global_state->Cast<DuckLakeRunOnceState>();
-	if (state.offset >= data.rows.size()) {
+	auto &state = data_p.global_state->Cast<ExpireSnapshotsGlobalState>();
+	if (!state.executed) {
+		state.executed = true;
+		if (data.dry_run) {
+			state.rows = data.rows;
+		} else {
+			auto &transaction = DuckLakeTransaction::Get(context, data.catalog);
+			for (auto &snapshot : transaction.ExpireSnapshots(data.filter)) {
+				state.rows.push_back(DuckLakeSnapshotsFunction::GetSnapshotValues(snapshot));
+			}
+		}
+	}
+	if (state.offset >= state.rows.size()) {
 		return;
 	}
-	if (!state.executed && !data.dry_run) {
-		auto &transaction = DuckLakeTransaction::Get(context, data.catalog);
-		transaction.DeleteSnapshots(data.snapshots);
-		for (auto &snapshot : data.snapshots) {
-			data.catalog.InvalidateSchemaCache(snapshot.schema_version);
-		}
-		state.executed = true;
-	}
-	DuckLakeBaseMetadataFunction::ScanRows(data.rows, state.offset, output);
+	DuckLakeBaseMetadataFunction::ScanRows(state.rows, state.offset, output);
 }
 
 DuckLakeExpireSnapshotsFunction::DuckLakeExpireSnapshotsFunction()
     : TableFunction("ducklake_expire_snapshots", FunctionSignature().AddPositionalOnly("catalog", LogicalType::VARCHAR),
-                    DuckLakeExpireSnapshotsExecute, DuckLakeExpireSnapshotsBind, DuckLakeRunOnceState::Init) {
+                    DuckLakeExpireSnapshotsExecute, DuckLakeExpireSnapshotsBind, ExpireSnapshotsGlobalState::Init) {
 	GetSignature().WithTypedKwargs("options", [&](TypedKwargs &options) {
 		options
 		    .Add("older_than", LogicalType::TIMESTAMP_TZ)

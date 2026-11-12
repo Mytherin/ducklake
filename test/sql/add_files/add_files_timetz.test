@@ -1,0 +1,32 @@
+# name: test/sql/add_files/add_files_timetz.test
+# description: Add a Parquet file with a TIMETZ column, as DuckDB and DuckLake write it, to a TIMETZ column
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/add_files_timetz', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.t(t TIMETZ)
+
+statement ok
+INSERT INTO ducklake.t VALUES (TIMETZ '10:00:00+00')
+
+statement ok
+COPY (SELECT TIMETZ '12:00:00+00' AS t) TO '{DATA_PATH}/add_files_timetz.parquet'
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 't', '{DATA_PATH}/add_files_timetz.parquet')
+
+query I
+SELECT t FROM ducklake.t ORDER BY t
+----
+10:00:00+00
+12:00:00+00

@@ -1,0 +1,94 @@
+# name: test/sql/stats/variant_stats_from_other_writers.test
+# description: Shredded VARIANT table stats as other writers may store them: without counts, all-NULL string fields, and malformed field names
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/variant_stats_from_other_writers.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/variant_stats_from_other_writers', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.no_counts AS SELECT {'a': i}::VARIANT AS v FROM range(3) t(i)
+
+statement ok
+CREATE TABLE ducklake.null_strings AS SELECT {'a': i, 's': NULL::VARCHAR}::VARIANT AS v FROM range(3) t(i)
+
+statement ok
+CREATE TABLE ducklake.bad_quote AS SELECT {'a': i}::VARIANT AS v FROM range(3) t(i)
+
+statement ok
+CREATE TABLE ducklake.bad_separator AS SELECT {'a': i}::VARIANT AS v FROM range(3) t(i)
+
+# the stats of the field "a" without null_count and num_values
+statement ok
+UPDATE __ducklake_metadata_ducklake.ducklake_table_column_stats
+SET extra_stats = '[{"field_name":"\"a\"","shredded_type":"int64","min":"0","max":"2","column_size_bytes":45,"any_valid":true}]'
+WHERE table_id = (SELECT table_id FROM __ducklake_metadata_ducklake.ducklake_table WHERE table_name = 'no_counts')
+
+# a field "s" of only NULL values that is shredded as VARCHAR (DuckDB shreds it as INTEGER)
+statement ok
+UPDATE __ducklake_metadata_ducklake.ducklake_table_column_stats
+SET extra_stats = '[{"field_name":"\"s\"","shredded_type":"varchar","null_count":3,"num_values":3,"column_size_bytes":25,"any_valid":true},{"field_name":"\"a\"","shredded_type":"int64","null_count":0,"min":"0","max":"2","num_values":3,"column_size_bytes":45,"any_valid":true}]'
+WHERE table_id = (SELECT table_id FROM __ducklake_metadata_ducklake.ducklake_table WHERE table_name = 'null_strings')
+
+# a field name with an unterminated quote
+statement ok
+UPDATE __ducklake_metadata_ducklake.ducklake_table_column_stats
+SET extra_stats = '[{"field_name":"\"a","shredded_type":"int64","min":"0","max":"2","column_size_bytes":45,"any_valid":true}]'
+WHERE table_id = (SELECT table_id FROM __ducklake_metadata_ducklake.ducklake_table WHERE table_name = 'bad_quote')
+
+# a quoted field name that is not followed by a dot
+statement ok
+UPDATE __ducklake_metadata_ducklake.ducklake_table_column_stats
+SET extra_stats = '[{"field_name":"\"a\"b","shredded_type":"int64","min":"0","max":"2","column_size_bytes":45,"any_valid":true}]'
+WHERE table_id = (SELECT table_id FROM __ducklake_metadata_ducklake.ducklake_table WHERE table_name = 'bad_separator')
+
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/variant_stats_from_other_writers', DATA_INLINING_ROW_LIMIT 0)
+
+# without counts the field can have NULL values
+query I
+SELECT stats(v) FROM ducklake.no_counts LIMIT 1
+----
+{'fully_shredded': {'a': {'stats': {'has_no_null': true, 'has_null': true, 'max': 2, 'min': 0}, 'type': BIGINT}}, 'has_no_null': true, 'has_null': true, 'shredding_state': SHREDDED}
+
+query I
+SELECT count(*) FROM ducklake.no_counts WHERE v.a::BIGINT > 0
+----
+2
+
+# a field with as many NULL values as values has no valid values
+query I
+SELECT stats(v) FROM ducklake.null_strings LIMIT 1
+----
+{'fully_shredded': {'a': {'stats': {'has_no_null': true, 'has_null': false, 'max': 2, 'min': 0}, 'type': BIGINT}, 's': {'stats': {'has_no_null': false, 'has_null': true, 'has_unicode': true}, 'type': VARCHAR}}, 'has_no_null': true, 'has_null': true, 'shredding_state': SHREDDED}
+
+query II
+SELECT count(*) FILTER (WHERE v.s::VARCHAR IS NULL), count(*) FILTER (WHERE v.a::BIGINT >= 1) FROM ducklake.null_strings
+----
+3	2
+
+statement error
+SELECT count(*) FROM ducklake.bad_quote WHERE v.a::BIGINT > 0
+----
+Incorrectly formatted field name
+
+statement error
+SELECT count(*) FROM ducklake.bad_separator WHERE v.a::BIGINT > 0
+----
+Incorrectly formatted field name
+
+# reading the tables does not need the stats
+query II
+SELECT (SELECT count(*) FROM ducklake.bad_quote), (SELECT count(*) FROM ducklake.bad_separator)
+----
+3	3

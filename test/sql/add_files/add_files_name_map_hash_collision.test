@@ -1,0 +1,43 @@
+# name: test/sql/add_files/add_files_name_map_hash_collision.test
+# description: Files whose column names hash alike still get their own name maps
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/add_files_name_map_hash_collision', DATA_INLINING_ROW_LIMIT 0)
+
+# a struct with a field of its own name hashes like a file without any columns
+statement ok
+CREATE TABLE ducklake.t(x STRUCT(x INTEGER), z STRUCT(z INTEGER))
+
+statement ok
+COPY (SELECT {'x': 1} AS x) TO '{DATA_PATH}/add_files_name_map_hash_collision_x_only.parquet'
+
+statement ok
+COPY (SELECT {'z': 2} AS z) TO '{DATA_PATH}/add_files_name_map_hash_collision_z_only.parquet'
+
+statement ok
+COPY (SELECT {'x': 3} AS x, {'z': 4} AS z) TO '{DATA_PATH}/add_files_name_map_hash_collision_both.parquet'
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 't', '{DATA_PATH}/add_files_name_map_hash_collision_x_only.parquet', allow_missing => true)
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 't', '{DATA_PATH}/add_files_name_map_hash_collision_z_only.parquet', allow_missing => true)
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 't', '{DATA_PATH}/add_files_name_map_hash_collision_both.parquet')
+
+query II
+SELECT x.x, z.z FROM ducklake.t ORDER BY ALL
+----
+1	NULL
+3	4
+NULL	2

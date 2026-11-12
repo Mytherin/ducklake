@@ -1,0 +1,129 @@
+# name: test/sql/metadata/load_inconsistent_catalog.test
+# description: loading a catalog whose metadata is inconsistent reports which entry is broken
+# group: [metadata]
+
+require ducklake
+
+require parquet
+
+test-env DATA_PATH {TEST_DIR}
+
+# a table that references a schema that does not exist
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inconsistent_schema.db' AS dl (DATA_PATH '{DATA_PATH}/inconsistent_schema')
+
+statement ok
+CREATE TABLE dl.t AS SELECT 1 AS i
+
+statement ok
+UPDATE __ducklake_metadata_dl.ducklake_table SET schema_id = 999
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inconsistent_schema.db' AS dl
+
+statement error
+SELECT * FROM dl.t
+----
+table with id 1 references schema id 999 that does not exist
+
+statement ok
+DETACH dl
+
+# a table without any columns
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inconsistent_columns.db' AS dl (DATA_PATH '{DATA_PATH}/inconsistent_columns')
+
+statement ok
+CREATE TABLE dl.t AS SELECT 1 AS i
+
+statement ok
+DELETE FROM __ducklake_metadata_dl.ducklake_column
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inconsistent_columns.db' AS dl
+
+statement error
+SELECT * FROM dl.t
+----
+Table entry "t" does not have any columns
+
+statement ok
+DETACH dl
+
+# a nested column whose parent column does not exist
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inconsistent_parent.db' AS dl (DATA_PATH '{DATA_PATH}/inconsistent_parent')
+
+statement ok
+CREATE TABLE dl.t (s STRUCT(a INTEGER))
+
+statement ok
+UPDATE __ducklake_metadata_dl.ducklake_column SET parent_column = 999 WHERE parent_column IS NOT NULL
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inconsistent_parent.db' AS dl
+
+statement error
+SELECT * FROM dl.t
+----
+Could not find parent column for column "a"
+
+statement ok
+DETACH dl
+
+# a view that references a schema that does not exist
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inconsistent_view_schema.db' AS dl (DATA_PATH '{DATA_PATH}/inconsistent_view_schema')
+
+statement ok
+CREATE VIEW dl.v AS SELECT 1 AS i
+
+statement ok
+UPDATE __ducklake_metadata_dl.ducklake_view SET schema_id = 999
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inconsistent_view_schema.db' AS dl
+
+statement error
+SELECT * FROM dl.v
+----
+could not find schema that corresponds to the view entry "v"
+
+statement ok
+DETACH dl
+
+# a struct with two fields of the same name
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inconsistent_child_name.db' AS dl (DATA_PATH '{DATA_PATH}/inconsistent_child_name')
+
+statement ok
+CREATE TABLE dl.t(s STRUCT(a INTEGER, b INTEGER))
+
+statement ok
+UPDATE __ducklake_metadata_dl.ducklake_column SET column_name = 'a' WHERE column_name = 'b'
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inconsistent_child_name.db' AS dl
+
+statement error
+SELECT * FROM dl.t
+----
+Duplicate child name "a" found in column "s"
+
+statement ok
+DETACH dl

@@ -1,0 +1,22 @@
+# name: test/sql/partitioning/murmur3_small_numeric_types.test
+# description: murmur3_32 hashes TINYINT and SMALLINT as long and FLOAT as double, like the Iceberg bucket transform
+# group: [partitioning]
+
+require ducklake
+
+# the Iceberg spec hashes every integer type like a long: hash(1) = 1392991556
+query IIII
+SELECT murmur3_32(1::TINYINT), murmur3_32(1::SMALLINT), murmur3_32(1::INTEGER), murmur3_32(1::BIGINT)
+----
+1392991556	1392991556	1392991556	1392991556
+
+# floats are hashed as the double they widen to: hash(1.0) = -142385009, and negative zero hashes as zero
+query IIII
+SELECT murmur3_32(1.0::FLOAT), murmur3_32(1.0::DOUBLE), murmur3_32(-0.0::FLOAT), murmur3_32(0.0::DOUBLE)
+----
+-142385009	-142385009	1669671676	1669671676
+
+query III
+SELECT murmur3_32(NULL::TINYINT), murmur3_32(NULL::SMALLINT), murmur3_32(NULL::FLOAT)
+----
+NULL	NULL	NULL

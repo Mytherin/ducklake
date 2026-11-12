@@ -1,0 +1,141 @@
+# name: test/sql/stats/filter_pushdown_unsupported_expressions.test
+# description: filters that cannot be checked against the column stats read every file, the rest still prune
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/filter_pushdown_unsupported', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE dl.t (i INTEGER, j INTEGER, b BLOB, s VARCHAR)
+
+# one file per row
+statement ok
+INSERT INTO dl.t VALUES (1, 10, '\x01'::BLOB, 'a')
+
+statement ok
+INSERT INTO dl.t VALUES (2, 20, '\x02'::BLOB, 'b')
+
+# blob stats are not compared
+query I
+SELECT i FROM dl.t WHERE b = '\x01'::BLOB
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT i FROM dl.t WHERE b = '\x01'::BLOB
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+# a comparison other than (in)equality and ordering
+query I
+SELECT i FROM dl.t WHERE i IS DISTINCT FROM 1
+----
+2
+
+query II
+EXPLAIN ANALYZE SELECT i FROM dl.t WHERE i IS DISTINCT FROM 1
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+# a constant that cannot be written into the stats query is checked against the file statistics instead
+query I
+SELECT count(*) FROM dl.t WHERE s = 'a' || chr(0)
+----
+0
+
+query II
+EXPLAIN ANALYZE SELECT count(*) FROM dl.t WHERE s = 'a' || chr(0)
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+# a disjunction with a branch that cannot be checked against the stats reads every file
+query I
+SELECT i FROM dl.t WHERE (i + 1) IS NULL OR j = 10
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT i FROM dl.t WHERE (i + 1) IS NULL OR j = 10
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+query I
+SELECT i FROM dl.t WHERE (i + 1) IS NOT NULL OR j = 10 ORDER BY i
+----
+1
+2
+
+query II
+EXPLAIN ANALYZE SELECT i FROM dl.t WHERE (i + 1) IS NOT NULL OR j = 10
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+query I
+SELECT i FROM dl.t WHERE (i + 1) IN (2, 5) OR j = 10
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT i FROM dl.t WHERE (i + 1) IN (2, 5) OR j = 10
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+query I
+SELECT i FROM dl.t WHERE i IN (5, i + 1) OR j = 10
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT i FROM dl.t WHERE i IN (5, i + 1) OR j = 10
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+query I
+SELECT i FROM dl.t WHERE i IN (1, NULL) OR j = 10
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT i FROM dl.t WHERE i IN (1, NULL) OR j = 10
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+query I
+SELECT i FROM dl.t WHERE b IN ('\x01'::BLOB, '\x03'::BLOB) OR j = 10
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT i FROM dl.t WHERE b IN ('\x01'::BLOB, '\x03'::BLOB) OR j = 10
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 2.*
+
+# a conjunct that cannot be checked drops out, the other conjunct still prunes
+query I
+SELECT i FROM dl.t WHERE (i = 1 AND b = '\x01'::BLOB) OR j = 30
+----
+1
+
+query II
+EXPLAIN ANALYZE SELECT i FROM dl.t WHERE (i = 1 AND b = '\x01'::BLOB) OR j = 30
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+# no branch can match, so no file is read
+query I
+SELECT count(*) FROM dl.t WHERE (i = 1 AND i = 2) OR (j = 1 AND j = 2)
+----
+0
+
+query II
+EXPLAIN ANALYZE SELECT count(*) FROM dl.t WHERE (i = 1 AND i = 2) OR (j = 1 AND j = 2)
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 0.*

@@ -1,0 +1,57 @@
+# name: test/sql/comments/view_column_comment_rename.test
+# description: View column comments set twice in a transaction, and kept when the view is renamed
+# group: [comments]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{BASE_TEST_NAME}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DUCKLAKE_VERSION '1.1', DATA_PATH '{DATA_PATH}/view_column_comment_rename')
+
+statement ok
+CREATE VIEW ducklake.v AS SELECT 1 AS a, 2 AS b
+
+# the last comment of the transaction is committed
+statement ok
+BEGIN
+
+statement ok
+COMMENT ON COLUMN ducklake.v.a IS 'first'
+
+statement ok
+COMMENT ON COLUMN ducklake.v.a IS 'second'
+
+statement ok
+COMMIT
+
+query II
+SELECT column_name, comment FROM duckdb_columns() WHERE database_name = 'ducklake' AND table_name = 'v' ORDER BY ALL
+----
+a	second
+b	NULL
+
+# renaming the view keeps the comments committed earlier
+statement ok
+ALTER VIEW ducklake.v RENAME TO v2
+
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DUCKLAKE_VERSION '1.1', DATA_PATH '{DATA_PATH}/view_column_comment_rename')
+
+query II
+SELECT column_name, comment FROM duckdb_columns() WHERE database_name = 'ducklake' AND table_name = 'v2' ORDER BY ALL
+----
+a	second
+b	NULL
+
+query II
+FROM ducklake.v2
+----
+1	2

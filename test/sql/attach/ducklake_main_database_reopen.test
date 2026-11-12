@@ -1,0 +1,39 @@
+# name: test/sql/attach/ducklake_main_database_reopen.test
+# description: A DuckLake can be opened as the main database
+# group: [attach]
+
+require ducklake
+
+require parquet
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/ducklake_main_database.ducklake' AS lake
+
+statement ok
+CREATE TABLE lake.t AS SELECT 42 AS i
+
+statement ok
+DETACH lake
+
+load ducklake:{TEST_DIR}/ducklake_main_database.ducklake
+
+query I
+FROM t
+----
+42
+
+statement ok
+INSERT INTO t VALUES (43)
+
+query II
+SELECT database_name, type FROM duckdb_databases() WHERE NOT internal ORDER BY ALL
+----
+ducklake_main_database	ducklake
+
+load ducklake:{TEST_DIR}/ducklake_main_database.ducklake
+
+query I
+FROM t ORDER BY i
+----
+42
+43

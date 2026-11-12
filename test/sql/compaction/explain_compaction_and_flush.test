@@ -1,0 +1,97 @@
+# name: test/sql/compaction/explain_compaction_and_flush.test
+# description: EXPLAIN shows the compaction and flush operators in the logical and physical plans without running them
+# group: [compaction]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/explain_compaction_and_flush', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.files(i INTEGER)
+
+statement ok
+INSERT INTO ducklake.files VALUES (1)
+
+statement ok
+INSERT INTO ducklake.files VALUES (2)
+
+statement ok
+CREATE TABLE ducklake.inlined(i INTEGER)
+
+statement ok
+CALL ducklake.set_option('data_inlining_row_limit', 10, table_name => 'inlined')
+
+statement ok
+INSERT INTO ducklake.inlined VALUES (3)
+
+statement ok
+SET explain_output = 'optimized_only'
+
+query II
+EXPLAIN CALL ducklake_merge_adjacent_files('ducklake', 'files')
+----
+logical_opt	<REGEX>:.*Ducklake Compaction.*
+
+query II
+EXPLAIN CALL ducklake_flush_inlined_data('ducklake', table_name => 'inlined')
+----
+logical_opt	<REGEX>:.*Ducklake Flush Data.*
+
+statement ok
+SET explain_output = 'physical_only'
+
+query II
+EXPLAIN CALL ducklake_merge_adjacent_files('ducklake', 'files')
+----
+physical_plan	<REGEX>:.*Ducklake Compaction.*
+
+query II
+EXPLAIN CALL ducklake_flush_inlined_data('ducklake', table_name => 'inlined')
+----
+physical_plan	<REGEX>:.*Ducklake Flush Data.*
+
+# the operators cannot be rendered back to SQL
+statement error
+EXPLAIN (SQL) SELECT * FROM ducklake_merge_adjacent_files('ducklake', 'files')
+----
+The extension operator does not implement SQL reconstruction
+
+statement error
+EXPLAIN (SQL) SELECT * FROM ducklake_flush_inlined_data('ducklake', table_name => 'inlined')
+----
+The extension operator does not implement SQL reconstruction
+
+# explaining did not compact or flush anything
+query I
+SELECT count(*) FROM ducklake_list_files('ducklake', 'files')
+----
+2
+
+query I
+SELECT count(*) FROM ducklake_list_files('ducklake', 'inlined')
+----
+0
+
+query III
+SELECT table_name, files_processed, files_created FROM ducklake_merge_adjacent_files('ducklake', 'files')
+----
+files	2	1
+
+query III
+SELECT schema_name, table_name, rows_flushed FROM ducklake_flush_inlined_data('ducklake', table_name => 'inlined')
+----
+main	inlined	1
+
+query I
+SELECT i FROM ducklake.files UNION ALL SELECT i FROM ducklake.inlined ORDER BY ALL
+----
+1
+2
+3

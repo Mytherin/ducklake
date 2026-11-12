@@ -1,0 +1,93 @@
+# name: test/sql/partitioning/bucket_pruning_promoted_column.test
+# description: Bucket pruning keeps the files written before the type of the bucket column was promoted
+# group: [partitioning]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/bucket_pruning_promoted_column', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+USE ducklake
+
+# INTEGER and BIGINT values hash alike, so the old bucket values still match
+statement ok
+CREATE TABLE b (c INTEGER, k INTEGER);
+
+statement ok
+ALTER TABLE b SET PARTITIONED BY (bucket(16, c));
+
+statement ok
+INSERT INTO b VALUES (5, 1), (6, 2);
+
+statement ok
+ALTER TABLE b ALTER c TYPE BIGINT;
+
+query I
+SELECT k FROM b WHERE c = 5
+----
+1
+
+query I
+SELECT k FROM b WHERE c IN (5, 6, 99) ORDER BY k
+----
+1
+2
+
+statement ok
+CREATE TABLE h (c INTEGER, k INTEGER);
+
+statement ok
+ALTER TABLE h SET PARTITIONED BY (bucket(16, c));
+
+statement ok
+INSERT INTO h VALUES (5, 1), (6, 2);
+
+statement ok
+ALTER TABLE h ALTER c TYPE HUGEINT;
+
+statement ok
+CREATE TABLE d (c DATE, k INTEGER);
+
+statement ok
+ALTER TABLE d SET PARTITIONED BY (bucket(16, c));
+
+statement ok
+INSERT INTO d VALUES (DATE '2020-01-05', 1);
+
+statement ok
+ALTER TABLE d ALTER c TYPE TIMESTAMP;
+
+# without the filter every row is still there
+query II
+SELECT c, k FROM h ORDER BY k
+----
+5	1
+6	2
+
+query II
+SELECT c, k FROM d
+----
+2020-01-05 00:00:00	1
+
+query I
+SELECT k FROM h WHERE c = 5
+----
+1
+
+query I
+SELECT k FROM h WHERE c IN (5, 6, 99) ORDER BY k
+----
+1
+2
+
+query I
+SELECT k FROM d WHERE c = TIMESTAMP '2020-01-05 00:00:00'
+----
+1

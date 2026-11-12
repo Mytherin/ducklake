@@ -1,0 +1,47 @@
+# name: test/sql/general/explain_dml_operators.test
+# description: EXPLAIN names the DuckLake operators of INSERT, CREATE TABLE AS, UPDATE and DELETE
+# group: [general]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/explain_dml_operators', DATA_INLINING_ROW_LIMIT 10)
+
+# the NOT NULL constraint of a nested column is verified by its own operator
+statement ok
+CREATE TABLE ducklake.t (i INTEGER, s STRUCT(a INTEGER) NOT NULL)
+
+query II
+EXPLAIN INSERT INTO ducklake.t VALUES (1, {'a': 1})
+----
+physical_plan	<REGEX>:(?i).*ducklake.insert.*table name: t.*ducklake.inline.data.*ducklake.verify.not.null.*
+
+query II
+EXPLAIN CREATE TABLE ducklake.t2 AS SELECT 42 AS i
+----
+physical_plan	<REGEX>:(?i).*ducklake.create.table.as.*table name: t2.*
+
+statement ok
+INSERT INTO ducklake.t VALUES (1, {'a': 1})
+
+query II
+EXPLAIN UPDATE ducklake.t SET i = 2
+----
+physical_plan	<REGEX>:(?i).*ducklake.update.*table name: t.*
+
+query II
+EXPLAIN DELETE FROM ducklake.t WHERE i = 1
+----
+physical_plan	<REGEX>:(?i).*ducklake.delete.*table name: t.*
+
+# EXPLAIN does not run the statements
+query II
+SELECT * FROM ducklake.t
+----
+1	{'a': 1}

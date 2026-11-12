@@ -1,0 +1,124 @@
+# name: test/sql/add_files/add_files_legacy_parquet_types.test
+# description: Add files whose columns only carry legacy Parquet types: INT96 and converted timestamps, plain fixed-length binary, intervals and times
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+require json
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/add_files_legacy_parquet_types')
+
+statement ok
+USE ducklake
+
+# INT96 timestamps
+statement ok
+CREATE TABLE int96(id INTEGER, timestamp_col TIMESTAMP)
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'int96', 'duckdb/data/parquet-testing/arrow/alltypes_plain.parquet', ignore_extra_columns => true)
+
+query II
+SELECT id, timestamp_col FROM int96 ORDER BY id
+----
+0	2009-01-01 00:00:00
+1	2009-01-01 00:01:00
+2	2009-02-01 00:00:00
+3	2009-02-01 00:01:00
+4	2009-03-01 00:00:00
+5	2009-03-01 00:01:00
+6	2009-04-01 00:00:00
+7	2009-04-01 00:01:00
+
+# TIMESTAMP_MICROS without a logical type
+statement ok
+CREATE TABLE micros(BLOCK_NUMBER INTEGER, BLOCK_TIMESTAMP TIMESTAMP)
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'micros', 'duckdb/data/parquet-testing/json_convertedtype.parquet', ignore_extra_columns => true)
+
+query III
+SELECT min(BLOCK_TIMESTAMP), max(BLOCK_TIMESTAMP), count(*) FROM micros
+----
+2022-10-16 21:53:59	2022-10-16 22:09:11	10
+
+# TIMESTAMP_MILLIS without a logical type
+statement ok
+CREATE TABLE millis(bill_billing_period_start_date TIMESTAMP)
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'millis', 'duckdb/data/parquet-testing/aws1.snappy.parquet', ignore_extra_columns => true)
+
+query III
+SELECT min(bill_billing_period_start_date), max(bill_billing_period_start_date), count(*) FROM millis
+----
+2020-08-01 00:00:00	2020-08-01 00:00:00	6347
+
+# a fixed-length binary column without a converted or logical type reads as BLOB
+statement ok
+CREATE TABLE fixed(data BLOB)
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'fixed', 'duckdb/data/parquet-testing/fixed.parquet')
+
+query I
+SELECT data FROM fixed
+----
+\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F
+
+# intervals are stored with the INTERVAL converted type only
+statement ok
+COPY (SELECT INTERVAL 1 DAY AS iv UNION ALL SELECT INTERVAL 3 MONTH) TO '{DATA_PATH}/add_files_legacy_parquet_types_interval.parquet'
+
+statement ok
+CREATE TABLE intervals(iv INTERVAL)
+
+statement ok
+CALL ducklake_add_data_files('ducklake', 'intervals', '{DATA_PATH}/add_files_legacy_parquet_types_interval.parquet')
+
+query I
+SELECT iv FROM intervals ORDER BY iv
+----
+1 day
+3 months
+
+# TIME_MILLIS and TIME_MICROS columns do not map to a VARCHAR column
+statement ok
+CREATE TABLE times(col1 VARCHAR, col2 VARCHAR)
+
+statement error
+CALL ducklake_add_data_files('ducklake', 'times', 'duckdb/data/parquet-testing/timetz_4byte_stats.parquet')
+----
+Expected VARCHAR, found type TIME
+
+statement ok
+COPY (SELECT TIMETZ '12:00:00+00' AS col1, TIMETZ '13:00:00+00' AS col2) TO '{DATA_PATH}/add_files_legacy_parquet_types_timetz.parquet'
+
+statement error
+CALL ducklake_add_data_files('ducklake', 'times', '{DATA_PATH}/add_files_legacy_parquet_types_timetz.parquet')
+----
+Expected VARCHAR, found type TIME
+
+# a DECIMAL column only accepts DECIMAL data
+statement ok
+COPY (SELECT 42 AS d) TO '{DATA_PATH}/add_files_legacy_parquet_types_integer.parquet'
+
+statement ok
+CREATE TABLE decimals(d DECIMAL(10, 2))
+
+statement error
+CALL ducklake_add_data_files('ducklake', 'decimals', '{DATA_PATH}/add_files_legacy_parquet_types_integer.parquet')
+----
+Expected type "DECIMAL" but found type "INTEGER"
+
+query II
+SELECT (SELECT count(*) FROM times), (SELECT count(*) FROM decimals)
+----
+0	0

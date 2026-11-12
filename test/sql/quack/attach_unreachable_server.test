@@ -1,0 +1,37 @@
+# name: test/sql/quack/attach_unreachable_server.test
+# description: attaching a Quack metadata catalog retries connection failures and reports other errors at once
+# group: [quack]
+
+require ducklake
+
+require parquet
+
+require-env DUCKLAKE_CONNECTION quack:localhost:19999
+
+require quack
+
+test-env DATA_PATH {TEST_DIR}
+
+# nothing listens on this port, so every attempt fails to connect
+statement error
+ATTACH 'ducklake:quack:localhost:1' AS dl (DATA_PATH '{DATA_PATH}/attach_unreachable_server')
+----
+connect to server
+
+# an invalid port is not retried
+statement error
+ATTACH 'ducklake:quack:localhost:not_a_port' AS dl (DATA_PATH '{DATA_PATH}/attach_unreachable_server')
+----
+Invalid Port "not_a_port"
+
+# the catalog of the test server can still be attached
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/attach_unreachable_server')
+
+statement ok
+CREATE TABLE dl.t AS SELECT 42 AS i
+
+query I
+SELECT * FROM dl.t
+----
+42

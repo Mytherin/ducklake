@@ -12,10 +12,12 @@
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "storage/ducklake_log_type.hpp"
+#include "rest/ducklake_rest_server.hpp"
 
 namespace duckdb {
 
 ScalarFunction DuckLakeMurmur3Function();
+ScalarFunction DuckLakeUnreadableMacroDefaultFunction();
 
 static void LoadInternal(ExtensionLoader &loader) {
 	loader.SetDescription("Adds support for DuckLake, SQL as a Lakehouse Format");
@@ -49,6 +51,18 @@ static void LoadInternal(ExtensionLoader &loader) {
 	    "ducklake_write_deletion_vectors",
 	    "[EXPERIMENTAL] Write Iceberg V3 deletion vectors (puffin) instead of positional delete files (parquet)",
 	    LogicalType::BOOLEAN, Value::BOOLEAN(false), nullptr, SetScope::GLOBAL);
+
+	DuckLakeRESTServeFunction rest_serve;
+	loader.RegisterFunction(rest_serve);
+
+	DuckLakeRESTStopFunction rest_stop;
+	loader.RegisterFunction(rest_stop);
+
+	DuckLakeRESTRequestFunction rest_request;
+	loader.RegisterFunction(rest_request);
+
+	DuckLakeRESTRowsFunction rest_rows;
+	loader.RegisterFunction(rest_rows);
 
 	DuckLakeSnapshotsFunction snapshots;
 	loader.RegisterFunction(snapshots);
@@ -89,6 +103,21 @@ static void LoadInternal(ExtensionLoader &loader) {
 	DuckLakeSetCommitMessage set_commit_message;
 	loader.RegisterFunction(set_commit_message);
 
+	DuckLakeCreateTagFunction create_tag;
+	loader.RegisterFunction(create_tag);
+
+	DuckLakeReplaceTagFunction replace_tag;
+	loader.RegisterFunction(replace_tag);
+
+	DuckLakeDropTagFunction drop_tag;
+	loader.RegisterFunction(drop_tag);
+
+	DuckLakeSetTagExpiryFunction set_tag_expiry;
+	loader.RegisterFunction(set_tag_expiry);
+
+	DuckLakeTagsFunction tags;
+	loader.RegisterFunction(tags);
+
 	auto table_changes = DuckLakeTableInsertionsFunction::GetDuckLakeTableChanges();
 	loader.RegisterFunction(*table_changes);
 
@@ -98,8 +127,14 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto add_files = DuckLakeAddDataFilesFunction::GetFunctions();
 	loader.RegisterFunction(add_files);
 
+	auto remove_files = DuckLakeRemoveDataFilesFunction::GetFunctions();
+	loader.RegisterFunction(remove_files);
+
 	DuckLakeCurrentSnapshotFunction current_snapshot;
 	loader.RegisterFunction(current_snapshot);
+
+	DuckLakeMetadataTableFunction metadata_table;
+	loader.RegisterFunction(metadata_table);
 
 	DuckLakeLastCommittedSnapshotFunction last_committed;
 	loader.RegisterFunction(last_committed);
@@ -109,6 +144,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	DuckLakeCommitFunction commit;
 	loader.RegisterFunction(commit);
+
+	DuckLakeRegisterMetadataProfileFunction register_metadata_profile;
+	loader.RegisterFunction(register_metadata_profile);
 
 	// Register ducklake_scan so it can be found during deserialization
 	auto ducklake_scan = DuckLakeFunctions::GetDuckLakeScanFunction(loader.GetDatabaseInstance());
@@ -124,8 +162,12 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// Register murmur3_32 scalar function for Iceberg-compatible bucket partitioning
 	auto murmur3_func = DuckLakeMurmur3Function();
 	loader.RegisterFunction(murmur3_func);
+
+	auto unreadable_macro_default_func = DuckLakeUnreadableMacroDefaultFunction();
+	loader.RegisterFunction(unreadable_macro_default_func);
 }
 
+// LCOV_EXCL_START
 void DucklakeExtension::Load(ExtensionLoader &loader) {
 	LoadInternal(loader);
 }
@@ -136,6 +178,7 @@ std::string DucklakeExtension::Name() {
 std::string DucklakeExtension::Version() const {
 #ifdef EXT_VERSION_DUCKLAKE
 	return EXT_VERSION_DUCKLAKE;
+// LCOV_EXCL_STOP
 #else
 	return "";
 #endif

@@ -1,0 +1,77 @@
+# name: test/sql/stats/null_to_geometry_promotion_stats.test
+# description: Geometry stats of a column promoted from the NULL type cover the geometries written after the promotion
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/null_to_geometry_promotion_stats', DATA_INLINING_ROW_LIMIT 0, DUCKLAKE_VERSION '1.1')
+
+statement ok
+USE ducklake
+
+# the NULL rows and the promotion are in the transaction that writes the first geometry
+statement ok
+CREATE TABLE same_transaction(g "NULL")
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO same_transaction VALUES (NULL)
+
+statement ok
+ALTER TABLE same_transaction ALTER g TYPE GEOMETRY
+
+statement ok
+INSERT INTO same_transaction VALUES ('POINT(1 2)'::GEOMETRY)
+
+statement ok
+COMMIT
+
+query II
+SELECT g, vertex_extract(g, 'x') FROM same_transaction ORDER BY ALL
+----
+POINT (1 2)	1.0
+NULL	NULL
+
+query I
+SELECT count(*) FROM same_transaction WHERE vertex_extract(g, 'y') = 2
+----
+1
+
+# the NULL rows are committed before the promotion
+statement ok
+CREATE TABLE committed_nulls(g "NULL")
+
+statement ok
+INSERT INTO committed_nulls VALUES (NULL)
+
+statement ok
+ALTER TABLE committed_nulls ALTER g TYPE GEOMETRY
+
+statement ok
+INSERT INTO committed_nulls VALUES ('POINT(1 2)'::GEOMETRY)
+
+query I
+SELECT g FROM committed_nulls ORDER BY ALL
+----
+POINT (1 2)
+NULL
+
+query II
+SELECT g, vertex_extract(g, 'x') FROM committed_nulls ORDER BY ALL
+----
+POINT (1 2)	1.0
+NULL	NULL
+
+query I
+SELECT count(*) FROM committed_nulls WHERE vertex_extract(g, 'y') = 2
+----
+1

@@ -1,0 +1,25 @@
+# name: test/sql/initialize/new_ducklake_requires_data_path.test
+# description: Creating a DuckLake in a catalog that is not a DuckDB database requires a DATA_PATH
+# group: [initialize]
+
+require ducklake
+
+require parquet
+
+require sqlite_scanner
+
+statement error
+ATTACH 'ducklake:sqlite:{TEST_DIR}/{BASE_TEST_NAME}.db' AS ducklake
+----
+data_path is not set
+
+statement ok
+ATTACH 'ducklake:sqlite:{TEST_DIR}/{BASE_TEST_NAME}.db' AS ducklake (DATA_PATH '{TEST_DIR}/new_ducklake_requires_data_path')
+
+statement ok
+CREATE TABLE ducklake.t AS SELECT 42 AS i
+
+query I
+FROM ducklake.t
+----
+42

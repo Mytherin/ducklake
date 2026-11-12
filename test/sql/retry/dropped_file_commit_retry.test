@@ -1,0 +1,61 @@
+# name: test/sql/retry/dropped_file_commit_retry.test
+# description: A delete that drops a whole data file updates the table stats when its commit is retried
+# group: [retry]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/dropped_file_commit_retry', METADATA_CATALOG 'dropped_file_retry_meta', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+SET ducklake_retry_wait_ms = 0
+
+statement ok
+CREATE TABLE ducklake.t(i INTEGER)
+
+statement ok
+INSERT INTO ducklake.t SELECT range FROM range(100)
+
+statement ok
+INSERT INTO ducklake.t SELECT range FROM range(100, 200)
+
+statement ok
+CREATE TABLE ducklake.other(i INTEGER)
+
+statement ok con1
+BEGIN
+
+# all rows of the first file are deleted, so the file is dropped
+statement ok con1
+DELETE FROM ducklake.t WHERE i < 100
+
+statement ok con2
+INSERT INTO ducklake.other VALUES (1)
+
+# the commit of con2 took the next snapshot id, so the commit of con1 is retried
+statement ok con1
+COMMIT
+
+query III
+SELECT count(*), min(i), max(i) FROM ducklake.t
+----
+100	100	199
+
+query I
+SELECT count(*) FROM ducklake_list_files('ducklake', 't')
+----
+1
+
+query I
+SELECT s.record_count
+FROM dropped_file_retry_meta.ducklake_table_stats s
+JOIN dropped_file_retry_meta.ducklake_table t ON t.table_id = s.table_id AND t.end_snapshot IS NULL
+WHERE t.table_name = 't'
+----
+100

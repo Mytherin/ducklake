@@ -1,0 +1,64 @@
+# name: test/sql/stats/filter_pushdown_small_types.test
+# description: comparisons on boolean, small integer and unsigned columns prune files by their stats
+# group: [stats]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/filter_pushdown_small_types', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE dl.t (f BOOLEAN, ti TINYINT, si SMALLINT, u UBIGINT)
+
+# one file per row
+statement ok
+INSERT INTO dl.t VALUES (true, 1, 1, 1)
+
+statement ok
+INSERT INTO dl.t VALUES (false, 2, 2, 2)
+
+query IIII
+SELECT * FROM dl.t WHERE f = true
+----
+true	1	1	1
+
+query II
+EXPLAIN ANALYZE SELECT * FROM dl.t WHERE f = true
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+query IIII
+SELECT * FROM dl.t WHERE ti = 2
+----
+false	2	2	2
+
+query II
+EXPLAIN ANALYZE SELECT * FROM dl.t WHERE ti = 2
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+query IIII
+SELECT * FROM dl.t WHERE si > 1
+----
+false	2	2	2
+
+query II
+EXPLAIN ANALYZE SELECT * FROM dl.t WHERE si > 1
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*
+
+query IIII
+SELECT * FROM dl.t WHERE u < 2
+----
+true	1	1	1
+
+query II
+EXPLAIN ANALYZE SELECT * FROM dl.t WHERE u < 2
+----
+analyzed_plan	<REGEX>:.*Total Files Read: 1.*

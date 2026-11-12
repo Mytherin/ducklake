@@ -31,7 +31,7 @@ class DuckLakeInlineData;
 struct DuckLakeCopyOptions;
 struct DuckLakeCopyInput;
 
-enum class InsertVirtualColumns { NONE, WRITE_ROW_ID, WRITE_SNAPSHOT_ID, WRITE_ROW_ID_AND_SNAPSHOT_ID };
+enum class InsertVirtualColumns { NONE, WRITE_ROW_ID, WRITE_ROW_ID_AND_SNAPSHOT_ID };
 
 class DuckLakeInsertGlobalState : public GlobalSinkState {
 public:
@@ -41,7 +41,7 @@ public:
 	vector<DuckLakeDataFile> written_files;
 	vector<string> empty_files;
 	idx_t total_insert_count;
-	case_insensitive_set_t not_null_fields;
+	identifier_set_t not_null_fields;
 	//! Total rows flushed (used by flush_inlined_data)
 	idx_t rows_flushed = 0;
 };
@@ -75,6 +75,8 @@ struct DuckLakeInsertPipeline {
 	reference<PhysicalOperator> root;
 	optional_ptr<DuckLakeInlineData> inline_data;
 	bool sorted = false;
+	//! Whether the sort keys depend on the session, like getvariable()
+	bool sort_requires_rebind = false;
 
 	PhysicalOperator &AttachInsert(PhysicalOperator &insert, PhysicalOperator &copy);
 };
@@ -112,6 +114,8 @@ public:
 	string encryption_key;
 	//! Whether the rows to insert depend on the rows of the table, like the NOT MATCHED rows of a MERGE
 	bool reads_table = false;
+	//! Whether the sort keys depend on the session, like getvariable()
+	bool sort_requires_rebind = false;
 
 public:
 	// // Source interface
@@ -126,6 +130,8 @@ public:
 	static unique_ptr<CopyInfo> GetParquetCopyInfo(const string &file_path, Value field_ids,
 	                                               const string &encryption_key);
 	static DuckLakeCopyOptions GetCopyOptions(ClientContext &context, DuckLakeCopyInput &copy_input);
+	//! The name under which a file stores an internal column, one that no column of the table has
+	static Identifier InternalColumnName(const DuckLakeFieldData &field_data, const Identifier &name);
 	static DuckLakeInsertPipeline PlanInsertPipeline(ClientContext &context, PhysicalPlanGenerator &planner,
 	                                                 PhysicalOperator &plan, SchemaCatalogEntry &schema,
 	                                                 const ColumnList &columns, const Identifier &table_name,

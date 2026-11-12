@@ -1,0 +1,34 @@
+# name: benchmark/micro/fixtures/snap100k.benchmark.in
+# description: Lake with 100001 snapshots written directly into the metadata, attached read-only
+# group: [fixtures]
+
+cache_file snap100k_ready.marker
+
+# Snapshots 1 to 100000 copy snapshot 0 with a distinct time; their changes mix inserts, deletes and compactions
+load
+@create snap100k
+@attach snap100k AS lake (DATA_PATH '${BENCHMARK_DIR}/snap100k_files')
+INSERT INTO __ducklake_metadata_lake.ducklake_snapshot
+SELECT i, to_timestamp(i), schema_version, next_catalog_id, next_file_id
+FROM range(1, 100001) r(i), __ducklake_metadata_lake.ducklake_snapshot
+WHERE snapshot_id = 0;
+INSERT INTO __ducklake_metadata_lake.ducklake_snapshot_changes
+SELECT i,
+CASE i % 3
+WHEN 1 THEN 'inserted_into_table:' || ((i % 7) + 1)
+WHEN 2 THEN 'inserted_into_table:' || ((i % 7) + 1) || ',deleted_from_table:' || ((i % 7) + 1)
+ELSE 'merge_adjacent:' || ((i % 7) + 1)
+END,
+CASE WHEN i % 2 = 1 THEN 'author ' || i END,
+CASE WHEN i % 2 = 1 THEN 'message ' || i END,
+CASE WHEN i % 2 = 1 THEN 'extra ' || i END
+FROM range(1, 100001) r(i);
+SELECT CASE WHEN (SELECT count(*) <> 100001 FROM lake.snapshots())
+THEN error('snap100k: expected 100001 snapshots') END;
+DETACH lake;
+@seal snap100k
+COPY (SELECT 1) TO '${BENCHMARK_DIR}/snap100k_ready.marker' (FORMAT CSV);
+@attach snap100k AS lake (READ_ONLY)
+
+reload
+@attach snap100k AS lake (READ_ONLY)

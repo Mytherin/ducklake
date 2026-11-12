@@ -1,0 +1,73 @@
+# name: test/sql/sorted_table/merge_adjacent_sorted_foreign_dialect.test
+# description: merge_adjacent_files does not sort by sort keys that are written in an SQL dialect other than DuckDB's
+# group: [sorted_table]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/merge_adjacent_sorted_foreign_dialect.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/merge_adjacent_sorted_foreign_dialect', DATA_INLINING_ROW_LIMIT 0)
+
+statement ok
+CREATE TABLE ducklake.native (i INTEGER)
+
+statement ok
+CREATE TABLE ducklake.foreign_dialect (i INTEGER)
+
+statement ok
+ALTER TABLE ducklake.native SET SORTED BY (i DESC)
+
+statement ok
+ALTER TABLE ducklake.foreign_dialect SET SORTED BY (i DESC)
+
+statement ok
+INSERT INTO ducklake.native VALUES (2), (1)
+
+statement ok
+INSERT INTO ducklake.native VALUES (3)
+
+statement ok
+INSERT INTO ducklake.foreign_dialect VALUES (2), (1)
+
+statement ok
+INSERT INTO ducklake.foreign_dialect VALUES (3)
+
+# another engine wrote the sort key of one table in its own dialect
+statement ok
+UPDATE __ducklake_metadata_ducklake.ducklake_sort_expression SET dialect = 'spark'
+WHERE table_id = (SELECT table_id FROM __ducklake_metadata_ducklake.ducklake_table WHERE table_name = 'foreign_dialect')
+
+statement ok
+DETACH ducklake
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/merge_adjacent_sorted_foreign_dialect', DATA_INLINING_ROW_LIMIT 0)
+
+query III
+SELECT table_name, files_processed, files_created FROM ducklake_merge_adjacent_files('ducklake') ORDER BY table_name
+----
+foreign_dialect	2	1
+native	2	1
+
+statement ok
+CALL ducklake_cleanup_old_files('ducklake', cleanup_all => true)
+
+# the merged file of the native table is sorted, the other one keeps the order of the source files
+query I
+SELECT i FROM ducklake.native ORDER BY file_row_number
+----
+3
+2
+1
+
+query I
+SELECT i FROM ducklake.foreign_dialect ORDER BY file_row_number
+----
+2
+1
+3

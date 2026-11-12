@@ -78,11 +78,15 @@ SELECT v FROM variant_tbl WHERE variant_typeof(v) = 'INT32'
 ----
 142
 
-# FIXME: this is wrong for inline limit = 0
-# query IIII
-# FROM table_changes('variant_tbl', 4, 4) ORDER BY ALL
-# ----
-# 4	0	update_postimage	142
-# 4	0	update_preimage	42
+statement ok
+SET VARIABLE update_snapshot = (SELECT max(snapshot_id) FROM ducklake_snapshots('db2'))
+
+query III
+SELECT rowid, change_type, v
+FROM table_changes('variant_tbl', getvariable('update_snapshot'), getvariable('update_snapshot'))
+ORDER BY ALL
+----
+0	update_postimage	142
+0	update_preimage	42
 
 endloop

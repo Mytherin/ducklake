@@ -1,0 +1,102 @@
+# name: test/sql/delete/deletion_vector_corrupt_file.test
+# description: Scanning a table whose deletion vector file is corrupt fails with a clear error
+# group: [delete]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/deletion_vector_corrupt_file', DATA_INLINING_ROW_LIMIT 0, WRITE_DELETION_VECTORS true)
+
+statement ok
+CREATE TABLE ducklake.t AS SELECT range::INTEGER AS i FROM range(10)
+
+# a single delete is written as a bare deletion vector
+statement ok
+DELETE FROM ducklake.t WHERE i = 0
+
+statement ok
+SET VARIABLE delete_snapshot = (SELECT max(snapshot_id) FROM ducklake_snapshots('ducklake'))
+
+statement ok
+SET VARIABLE dv_path = (SELECT delete_file FROM ducklake_list_files('ducklake', 't'))
+
+statement ok
+SET VARIABLE dv = (SELECT content FROM read_blob(getvariable('dv_path')))
+
+# puffin container: magic, blobs, magic, footer payload, payload size (little-endian), flags, magic
+statement ok
+CREATE MACRO puffin_file(blobs, footer) AS 'PFA1'::BLOB || blobs || 'PFA1'::BLOB || encode(footer)
+	|| from_hex(printf('%02x%02x0000', strlen(footer) % 256, strlen(footer) // 256)) || '\x00\x00\x00\x00PFA1'::BLOB
+
+# metadata of a blob that holds the deletion vector
+statement ok
+CREATE MACRO blob_meta(blob_type, properties) AS
+	printf('{"type":"%s","fields":[],"offset":4,"length":%d%s}', blob_type, octet_length(getvariable('dv')), properties)
+
+# a well-formed container around the deletion vector is read like the bare deletion vector
+statement ok
+COPY (SELECT puffin_file(getvariable('dv'), '{"blobs":[' || blob_meta('deletion-vector-v1',
+	printf(',"properties":{"ducklake-snapshot-id":"%d"}', getvariable('delete_snapshot'))) || ']}'))
+TO (getvariable('dv_path')) (FORMAT BLOB)
+
+query I
+SELECT sum(i) FROM ducklake.t
+----
+45
+
+# bytes after the checksum of a bare deletion vector
+statement ok
+COPY (SELECT getvariable('dv') || '\x00'::BLOB) TO (getvariable('dv_path')) (FORMAT BLOB)
+
+statement error
+SELECT sum(i) FROM ducklake.t
+----
+unexpected trailing bytes
+
+# a checksum that does not match the deletion vector
+statement ok
+COPY (SELECT getvariable('dv')[1:octet_length(getvariable('dv')) - 4] || '\x00\x00\x00\x00'::BLOB)
+TO (getvariable('dv_path')) (FORMAT BLOB)
+
+statement error
+SELECT sum(i) FROM ducklake.t
+----
+does not match computed checksum
+
+# blobs of other types are skipped, which leaves no deletion vector
+statement ok
+COPY (SELECT puffin_file(getvariable('dv'), '{"blobs":[' || blob_meta('apache-datasketches-theta-v1', '') || ']}'))
+TO (getvariable('dv_path')) (FORMAT BLOB)
+
+statement error
+SELECT sum(i) FROM ducklake.t
+----
+does not contain any deletion vectors
+
+# either every deletion vector of a container has a snapshot, or none has
+statement ok
+COPY (SELECT puffin_file(getvariable('dv'), '{"blobs":[' || blob_meta('deletion-vector-v1',
+	',"properties":{"ducklake-snapshot-id":"1"}') || ',' || blob_meta('deletion-vector-v1', '') || ']}'))
+TO (getvariable('dv_path')) (FORMAT BLOB)
+
+statement error
+SELECT sum(i) FROM ducklake.t
+----
+mixes deletion vectors with and without a snapshot
+
+# the snapshot of a deletion vector must be a number
+statement ok
+COPY (SELECT puffin_file(getvariable('dv'), '{"blobs":[' || blob_meta('deletion-vector-v1',
+	',"properties":{"ducklake-snapshot-id":"two"}') || ']}'))
+TO (getvariable('dv_path')) (FORMAT BLOB)
+
+statement error
+SELECT sum(i) FROM ducklake.t
+----
+invalid ducklake-snapshot-id property "two"

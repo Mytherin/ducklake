@@ -1,0 +1,25 @@
+# name: benchmark/micro/read/snapshots_listing_changes.benchmark
+# description: Count the change keys of all 100001 snapshots returned by ducklake_snapshots
+# group: [read]
+
+name Snapshots Listing Changes
+group micro
+subgroup read
+
+require ducklake
+
+include benchmark/micro/fixtures/snap100k.benchmark.in
+
+run
+SELECT change.key, count(*) AS snapshots
+FROM (SELECT unnest(map_entries(changes)) AS change FROM ducklake_snapshots('lake'))
+GROUP BY ALL
+ORDER BY ALL;
+
+result_query II
+SELECT * FROM __answer
+----
+merge_adjacent	33333
+schemas_created	1
+tables_deleted_from	33333
+tables_inserted_into	66667

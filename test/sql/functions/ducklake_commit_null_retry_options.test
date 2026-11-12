@@ -1,0 +1,20 @@
+# name: test/sql/functions/ducklake_commit_null_retry_options.test
+# description: NULL retry options of ducklake_commit keep the defaults, while NULL positional arguments are rejected
+# group: [functions]
+
+require ducklake
+
+statement error
+SELECT * FROM ducklake_commit('missing_schema', 1, max_retry_count => NULL, retry_wait_ms => NULL, retry_backoff => NULL)
+----
+Server-side ducklake_commit
+
+statement error
+SELECT * FROM ducklake_commit('missing_schema', 1, max_retry_count => 2, retry_wait_ms => NULL)
+----
+Server-side ducklake_commit
+
+statement error
+SELECT * FROM ducklake_commit(NULL, 1, max_retry_count => NULL)
+----
+ducklake_commit arguments cannot be NULL

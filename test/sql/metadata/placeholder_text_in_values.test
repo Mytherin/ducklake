@@ -1,0 +1,109 @@
+# name: test/sql/metadata/placeholder_text_in_values.test
+# description: values, names and commit info that contain metadata placeholder text are stored as they are
+# group: [metadata]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/placeholder_text_in_values.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS lake (DATA_PATH '{DATA_PATH}/placeholder_text_in_values')
+
+statement ok
+CREATE TABLE lake.t (s VARCHAR, st STRUCT(a VARCHAR), l VARCHAR[])
+
+statement ok
+INSERT INTO lake.t VALUES ('{SNAPSHOT_ID}', {'a': '{SCHEMA_VERSION}'}, ['{NEXT_FILE_ID}']), ('{METADATA_CATALOG}', NULL, NULL)
+
+query III
+SELECT s, st, l FROM lake.t ORDER BY s
+----
+{METADATA_CATALOG}	NULL	NULL
+{SNAPSHOT_ID}	{'a': '{SCHEMA_VERSION}'}	['{NEXT_FILE_ID}']
+
+statement ok
+CREATE TABLE lake.f (s VARCHAR)
+
+statement ok
+CALL lake.set_option('data_inlining_row_limit', 0, table_name => 'f')
+
+statement ok
+INSERT INTO lake.f VALUES ('{SNAPSHOT_ID}')
+
+query I
+SELECT count(*) FROM lake.f WHERE s = '{SNAPSHOT_ID}'
+----
+1
+
+# a commit message with quotes is not run as SQL inside an inlined value
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO lake.t (s) VALUES ('{COMMIT_MESSAGE}')
+
+statement ok
+CALL lake.set_commit_message('author {SNAPSHOT_ID}', '|| upper(chr(104) || chr(105)) || {METADATA_CATALOG}')
+
+statement ok
+COMMIT
+
+query I
+SELECT count(*) FROM lake.t WHERE s = '{COMMIT_MESSAGE}'
+----
+1
+
+statement ok
+CREATE TABLE lake."tbl_{SNAPSHOT_ID}" ("col_{NEXT_CATALOG_ID}" VARCHAR DEFAULT '{SNAPSHOT_ID}', i INTEGER)
+
+statement ok
+COMMENT ON TABLE lake."tbl_{SNAPSHOT_ID}" IS 'comment {SNAPSHOT_ID}'
+
+statement ok
+CREATE VIEW lake.v AS SELECT '{SNAPSHOT_ID}' AS s
+
+statement ok
+INSERT INTO lake."tbl_{SNAPSHOT_ID}" (i) VALUES (1)
+
+statement ok
+DETACH lake
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS lake (DATA_PATH '{DATA_PATH}/placeholder_text_in_values')
+
+query III
+SELECT s, st, l FROM lake.t ORDER BY s
+----
+{COMMIT_MESSAGE}	NULL	NULL
+{METADATA_CATALOG}	NULL	NULL
+{SNAPSHOT_ID}	{'a': '{SCHEMA_VERSION}'}	['{NEXT_FILE_ID}']
+
+query II
+SELECT * FROM lake."tbl_{SNAPSHOT_ID}"
+----
+{SNAPSHOT_ID}	1
+
+query I
+SELECT column_name FROM (DESCRIBE lake."tbl_{SNAPSHOT_ID}") ORDER BY ALL
+----
+col_{NEXT_CATALOG_ID}
+i
+
+query I
+SELECT comment FROM duckdb_tables() WHERE database_name = 'lake' AND table_name = 'tbl_{SNAPSHOT_ID}'
+----
+comment {SNAPSHOT_ID}
+
+query I
+SELECT * FROM lake.v
+----
+{SNAPSHOT_ID}
+
+query II
+SELECT author, commit_message FROM lake.snapshots() WHERE author IS NOT NULL
+----
+author {SNAPSHOT_ID}	|| upper(chr(104) || chr(105)) || {METADATA_CATALOG}

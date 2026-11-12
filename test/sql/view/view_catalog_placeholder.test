@@ -1,0 +1,41 @@
+# name: test/sql/view/view_catalog_placeholder.test
+# description: Views stored with the {DUCKLAKE_CATALOG} placeholder of older versions resolve to the attached catalog
+# group: [view]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{BASE_TEST_NAME}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/view_catalog_placeholder', METADATA_CATALOG 'dl_meta')
+
+statement ok
+CREATE TABLE dl.t AS SELECT 42 AS i
+
+statement ok
+CREATE VIEW dl.v AS SELECT 1 AS i
+
+# older versions replaced the name of the catalog with a placeholder when storing the view
+statement ok
+UPDATE dl_meta.ducklake_view SET sql = 'SELECT ''{DUCKLAKE_CATALOG}.x'' AS lit, i FROM {DUCKLAKE_CATALOG}.main.t' WHERE view_name = 'v' AND end_snapshot IS NULL
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS other (DATA_PATH '{DATA_PATH}/view_catalog_placeholder', METADATA_CATALOG 'dl_meta')
+
+# the placeholder inside the string literal is kept
+query II
+FROM other.v
+----
+{DUCKLAKE_CATALOG}.x	42
+
+query I
+SELECT sql FROM duckdb_views() WHERE database_name = 'other' AND view_name = 'v'
+----
+CREATE VIEW v AS SELECT '{DUCKLAKE_CATALOG}.x' AS lit, i FROM other.main.t;

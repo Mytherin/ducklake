@@ -1,0 +1,71 @@
+# name: test/sql/migration/postgres_v04_dev1_missing_inlined_table.test
+# description: the Postgres inlined type migration of a 0.4-dev1 catalog skips a registered inlined table that is missing
+# group: [migration]
+
+require ducklake
+
+require parquet
+
+require postgres_scanner
+
+require-env DUCKLAKE_CONNECTION postgres:dbname=ducklakedb
+
+test-env DATA_PATH {TEST_DIR}
+
+unzip data/old_ducklake/v04-dev1.db.gz {TEST_DIR}/postgres_v04_dev1_missing_inlined.db
+
+statement ok
+ATTACH '{TEST_DIR}/postgres_v04_dev1_missing_inlined.db' AS old_metadata (READ_ONLY)
+
+statement ok
+ATTACH 'dbname=ducklakedb' AS pg (TYPE postgres)
+
+statement ok
+CALL postgres_execute('pg', 'DROP SCHEMA IF EXISTS v04_dev1_missing_inlined CASCADE')
+
+statement ok
+CALL postgres_execute('pg', 'CREATE SCHEMA v04_dev1_missing_inlined')
+
+foreach table column column_mapping column_tag data_file delete_file file_column_stats file_partition_value file_variant_stats files_scheduled_for_deletion inlined_data_tables macro macro_impl macro_parameters metadata name_mapping partition_column partition_info schema schema_versions snapshot snapshot_changes sort_expression sort_info table table_column_stats table_stats tag view
+
+statement ok
+CREATE TABLE pg.v04_dev1_missing_inlined.ducklake_{table} AS FROM old_metadata.ducklake_{table}
+
+endloop
+
+statement ok
+DETACH old_metadata
+
+# the catalog registers an inlined table that does not exist
+statement ok
+INSERT INTO pg.v04_dev1_missing_inlined.ducklake_inlined_data_tables VALUES (1, 'ducklake_inlined_data_1_1', 1)
+
+statement ok
+ATTACH 'ducklake:postgres:dbname=ducklakedb' AS dl
+(DATA_PATH '{DATA_PATH}/postgres_v04_dev1_missing_inlined', METADATA_SCHEMA 'v04_dev1_missing_inlined',
+OVERRIDE_DATA_PATH TRUE, AUTOMATIC_MIGRATION TRUE, DUCKLAKE_VERSION '1.0')
+
+query I
+SELECT * FROM postgres_query('pg', 'SELECT value FROM v04_dev1_missing_inlined.ducklake_metadata WHERE key = ''version''')
+----
+1.0
+
+query I
+SELECT table_name FROM duckdb_tables() WHERE database_name = 'dl'
+----
+test
+
+# reading the table reports the missing inlined table
+statement error
+SELECT * FROM dl.test
+----
+Failed to read inlined data from DuckLake
+
+statement ok
+DETACH dl
+
+statement ok
+CALL postgres_execute('pg', 'DROP SCHEMA v04_dev1_missing_inlined CASCADE')
+
+statement ok
+DETACH pg

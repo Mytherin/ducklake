@@ -1,6 +1,6 @@
 {
   "description": "Run DuckLake tests using Postgres as a catalog DBMS.",
-  "on_init": "ATTACH 'dbname=ducklakedb' AS pg (TYPE postgres); USE pg; DROP SCHEMA public CASCADE; DROP SCHEMA IF EXISTS metadata_s1 CASCADE; DROP SCHEMA IF EXISTS metadata_s2 CASCADE; DROP SCHEMA IF EXISTS junk_1064 CASCADE; DROP SCHEMA IF EXISTS scoped_meta_1064 CASCADE; CREATE SCHEMA public;USE memory; DETACH pg; SET pg_enable_filter_pushdown=false;",
+  "on_init": "ATTACH 'dbname=ducklakedb' AS pg (TYPE postgres); USE pg; DROP SCHEMA public CASCADE; DROP SCHEMA IF EXISTS metadata_s1 CASCADE; DROP SCHEMA IF EXISTS metadata_s2 CASCADE; DROP SCHEMA IF EXISTS junk_1064 CASCADE; DROP SCHEMA IF EXISTS scoped_meta_1064 CASCADE; DROP SCHEMA IF EXISTS read_only_new_lake CASCADE; DROP SCHEMA IF EXISTS read_only_v10_lake CASCADE; CREATE SCHEMA public;USE memory; DETACH pg;",
   "autoloading": "none",
   "statically_loaded_extensions": [
     "core_functions",
@@ -19,6 +19,12 @@
   ],
   "skip_tests": [
     {
+      "reason": "Postgres text cannot hold a NUL byte, test/sql/general/postgres_nul_byte_text.test covers the error",
+      "paths": [
+        "test/sql/snapshot_info/commit_message_nul_byte.test"
+      ]
+    },
+    {
       "reason": "Only DuckDB catalogs drop the empty inlined data table that an ALTER supersedes",
       "paths": [
         "test/sql/alter/alter_drops_empty_inlined_tables.test"
@@ -27,7 +33,8 @@
     {
       "reason": "Test requires a Quack metadata catalog",
       "paths": [
-        "test/sql/quack/inlined_superseded_drop_failure.test"
+        "test/sql/quack/inlined_superseded_drop_failure.test",
+        "test/sql/quack/server_side_commit_cache_clear.test"
       ]
     },
     {
@@ -67,7 +74,8 @@
     {
       "reason": "on_init ends with USE memory, which a DuckLake opened as the main database does not have",
       "paths": [
-        "test/sql/attach/ducklake_main_database.test"
+        "test/sql/attach/ducklake_main_database.test",
+        "test/sql/attach/ducklake_main_database_reopen.test"
       ]
     },
     {
@@ -76,7 +84,9 @@
         "test/sql/metadata/ducklake_settings_sqlite.test",
         "test/sql/metadata/sqlite_all_varchar.test",
         "test/sql/data_inlining/sqlite_column_limit.test",
+        "test/sql/data_inlining/sqlite_system_column_names.test",
         "test/sql/issues/issue_1309.test",
+        "test/sql/retry/sqlite_lock_retry_errors_as_json.test",
         "test/sql/issues/issue_sqlite_snapshot_time.test",
         "test/sql/data_inlining/data_inlining_variant_sql_rollback.test"
       ]
@@ -103,12 +113,6 @@
       "reason": "Metadata reads run under REPEATABLE READ, so an open transaction never observes a later merge or flush; the partial-file count guard is unreachable and count(*) legitimately folds from metadata",
       "paths": [
         "test/sql/quack/partial_file_count.test"
-      ]
-    },
-    {
-      "reason": "The commit batch of a Postgres catalog is not logged through DuckLakeMetadata, so the number of column inserts cannot be counted",
-      "paths": [
-        "test/sql/issues/issue_1146_column_insert_batches.test"
       ]
     }
   ]

@@ -1,0 +1,75 @@
+# name: test/sql/migration/inlined_column_rename_resume.test
+# description: the inlined column rename keeps metadata columns that already have their new name
+# group: [migration]
+
+require ducklake
+
+require parquet
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inlined_column_rename_resume.db' AS dl
+(DATA_PATH '{DATA_PATH}/inlined_column_rename_resume', DUCKLAKE_VERSION '1.0', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE dl.t1 (i INTEGER)
+
+statement ok
+INSERT INTO dl.t1 VALUES (1)
+
+statement ok
+CREATE TABLE dl.t2 (i INTEGER)
+
+statement ok
+INSERT INTO dl.t2 VALUES (2)
+
+statement ok
+DETACH dl
+
+# the first inlined table is fully renamed, the second one only partially
+statement ok
+ATTACH '{TEST_DIR}/inlined_column_rename_resume.db' AS meta
+
+statement ok
+ALTER TABLE meta.ducklake_inlined_data_1_1 RENAME COLUMN row_id TO _ducklake_row_id
+
+statement ok
+ALTER TABLE meta.ducklake_inlined_data_1_1 RENAME COLUMN begin_snapshot TO _ducklake_begin_snapshot
+
+statement ok
+ALTER TABLE meta.ducklake_inlined_data_1_1 RENAME COLUMN end_snapshot TO _ducklake_end_snapshot
+
+statement ok
+ALTER TABLE meta.ducklake_inlined_data_2_2 RENAME COLUMN row_id TO _ducklake_row_id
+
+statement ok
+DETACH meta
+
+statement ok
+ATTACH 'ducklake:{TEST_DIR}/inlined_column_rename_resume.db' AS dl
+(DUCKLAKE_VERSION '1.1', AUTOMATIC_MIGRATION TRUE)
+
+query II
+SELECT 't1', i FROM dl.t1 UNION ALL SELECT 't2', i FROM dl.t2 ORDER BY ALL
+----
+t1	1
+t2	2
+
+statement ok
+DETACH dl
+
+statement ok
+ATTACH '{TEST_DIR}/inlined_column_rename_resume.db' AS meta
+
+query II
+SELECT table_name, count(*) FROM duckdb_columns()
+WHERE database_name = 'meta' AND table_name LIKE 'ducklake_inlined_data_%_%'
+  AND column_name IN ('_ducklake_row_id', '_ducklake_begin_snapshot', '_ducklake_end_snapshot')
+GROUP BY ALL ORDER BY ALL
+----
+ducklake_inlined_data_1_1	3
+ducklake_inlined_data_2_2	3
+
+statement ok
+DETACH meta

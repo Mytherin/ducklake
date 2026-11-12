@@ -1,0 +1,95 @@
+# name: test/sql/data_inlining/data_inlining_nested_nul_byte.test
+# description: Nested values holding a NUL byte are stored, also where the inlined data tables cannot hold one
+# group: [data_inlining]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/data_inlining_nested_nul_byte', DATA_INLINING_ROW_LIMIT 10)
+
+statement ok
+CREATE TABLE dl.l (v VARCHAR[])
+
+statement ok
+INSERT INTO dl.l VALUES (['a' || chr(0) || 'b'])
+
+query II
+SELECT count(*), bool_and(v[1] = 'a' || chr(0) || 'b') FROM dl.l
+----
+1	true
+
+statement ok
+CREATE TABLE dl.m (v MAP(VARCHAR, VARCHAR))
+
+statement ok
+INSERT INTO dl.m VALUES (MAP {'k' || chr(0): 'x' || chr(0) || 'y'})
+
+query I
+SELECT v['k' || chr(0)] = 'x' || chr(0) || 'y' FROM dl.m
+----
+true
+
+statement ok
+CREATE TABLE dl.s (v STRUCT(a VARCHAR, b INTEGER))
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO dl.s VALUES ({'a': 'q', 'b': 1})
+
+statement ok
+INSERT INTO dl.s SELECT {'a': CASE WHEN i = 3 THEN 'p' || chr(0) ELSE 'q' END, 'b': i} FROM range(2, 5) t(i)
+
+statement ok
+COMMIT
+
+query II
+SELECT v.b, v.a = 'p' || chr(0) FROM dl.s ORDER BY v.b
+----
+1	false
+2	false
+3	true
+4	false
+
+statement ok
+UPDATE dl.s SET v = {'a': 'r' || chr(0), 'b': 1} WHERE v.b = 1
+
+query II
+SELECT v.b, v.a FROM dl.s WHERE v.a LIKE 'r%'
+----
+1	r\0
+
+statement ok
+CALL ducklake_flush_inlined_data('dl')
+
+query II
+SELECT v.b, v.a = 'p' || chr(0) OR v.a = 'r' || chr(0) FROM dl.s ORDER BY v.b
+----
+1	true
+2	false
+3	true
+4	false
+
+# a slice keeps the NUL byte in a list child that no row refers to, the row is still inlined
+statement ok
+CREATE TABLE dl.sliced (v VARCHAR[])
+
+statement ok
+INSERT INTO dl.sliced SELECT v[2:] FROM (SELECT [chr(0), 'ok'] AS v)
+
+query I
+SELECT v FROM dl.sliced
+----
+[ok]
+
+query I
+SELECT file_count FROM ducklake_table_info('dl') WHERE table_name = 'sliced'
+----
+0

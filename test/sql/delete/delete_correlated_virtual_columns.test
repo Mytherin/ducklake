@@ -1,0 +1,54 @@
+# name: test/sql/delete/delete_correlated_virtual_columns.test
+# description: Virtual columns referenced from a correlated subquery must not reach column statistics
+# group: [delete]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DATA_PATH '{DATA_PATH}/ducklake_virtual_stats')
+
+statement ok
+CREATE TABLE ducklake.test(a INTEGER, b VARCHAR);
+
+statement ok
+INSERT INTO ducklake.test VALUES (1, 'x'), (2, 'y'), (3, 'z');
+
+# the nullability check of the correlated EXISTS asks the table for virtual column statistics
+query I
+DELETE FROM ducklake.test t WHERE EXISTS (
+    SELECT 1 FROM (
+        SELECT rowid AS r, filename AS f, file_row_number AS n FROM ducklake.test WHERE a > 1
+    ) u
+    WHERE t.rowid = u.r AND t.filename = u.f AND t.file_row_number = u.n)
+----
+2
+
+query IT
+SELECT a, b FROM ducklake.test
+----
+1	x
+
+# the same shape through UPDATE
+statement ok
+INSERT INTO ducklake.test VALUES (4, 'w');
+
+query I
+UPDATE ducklake.test t SET b = 'u' WHERE EXISTS (
+    SELECT 1 FROM (
+        SELECT rowid AS r, filename AS f FROM ducklake.test WHERE a > 3
+    ) u
+    WHERE t.rowid = u.r AND t.filename = u.f)
+----
+1
+
+query IT rowsort
+SELECT a, b FROM ducklake.test
+----
+1	x
+4	u

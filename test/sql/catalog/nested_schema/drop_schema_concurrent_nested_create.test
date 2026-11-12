@@ -1,0 +1,46 @@
+# name: test/sql/catalog/nested_schema/drop_schema_concurrent_nested_create.test
+# description: Dropping a schema does not conflict with entries another transaction created in an unrelated nested schema
+# group: [nested_schema]
+
+require ducklake
+
+require parquet
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS ducklake (DUCKLAKE_VERSION '1.1', DATA_PATH '{DATA_PATH}/drop_schema_concurrent_nested_create')
+
+statement ok
+CREATE SCHEMA ducklake.a
+
+statement ok
+CREATE SCHEMA ducklake.dropped
+
+statement ok con1
+BEGIN
+
+statement ok con1
+DROP SCHEMA ducklake.dropped
+
+statement ok con2
+CREATE SCHEMA ducklake.a.b
+
+statement ok con2
+CREATE TABLE ducklake.a.b.t(i INTEGER)
+
+statement ok con1
+COMMIT
+
+query I
+SELECT schema_name FROM duckdb_schemas() WHERE database_name = 'ducklake' AND schema_name IN ('a', 'b', 'dropped') ORDER BY ALL
+----
+a
+b
+
+query I
+SELECT count(*) FROM ducklake.a.b.t
+----
+0

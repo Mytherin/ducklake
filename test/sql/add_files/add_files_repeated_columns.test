@@ -1,0 +1,145 @@
+# name: test/sql/add_files/add_files_repeated_columns.test
+# description: Adding Parquet files with repeated columns without a LIST annotation, which are read as lists
+# group: [add_files]
+
+require ducklake
+
+require parquet
+
+require json
+
+test-env DUCKLAKE_CONNECTION {TEST_DIR}/{UUID}.db
+
+test-env DATA_PATH {TEST_DIR}
+
+statement ok
+ATTACH 'ducklake:{DUCKLAKE_CONNECTION}' AS dl (DATA_PATH '{DATA_PATH}/add_files_repeated_columns')
+
+# repeated leaves
+statement ok
+CREATE TABLE dl.leaves (stringArray VARCHAR[], intArray INTEGER[], doubleArray DOUBLE[])
+
+statement ok
+CALL ducklake_add_data_files('dl', 'leaves', 'duckdb/data/parquet-testing/bug2557.parquet')
+
+query I
+SELECT count(*) FROM (
+	(FROM dl.leaves EXCEPT ALL FROM 'duckdb/data/parquet-testing/bug2557.parquet')
+	UNION ALL
+	(FROM 'duckdb/data/parquet-testing/bug2557.parquet' EXCEPT ALL FROM dl.leaves)
+)
+----
+0
+
+statement ok
+CREATE TABLE dl.json_leaf (TX_JSON JSON[])
+
+statement ok
+CALL ducklake_add_data_files('dl', 'json_leaf', 'duckdb/data/parquet-testing/json_convertedtype.parquet', ignore_extra_columns => true)
+
+query II
+SELECT count(*), sum(len(TX_JSON)) FROM dl.json_leaf
+----
+10	10
+
+# a repeated group
+statement ok
+CREATE TABLE dl.repeated_group AS FROM 'duckdb/data/parquet-testing/enum.parquet' LIMIT 0
+
+statement ok
+CALL ducklake_add_data_files('dl', 'repeated_group', 'duckdb/data/parquet-testing/enum.parquet')
+
+query I
+SELECT count(*) FROM (
+	(FROM dl.repeated_group EXCEPT ALL FROM 'duckdb/data/parquet-testing/enum.parquet')
+	UNION ALL
+	(FROM 'duckdb/data/parquet-testing/enum.parquet' EXCEPT ALL FROM dl.repeated_group)
+)
+----
+0
+
+query I
+SELECT count(*) FROM dl.repeated_group WHERE tags[5].v_int64 = 1000
+----
+2
+
+# the statistics of the fields of the repeated group are kept
+query II
+SELECT c.column_name, s.max_value FROM __ducklake_metadata_dl.ducklake_table_column_stats s
+JOIN __ducklake_metadata_dl.ducklake_column c USING (table_id, column_id)
+JOIN __ducklake_metadata_dl.ducklake_table t USING (table_id)
+WHERE t.table_name = 'repeated_group' AND c.column_name IN ('key', 'v_int64')
+ORDER BY 1
+----
+key	type
+v_int64	1000
+
+# a repeated group of a single column is a list of that column
+statement ok
+CREATE TABLE dl.single_child AS FROM 'data/parquet/repeated_single_child.parquet' LIMIT 0
+
+statement ok
+CALL ducklake_add_data_files('dl', 'single_child', 'data/parquet/repeated_single_child.parquet')
+
+query I
+SELECT count(*) FROM (
+	(FROM dl.single_child EXCEPT ALL FROM 'data/parquet/repeated_single_child.parquet')
+	UNION ALL
+	(FROM 'data/parquet/repeated_single_child.parquet' EXCEPT ALL FROM dl.single_child)
+)
+----
+0
+
+query II
+SELECT tags[1].key, len(tags) FROM dl.single_child
+----
+service_name	8
+service_name	8
+
+# nested repeated groups of one column
+statement ok
+CREATE TABLE dl.nested_groups (a INTEGER[][])
+
+statement ok
+CALL ducklake_add_data_files('dl', 'nested_groups', 'data/parquet/nested_repeated_groups.parquet')
+
+query I
+SELECT a FROM dl.nested_groups ORDER BY a
+----
+[[1, 2], [3]]
+[[4]]
+
+# the element of a list is read under the name of its repeated group
+statement ok
+CREATE TABLE dl.list_bag (a INTEGER[])
+
+statement ok
+CALL ducklake_add_data_files('dl', 'list_bag', 'data/parquet/list_bag.parquet')
+
+query I
+SELECT a FROM dl.list_bag ORDER BY a
+----
+[1, 2]
+[3]
+
+# a two-level list of a repeated column named element
+statement ok
+CREATE TABLE dl.list_two_level (a INTEGER[])
+
+statement ok
+CALL ducklake_add_data_files('dl', 'list_two_level', 'data/parquet/list_two_level_element.parquet')
+
+query I
+SELECT a FROM dl.list_two_level ORDER BY a
+----
+[1, 2]
+[3]
+
+# the element type still has to match
+statement ok
+CREATE TABLE dl.wrong_element (intArray VARCHAR[])
+
+statement error
+CALL ducklake_add_data_files('dl', 'wrong_element', 'duckdb/data/parquet-testing/bug2557.parquet', ignore_extra_columns => true)
+----
+Expected VARCHAR, found type INTEGER
